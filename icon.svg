@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="neonGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00F0FF" />
+      <stop offset="100%" stop-color="#7000FF" />
+    </linearGradient>
+    <linearGradient id="boxGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E293B" />
+      <stop offset="100%" stop-color="#0F172A" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="15" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  
+  <!-- Background Card -->
+  <rect width="512" height="512" rx="128" fill="#0D1117" />
+  
+  <!-- Outer Glow Ring -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="none" stroke="url(#neonGlow)" stroke-width="4" opacity="0.4" />
+  
+  <!-- Isometric Futuristic Box Structure -->
+  <g transform="translate(256, 260) scale(1.1)">
+    <!-- Behind glowing paths -->
+    <path d="M-120,-40 L0,-100 L120,-40 L0,20 Z" fill="url(#boxGradient)" stroke="url(#neonGlow)" stroke-width="6" filter="url(#glow)" opacity="0.8" />
+    
+    <!-- Top Face -->
+    <path d="M-120,-40 L0,-100 L120,-40 L0,20 Z" fill="url(#boxGradient)" stroke="url(#neonGlow)" stroke-width="4" />
+    
+    <!-- Left Face -->
+    <path d="M-120,-40 L-120,80 L0,140 L0,20 Z" fill="#0F172A" stroke="url(#neonGlow)" stroke-width="4" />
+    
+    <!-- Right Face -->
+    <path d="M120,-40 L120,80 L0,140 L0,20 Z" fill="#1E293B" stroke="url(#neonGlow)" stroke-width="4" />
+    
+    <!-- Inner Glowing Lines / Details -->
+    <line x1="-60" y1="-10" x2="60" y2="-10" stroke="#00F0FF" stroke-width="3" opacity="0.8" />
+    <line x1="-120" y1="-40" x2="120" y2="-40" stroke="#7000FF" stroke-width="2" opacity="0.6" />
+    
+    <!-- Dynamic Forward Arrow Wings (Logistics Motion) -->
+    <path d="M-140,-20 L-200,-50 L-140,-80 Z" fill="#00F0FF" opacity="0.9" filter="url(#glow)" />
+    <path d="M-140,-20 L-200,-50 L-140,-80 Z" fill="#00F0FF" />
+    
+    <path d="M140,-20 L200,-50 L140,-80 Z" fill="#7000FF" opacity="0.9" filter="url(#glow)" />
+    <path d="M140,-20 L200,-50 L140,-80 Z" fill="#7000FF" />
+  </g>
+  
+  <!-- Modern App Name text bottom -->
+  <text x="256" y="440" font-family="'Inter', system-ui, sans-serif" font-size="32" font-weight="900" fill="#FFFFFF" text-anchor="middle" letter-spacing="4">
+    SHIP<tspan fill="#00F0FF">24</tspan>GO
+  </text>
+</svg>

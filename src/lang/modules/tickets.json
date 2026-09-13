@@ -1,0 +1,56 @@
+{
+  "es": {
+    "tickets.customer.title": "Soporte & Tickets",
+    "tickets.customer.subtitle": "Resuelve tus consultas logísticas con soporte inteligente.",
+    "tickets.create.title": "Crear Nuevo Ticket de Soporte",
+    "tickets.list.back": "Volver al listado",
+    "tickets.conversation": "Conversación de Soporte",
+    "tickets.admin.title": "Soporte, Tickets & Copiloto IA",
+    "tickets.admin.subtitle": "Panel de administración para resolver incidencias de clientes y simular respuestas generadas por Inteligencia Artificial."
+  },
+  "en": {
+    "tickets.customer.title": "Support & Tickets",
+    "tickets.customer.subtitle": "Resolve your logistics questions with smart support.",
+    "tickets.create.title": "Create New Support Ticket",
+    "tickets.list.back": "Back to list",
+    "tickets.conversation": "Support Conversation",
+    "tickets.admin.title": "Support, Tickets & AI Copilot",
+    "tickets.admin.subtitle": "Administration panel to resolve customer issues and simulate AI-generated replies."
+  },
+  "it": {
+    "tickets.customer.title": "Supporto e Ticket",
+    "tickets.customer.subtitle": "Risolvi le tue richieste logistiche con supporto intelligente.",
+    "tickets.create.title": "Crea nuovo ticket di supporto",
+    "tickets.list.back": "Torna all’elenco",
+    "tickets.conversation": "Conversazione di supporto",
+    "tickets.admin.title": "Supporto, Ticket e Copilota IA",
+    "tickets.admin.subtitle": "Pannello amministrativo per risolvere le richieste dei clienti e simulare risposte generate dall’IA."
+  },
+  "fr": {
+    "tickets.customer.title": "Support et Tickets",
+    "tickets.customer.subtitle": "Résolvez vos questions logistiques avec un support intelligent.",
+    "tickets.create.title": "Créer un nouveau ticket de support",
+    "tickets.list.back": "Retour à la liste",
+    "tickets.conversation": "Conversation de support",
+    "tickets.admin.title": "Support, Tickets et Copilote IA",
+    "tickets.admin.subtitle": "Panneau d’administration pour résoudre les incidents clients et simuler des réponses générées par IA."
+  },
+  "de": {
+    "tickets.customer.title": "Support & Tickets",
+    "tickets.customer.subtitle": "Lösen Sie Ihre Logistikanfragen mit intelligentem Support.",
+    "tickets.create.title": "Neues Support-Ticket erstellen",
+    "tickets.list.back": "Zurück zur Liste",
+    "tickets.conversation": "Support-Unterhaltung",
+    "tickets.admin.title": "Support, Tickets & KI-Copilot",
+    "tickets.admin.subtitle": "Administrationsbereich zur Bearbeitung von Kundenfällen und Simulation KI-generierter Antworten."
+  },
+  "zh": {
+    "tickets.customer.title": "支持与工单",
+    "tickets.customer.subtitle": "通过智能支持解决您的物流问题。",
+    "tickets.create.title": "创建新支持工单",
+    "tickets.list.back": "返回列表",
+    "tickets.conversation": "支持对话",
+    "tickets.admin.title": "支持、工单与 AI 助手",
+    "tickets.admin.subtitle": "用于处理客户问题并模拟 AI 回复的管理面板。"
+  }
+}

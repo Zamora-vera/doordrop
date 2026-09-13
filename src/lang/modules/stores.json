@@ -1,0 +1,80 @@
+{
+  "es": {
+    "stores.title": "Tiendas conectadas",
+    "stores.subtitle": "Conecta tus tiendas online, sincroniza pedidos y crea etiquetas desde DoorDrop.",
+    "stores.connect": "Conectar tienda",
+    "stores.sync": "Sincronizar pedidos",
+    "stores.orders": "Pedidos importados",
+    "stores.address_review": "La dirección necesita revisión",
+    "stores.connected_ok": "La tienda fue conectada correctamente.",
+    "stores.connect_failed": "No fue posible conectar la tienda. Intenta nuevamente.",
+    "stores.no_orders": "No hay pedidos para mostrar todavía.",
+    "stores.create_shipment": "Crear envío",
+    "stores.push_tracking": "Actualizar tracking en tienda"
+  },
+  "en": {
+    "stores.title": "Connected stores",
+    "stores.subtitle": "Connect your online stores, sync orders and create labels from DoorDrop.",
+    "stores.connect": "Connect store",
+    "stores.sync": "Sync orders",
+    "stores.orders": "Imported orders",
+    "stores.address_review": "The address needs review",
+    "stores.connected_ok": "The store was connected successfully.",
+    "stores.connect_failed": "We could not connect the store. Please try again.",
+    "stores.no_orders": "There are no orders to show yet.",
+    "stores.create_shipment": "Create shipment",
+    "stores.push_tracking": "Update tracking in store"
+  },
+  "it": {
+    "stores.title": "Negozi collegati",
+    "stores.subtitle": "Collega i tuoi negozi online, sincronizza gli ordini e crea etichette da DoorDrop.",
+    "stores.connect": "Collega negozio",
+    "stores.sync": "Sincronizza ordini",
+    "stores.orders": "Ordini importati",
+    "stores.address_review": "L’indirizzo richiede revisione",
+    "stores.connected_ok": "Il negozio è stato collegato correttamente.",
+    "stores.connect_failed": "Non è stato possibile collegare il negozio. Riprova.",
+    "stores.no_orders": "Non ci sono ancora ordini da mostrare.",
+    "stores.create_shipment": "Crea spedizione",
+    "stores.push_tracking": "Aggiorna tracking nel negozio"
+  },
+  "fr": {
+    "stores.title": "Boutiques connectées",
+    "stores.subtitle": "Connectez vos boutiques en ligne, synchronisez les commandes et créez des étiquettes depuis DoorDrop.",
+    "stores.connect": "Connecter une boutique",
+    "stores.sync": "Synchroniser les commandes",
+    "stores.orders": "Commandes importées",
+    "stores.address_review": "L’adresse doit être vérifiée",
+    "stores.connected_ok": "La boutique a été connectée correctement.",
+    "stores.connect_failed": "Impossible de connecter la boutique. Veuillez réessayer.",
+    "stores.no_orders": "Aucune commande à afficher pour le moment.",
+    "stores.create_shipment": "Créer un envoi",
+    "stores.push_tracking": "Mettre à jour le suivi dans la boutique"
+  },
+  "de": {
+    "stores.title": "Verbundene Shops",
+    "stores.subtitle": "Verbinden Sie Ihre Online-Shops, synchronisieren Sie Bestellungen und erstellen Sie Etiketten mit DoorDrop.",
+    "stores.connect": "Shop verbinden",
+    "stores.sync": "Bestellungen synchronisieren",
+    "stores.orders": "Importierte Bestellungen",
+    "stores.address_review": "Die Adresse muss geprüft werden",
+    "stores.connected_ok": "Der Shop wurde erfolgreich verbunden.",
+    "stores.connect_failed": "Der Shop konnte nicht verbunden werden. Bitte versuchen Sie es erneut.",
+    "stores.no_orders": "Es gibt noch keine Bestellungen zum Anzeigen.",
+    "stores.create_shipment": "Sendung erstellen",
+    "stores.push_tracking": "Tracking im Shop aktualisieren"
+  },
+  "zh": {
+    "stores.title": "已连接店铺",
+    "stores.subtitle": "连接您的在线店铺，同步订单并从 DoorDrop 创建面单。",
+    "stores.connect": "连接店铺",
+    "stores.sync": "同步订单",
+    "stores.orders": "已导入订单",
+    "stores.address_review": "地址需要审核",
+    "stores.connected_ok": "店铺已成功连接。",
+    "stores.connect_failed": "无法连接店铺。请重试。",
+    "stores.no_orders": "暂无订单可显示。",
+    "stores.create_shipment": "创建运单",
+    "stores.push_tracking": "更新店铺物流跟踪"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "es": {
+    "camera.title": "Escáner de Dimensiones AR",
+    "camera.subtitle": "Calibrador Tridimensional en Tiempo Real",
+    "camera.apply": "Aplicar Medida"
+  },
+  "en": {
+    "camera.title": "AR Dimension Scanner",
+    "camera.subtitle": "Real-time three-dimensional calibrator",
+    "camera.apply": "Apply Measurement"
+  },
+  "it": {
+    "camera.title": "Scanner dimensioni AR",
+    "camera.subtitle": "Calibratore tridimensionale in tempo reale",
+    "camera.apply": "Applica misura"
+  },
+  "fr": {
+    "camera.title": "Scanner de dimensions AR",
+    "camera.subtitle": "Calibrateur tridimensionnel en temps réel",
+    "camera.apply": "Appliquer la mesure"
+  },
+  "de": {
+    "camera.title": "AR-Dimensionsscanner",
+    "camera.subtitle": "Dreidimensionaler Echtzeit-Kalibrator",
+    "camera.apply": "Messung übernehmen"
+  },
+  "zh": {
+    "camera.title": "AR 尺寸扫描器",
+    "camera.subtitle": "实时三维校准器",
+    "camera.apply": "应用测量"
+  }
+}

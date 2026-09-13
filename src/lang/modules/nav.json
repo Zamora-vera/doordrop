@@ -1,0 +1,56 @@
+{
+  "es": {
+    "nav.dashboard": "Panel",
+    "nav.quote": "Cotizar",
+    "nav.shipments": "Envíos",
+    "nav.stores": "Tiendas",
+    "nav.support": "Soporte",
+    "nav.settings": "Configuración",
+    "nav.admin": "Administración"
+  },
+  "en": {
+    "nav.dashboard": "Dashboard",
+    "nav.quote": "Quote",
+    "nav.shipments": "Shipments",
+    "nav.stores": "Stores",
+    "nav.support": "Support",
+    "nav.settings": "Settings",
+    "nav.admin": "Admin"
+  },
+  "it": {
+    "nav.dashboard": "Pannello",
+    "nav.quote": "Preventivo",
+    "nav.shipments": "Spedizioni",
+    "nav.stores": "Negozi",
+    "nav.support": "Supporto",
+    "nav.settings": "Impostazioni",
+    "nav.admin": "Amministrazione"
+  },
+  "fr": {
+    "nav.dashboard": "Tableau de bord",
+    "nav.quote": "Devis",
+    "nav.shipments": "Envois",
+    "nav.stores": "Boutiques",
+    "nav.support": "Support",
+    "nav.settings": "Paramètres",
+    "nav.admin": "Administration"
+  },
+  "de": {
+    "nav.dashboard": "Dashboard",
+    "nav.quote": "Tarif berechnen",
+    "nav.shipments": "Sendungen",
+    "nav.stores": "Shops",
+    "nav.support": "Support",
+    "nav.settings": "Einstellungen",
+    "nav.admin": "Administration"
+  },
+  "zh": {
+    "nav.dashboard": "面板",
+    "nav.quote": "报价",
+    "nav.shipments": "运单",
+    "nav.stores": "店铺",
+    "nav.support": "支持",
+    "nav.settings": "设置",
+    "nav.admin": "管理"
+  }
+}

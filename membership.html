@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ship24Go Membership</title>
+  <meta name="description" content="Ship24Go Membership is a monthly SaaS subscription for merchants and e-commerce businesses to access the Ship24Go software dashboard and shipping workflow tools." />
+  <meta name="robots" content="index, follow" />
+  <meta property="og:title" content="Ship24Go Membership" />
+  <meta property="og:description" content="A cloud-based shipping workflow platform for merchants and e-commerce businesses." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://ship24go.com/membership" />
+  <style>
+    :root {
+      --bg: #f6f8fc;
+      --ink: #07142f;
+      --muted: #60708d;
+      --line: #dfe6f2;
+      --card: #ffffff;
+      --blue: #175cff;
+      --cyan: #05b8df;
+      --pink: #f33192;
+      --green: #079669;
+      --dark: #081225;
+      --soft: #eef4ff;
+      --warning: #fff7ed;
+      --warning-border: #fed7aa;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.55;
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    .page {
+      overflow: hidden;
+    }
+
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      background: rgba(255,255,255,.86);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .nav-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 18px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 900;
+      font-size: 21px;
+      letter-spacing: -.04em;
+    }
+
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-weight: 900;
+      box-shadow: 0 16px 34px rgba(23,92,255,.22);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      min-height: 46px;
+      padding: 0 18px;
+      border-radius: 15px;
+      font-weight: 850;
+      border: 1px solid transparent;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      color: #fff;
+      box-shadow: 0 18px 38px rgba(23,92,255,.24);
+    }
+
+    .btn-secondary {
+      background: #fff;
+      color: var(--ink);
+      border-color: var(--line);
+    }
+
+    .btn-dark {
+      background: var(--dark);
+      color: #fff;
+      box-shadow: 0 18px 38px rgba(8,18,37,.18);
+    }
+
+    .hero {
+      position: relative;
+      background:
+        radial-gradient(circle at 15% 15%, rgba(23,92,255,.26), transparent 34%),
+        radial-gradient(circle at 85% 25%, rgba(5,184,223,.20), transparent 32%),
+        linear-gradient(135deg, #07142f, #0a1b45 48%, #0a1026);
+      color: #fff;
+      padding: 92px 22px 74px;
+    }
+
+    .hero-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap: 44px;
+      align-items: center;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 13px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      background: rgba(255,255,255,.10);
+      border: 1px solid rgba(255,255,255,.18);
+      color: #cfe5ff;
+    }
+
+    h1 {
+      margin: 22px 0 16px;
+      font-size: clamp(42px, 7vw, 74px);
+      line-height: .96;
+      letter-spacing: -.07em;
+    }
+
+    .subheadline {
+      font-size: clamp(20px, 2.8vw, 30px);
+      font-weight: 800;
+      letter-spacing: -.04em;
+      max-width: 800px;
+      color: #e7f0ff;
+      margin: 0 0 18px;
+    }
+
+    .hero-description {
+      font-size: 18px;
+      color: #bed0ed;
+      max-width: 760px;
+      margin: 0 0 30px;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 28px;
+    }
+
+    .hero-panel {
+      background: rgba(255,255,255,.10);
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 30px;
+      padding: 24px;
+      box-shadow: 0 24px 70px rgba(0,0,0,.28);
+      backdrop-filter: blur(20px);
+    }
+
+    .dashboard-card {
+      background: rgba(255,255,255,.94);
+      color: var(--ink);
+      border-radius: 24px;
+      padding: 20px;
+    }
+
+    .dash-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .pill {
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: #e9f2ff;
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      background: #fff;
+    }
+
+    .metric b {
+      display: block;
+      font-size: 26px;
+      letter-spacing: -.04em;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .rate-row {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+      background: #f8fbff;
+    }
+
+    .rate-row strong {
+      display: block;
+    }
+
+    .rate-row small {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .section {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 78px 22px;
+    }
+
+    .section-header {
+      max-width: 780px;
+      margin-bottom: 32px;
+    }
+
+    .kicker {
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 950;
+      text-transform: uppercase;
+      letter-spacing: .13em;
+      margin-bottom: 10px;
+    }
+
+    h2 {
+      font-size: clamp(30px, 4vw, 46px);
+      line-height: 1.06;
+      margin: 0 0 14px;
+      letter-spacing: -.055em;
+    }
+
+    .lead {
+      color: var(--muted);
+      font-size: 17px;
+      margin: 0;
+    }
+
+    .grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .features {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 24px;
+      box-shadow: 0 16px 44px rgba(17, 35, 71, .06);
+    }
+
+    .icon {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      margin-bottom: 16px;
+      background: var(--soft);
+      color: var(--blue);
+      font-size: 21px;
+    }
+
+    .card h3 {
+      font-size: 19px;
+      margin: 0 0 8px;
+      letter-spacing: -.03em;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .separate {
+      background: #fff;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .warning-card {
+      background: var(--warning);
+      border: 1px solid var(--warning-border);
+      border-radius: 28px;
+      padding: 30px;
+      display: grid;
+      grid-template-columns: 62px 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .warning-icon {
+      width: 62px;
+      height: 62px;
+      border-radius: 22px;
+      display: grid;
+      place-items: center;
+      background: #fff;
+      color: #c2410c;
+      font-size: 28px;
+      box-shadow: 0 12px 30px rgba(194,65,12,.10);
+    }
+
+    .steps {
+      counter-reset: step;
+      grid-template-columns: repeat(5, 1fr);
+    }
+
+    .step {
+      position: relative;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 22px;
+      min-height: 186px;
+    }
+
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: var(--dark);
+      color: #fff;
+      font-weight: 900;
+      margin-bottom: 18px;
+    }
+
+    .plans {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: stretch;
+    }
+
+    .plan {
+      padding: 28px;
+      border-radius: 28px;
+      background: #fff;
+      border: 1px solid var(--line);
+      box-shadow: 0 18px 54px rgba(17, 35, 71, .07);
+      display: flex;
+      flex-direction: column;
+      min-height: 410px;
+    }
+
+    .plan.featured {
+      border-color: rgba(23,92,255,.42);
+      box-shadow: 0 24px 70px rgba(23,92,255,.14);
+      position: relative;
+    }
+
+    .badge {
+      align-self: flex-start;
+      background: linear-gradient(135deg, var(--pink), #ff8a1f);
+      color: #fff;
+      padding: 7px 11px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 950;
+      margin-bottom: 16px;
+    }
+
+    .plan h3 {
+      font-size: 25px;
+      margin: 0 0 8px;
+      letter-spacing: -.04em;
+    }
+
+    .plan p {
+      color: var(--muted);
+      margin: 0 0 18px;
+    }
+
+    .plan ul {
+      padding: 0;
+      margin: 16px 0 24px;
+      list-style: none;
+      display: grid;
+      gap: 10px;
+    }
+
+    .plan li {
+      color: #33435f;
+      font-weight: 700;
+      display: flex;
+      gap: 9px;
+    }
+
+    .plan li::before {
+      content: "✓";
+      color: var(--green);
+      font-weight: 950;
+    }
+
+    .plan .btn {
+      margin-top: auto;
+      width: 100%;
+    }
+
+    .transparency {
+      background: linear-gradient(135deg, #081225, #10214b);
+      color: #fff;
+      border-radius: 34px;
+      padding: 42px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .transparency::after {
+      content: "";
+      position: absolute;
+      width: 380px;
+      height: 380px;
+      border-radius: 999px;
+      background: rgba(5,184,223,.20);
+      right: -140px;
+      top: -160px;
+    }
+
+    .transparency p {
+      color: #c6d5f1;
+      max-width: 900px;
+      font-size: 17px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .faq {
+      max-width: 900px;
+    }
+
+    details {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 20px 22px;
+      box-shadow: 0 12px 36px rgba(17,35,71,.05);
+    }
+
+    details + details {
+      margin-top: 12px;
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: 900;
+      font-size: 18px;
+      letter-spacing: -.02em;
+    }
+
+    details p {
+      margin: 12px 0 0;
+      color: var(--muted);
+    }
+
+    .footer-cta {
+      background:
+        radial-gradient(circle at 20% 20%, rgba(23,92,255,.26), transparent 30%),
+        linear-gradient(135deg, #061126, #0b1736);
+      color: #fff;
+      padding: 80px 22px;
+      text-align: center;
+    }
+
+    .footer-cta-inner {
+      max-width: 850px;
+      margin: 0 auto;
+    }
+
+    .footer-cta h2 {
+      margin-bottom: 18px;
+    }
+
+    .footer-actions {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 28px;
+    }
+
+    .site-footer {
+      padding: 26px 22px;
+      background: #050b18;
+      color: #8796b4;
+      font-size: 14px;
+    }
+
+    .site-footer-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 980px) {
+      .hero-inner {
+        grid-template-columns: 1fr;
+      }
+
+      .features,
+      .plans {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .steps {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 680px) {
+      .nav-inner {
+        align-items: flex-start;
+      }
+
+      .nav-actions {
+        display: none;
+      }
+
+      .hero {
+        padding-top: 62px;
+      }
+
+      .features,
+      .plans,
+      .steps,
+      .metric-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .warning-card {
+        grid-template-columns: 1fr;
+      }
+
+      .transparency {
+        padding: 28px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="nav">
+      <div class="nav-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark">S</span>
+          <span>Ship24Go</span>
+        </a>
+        <div class="nav-actions">
+          <a class="btn btn-secondary" href="#features">View Features</a>
+          <a class="btn btn-primary" href="/auth/register">Start Membership</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-inner">
+          <div>
+            <span class="eyebrow">Membership SaaS Platform</span>
+            <h1>Ship24Go Membership</h1>
+            <p class="subheadline">A cloud-based shipping workflow platform for merchants and e-commerce businesses.</p>
+            <p class="hero-description">
+              Ship24Go Membership gives your business access to a centralized software dashboard to organize shipments,
+              manage customer shipping records, compare rates, track shipment history, and manage your shipping workflow from one place.
+            </p>
+            <div class="hero-actions">
+              <a class="btn btn-primary" href="/auth/register">Start Membership</a>
+              <a class="btn btn-secondary" href="#features">View Features</a>
+            </div>
+          </div>
+
+          <div class="hero-panel" aria-label="Ship24Go dashboard preview">
+            <div class="dashboard-card">
+              <div class="dash-top">
+                <strong>Workflow Dashboard</strong>
+                <span class="pill">Member Access</span>
+              </div>
+              <div class="metric-grid">
+                <div class="metric">
+                  <b>1</b>
+                  <span>Central dashboard</span>
+                </div>
+                <div class="metric">
+                  <b>24/7</b>
+                  <span>Cloud access</span>
+                </div>
+                <div class="metric">
+                  <b>CRM</b>
+                  <span>Customer records</span>
+                </div>
+                <div class="metric">
+                  <b>Reports</b>
+                  <span>Operational overview</span>
+                </div>
+              </div>
+              <div class="rate-row">
+                <div>
+                  <strong>Software membership</strong>
+                  <small>Dashboard, records, tools, workflow</small>
+                </div>
+                <span class="pill">Separate from shipping costs</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" class="section">
+        <div class="section-header">
+          <div class="kicker">Included</div>
+          <h2>Software Access Included With Your Membership</h2>
+          <p class="lead">Your monthly membership activates Ship24Go software access and member plan features for your business workflow.</p>
+        </div>
+
+        <div class="grid features">
+          <article class="card"><div class="icon">▦</div><h3>Shipping workflow dashboard</h3><p>Access a centralized dashboard to manage shipping activity and operational records.</p></article>
+          <article class="card"><div class="icon">☑</div><h3>Shipment organization tools</h3><p>Organize shipment requests, statuses, and workflow steps from one place.</p></article>
+          <article class="card"><div class="icon">▣</div><h3>Address and customer shipping records</h3><p>Keep customer information and shipping addresses organized for future operations.</p></article>
+          <article class="card"><div class="icon">↺</div><h3>Shipment history</h3><p>Review past shipment records, workflow activity, and operational details.</p></article>
+          <article class="card"><div class="icon">⌖</div><h3>Order tracking records</h3><p>Store and access tracking references and order-related shipping information.</p></article>
+          <article class="card"><div class="icon">⇄</div><h3>Rate comparison tools</h3><p>Compare available options inside the software dashboard to support workflow decisions.</p></article>
+          <article class="card"><div class="icon">◫</div><h3>Internal reports</h3><p>Use reporting tools to understand shipping activity and member workflow usage.</p></article>
+          <article class="card"><div class="icon">◎</div><h3>Team access</h3><p>Give your team access to the dashboard according to your membership plan.</p></article>
+          <article class="card"><div class="icon">★</div><h3>Member plan features</h3><p>Unlock software capabilities based on the membership level selected for your business.</p></article>
+        </div>
+      </section>
+
+      <section class="separate">
+        <div class="section">
+          <div class="section-header">
+            <div class="kicker">Separate Costs</div>
+            <h2>Shipping Costs Are Separate</h2>
+          </div>
+
+          <div class="warning-card">
+            <div class="warning-icon">!</div>
+            <div>
+              <h3>The membership is for software access only.</h3>
+              <p>
+                The Ship24Go Membership is only for access to the software platform. It does not include shipping labels,
+                courier charges, wallet credits, carrier payments, delivery services, insurance, customs, or third-party logistics services.
+              </p>
+              <p>
+                These costs are handled separately outside the membership through bank transfer or the customer’s internal Ship24Go wallet.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <div class="kicker">Process</div>
+          <h2>How It Works</h2>
+          <p class="lead">A simple SaaS membership flow for merchants and e-commerce businesses.</p>
+        </div>
+
+        <div class="grid steps">
+          <article class="step"><h3>Subscribe</h3><p>Subscribe to a Ship24Go Membership plan.</p></article>
+          <article class="step"><h3>Access</h3><p>Access the Ship24Go software dashboard.</p></article>
+          <article class="step"><h3>Organize</h3><p>Organize customers, addresses, shipments, and records.</p></article>
+          <article class="step"><h3>Compare</h3><p>Compare available shipping options through workflow tools.</p></article>
+          <article class="step"><h3>Pay Separately</h3><p>Use your internal wallet or approved payment method outside the membership for shipment purchases.</p></article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <div class="kicker">Plans</div>
+          <h2>Membership Plans</h2>
+          <p class="lead">Choose a software membership plan for the way your business manages shipping workflows.</p>
+        </div>
+
+        <div class="grid plans">
+          <article class="plan">
+            <h3>Starter Membership</h3>
+            <p>For small merchants starting to organize shipments.</p>
+            <ul>
+              <li>Dashboard access</li>
+              <li>Shipment records</li>
+              <li>Address management</li>
+              <li>Basic reports</li>
+            </ul>
+            <a class="btn btn-secondary" href="/auth/register">Choose Plan</a>
+          </article>
+
+          <article class="plan featured">
+            <span class="badge">Popular</span>
+            <h3>Business Membership</h3>
+            <p>For growing businesses that need more workflow tools.</p>
+            <ul>
+              <li>Everything in Starter</li>
+              <li>Team access</li>
+              <li>Advanced records</li>
+              <li>Rate comparison tools</li>
+              <li>Priority support</li>
+            </ul>
+            <a class="btn btn-primary" href="/auth/register">Choose Plan</a>
+          </article>
+
+          <article class="plan">
+            <h3>Pro Membership</h3>
+            <p>For businesses managing higher shipping volume.</p>
+            <ul>
+              <li>Everything in Business</li>
+              <li>Advanced workflow tools</li>
+              <li>Expanded history</li>
+              <li>Premium support</li>
+            </ul>
+            <a class="btn btn-secondary" href="mailto:sales@ship24go.com?subject=Ship24Go%20Membership">Contact us</a>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="transparency">
+          <div class="kicker" style="color:#8fd8ff;">Transparency</div>
+          <h2>Clear Separation Between Software Membership and Shipping Payments</h2>
+          <p>
+            Ship24Go Membership is a SaaS subscription for software access. Membership payments activate access to the dashboard and member plan features only.
+          </p>
+          <p>
+            Shipping wallet top-ups, courier charges, shipment purchases, shipping labels, carrier payments, insurance, customs, and delivery services are not processed as part of the membership subscription.
+          </p>
+          <p>
+            Polar is used only for recurring software membership payments. Shipping-related payments are handled separately outside Polar by bank transfer or through the customer’s internal Ship24Go wallet.
+          </p>
+        </div>
+      </section>
+
+      <section class="section faq">
+        <div class="section-header">
+          <div class="kicker">FAQ</div>
+          <h2>Frequently Asked Questions</h2>
+        </div>
+
+        <details>
+          <summary>Is Ship24Go Membership a shipping label purchase?</summary>
+          <p>No. Ship24Go Membership is only a software subscription. It gives access to the Ship24Go dashboard and workflow tools. Shipping labels and carrier charges are handled separately.</p>
+        </details>
+
+        <details>
+          <summary>Does the membership include wallet credits?</summary>
+          <p>No. Wallet top-ups are separate from the membership and are handled outside the recurring subscription.</p>
+        </details>
+
+        <details>
+          <summary>What do I get with the membership?</summary>
+          <p>You get access to the Ship24Go software platform, including shipment organization, address records, shipment history, rate comparison tools, reports, and member plan features.</p>
+        </details>
+
+        <details>
+          <summary>How are shipping costs paid?</summary>
+          <p>Shipping costs are handled separately by bank transfer or through the customer’s internal Ship24Go wallet.</p>
+        </details>
+
+        <details>
+          <summary>Can e-commerce businesses use Ship24Go?</summary>
+          <p>Yes. Ship24Go is designed for merchants, online stores, and businesses that need to organize and manage shipping workflows from one dashboard.</p>
+        </details>
+      </section>
+
+      <section class="footer-cta">
+        <div class="footer-cta-inner">
+          <h2>Manage your shipping workflow with Ship24Go Membership.</h2>
+          <p>Give your team a professional software dashboard to organize shipment records, customers, workflow tools, and member features.</p>
+          <div class="footer-actions">
+            <a class="btn btn-primary" href="/auth/register">Start Membership</a>
+            <a class="btn btn-secondary" href="mailto:sales@ship24go.com?subject=Ship24Go%20Membership">Contact Sales</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <span>© 2026 Ship24Go. All rights reserved.</span>
+        <span>Software membership. Shipping costs are separate.</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

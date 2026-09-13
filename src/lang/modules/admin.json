@@ -1,0 +1,50 @@
+{
+  "es": {
+    "admin.integrations.title": "Integraciones",
+    "admin.integrations.subtitle": "Gestiona las conexiones comerciales y proveedores de la plataforma.",
+    "admin.clients.title": "Clientes",
+    "admin.shipments.title": "Envíos",
+    "admin.providers.title": "Proveedores",
+    "admin.settings.title": "Configuración"
+  },
+  "en": {
+    "admin.integrations.title": "Integrations",
+    "admin.integrations.subtitle": "Manage platform business connections and providers.",
+    "admin.clients.title": "Clients",
+    "admin.shipments.title": "Shipments",
+    "admin.providers.title": "Providers",
+    "admin.settings.title": "Settings"
+  },
+  "it": {
+    "admin.integrations.title": "Integrazioni",
+    "admin.integrations.subtitle": "Gestisci connessioni commerciali e fornitori della piattaforma.",
+    "admin.clients.title": "Clienti",
+    "admin.shipments.title": "Spedizioni",
+    "admin.providers.title": "Fornitori",
+    "admin.settings.title": "Impostazioni"
+  },
+  "fr": {
+    "admin.integrations.title": "Intégrations",
+    "admin.integrations.subtitle": "Gérez les connexions commerciales et les fournisseurs de la plateforme.",
+    "admin.clients.title": "Clients",
+    "admin.shipments.title": "Envois",
+    "admin.providers.title": "Fournisseurs",
+    "admin.settings.title": "Paramètres"
+  },
+  "de": {
+    "admin.integrations.title": "Integrationen",
+    "admin.integrations.subtitle": "Verwalten Sie kommerzielle Verbindungen und Anbieter der Plattform.",
+    "admin.clients.title": "Kunden",
+    "admin.shipments.title": "Sendungen",
+    "admin.providers.title": "Anbieter",
+    "admin.settings.title": "Einstellungen"
+  },
+  "zh": {
+    "admin.integrations.title": "集成",
+    "admin.integrations.subtitle": "管理平台的商业连接和供应商。",
+    "admin.clients.title": "客户",
+    "admin.shipments.title": "运单",
+    "admin.providers.title": "供应商",
+    "admin.settings.title": "设置"
+  }
+}

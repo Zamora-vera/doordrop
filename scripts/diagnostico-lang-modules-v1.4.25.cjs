@@ -1,0 +1,46 @@
+const fs = require('fs');
+const path = require('path');
+const root = process.cwd();
+const langs = ['es','en','it','fr','de','zh'];
+const stamp = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+function readJson(file){ try { return JSON.parse(fs.readFileSync(file,'utf8')); } catch(e){ return null; } }
+const lines = [];
+lines.push('# Ship24Go — Diagnóstico lang modules V1.4.25');
+lines.push('');
+lines.push(`Fecha: ${new Date().toISOString()}`);
+lines.push('');
+lines.push('## Archivos por idioma');
+lines.push('');
+lines.push('| Idioma | src/lang/locales | src/i18n/locales | Llaves | Estado |');
+lines.push('|---|---|---|---:|---|');
+let baseKeys = [];
+for (const lang of langs) {
+  const a = path.join(root,'src/lang/locales',`${lang}.json`);
+  const b = path.join(root,'src/i18n/locales',`${lang}.json`);
+  const data = readJson(a);
+  if (lang === 'es' && data) baseKeys = Object.keys(data);
+  const missingFromBase = lang !== 'es' && data ? baseKeys.filter(k => !(k in data)).length : 0;
+  const status = data && fs.existsSync(b) && missingFromBase === 0 ? 'Completo' : 'Revisar';
+  lines.push(`| ${lang} | ${fs.existsSync(a) ? 'OK' : 'Falta'} | ${fs.existsSync(b) ? 'OK' : 'Falta'} | ${data ? Object.keys(data).length : 0} | ${status}${missingFromBase ? ` (${missingFromBase} faltantes)` : ''} |`);
+}
+lines.push('');
+lines.push('## Módulos');
+lines.push('');
+const modDir = path.join(root,'src/lang/modules');
+const mods = fs.existsSync(modDir) ? fs.readdirSync(modDir).filter(f => f.endsWith('.json')).sort() : [];
+if (!mods.length) lines.push('No hay módulos declarados.');
+for (const mod of mods) lines.push(`- ${mod}`);
+lines.push('');
+lines.push('## Capa heredada');
+lines.push('');
+lines.push(`- autoTranslate: ${fs.existsSync(path.join(root,'src/lib/autoTranslate.ts')) ? 'OK' : 'Falta'}`);
+lines.push(`- visibleText: ${fs.existsSync(path.join(root,'src/lang/visibleText.ts')) ? 'OK' : 'Falta'}`);
+lines.push('');
+lines.push('## Recomendación');
+lines.push('');
+lines.push('Para módulos nuevos, no escribir textos visibles directo en componentes. Usar useI18n() y llaves dentro de src/lang/moduleTranslations.ts.');
+const outDir = path.join(root,'diagnostico');
+fs.mkdirSync(outDir,{recursive:true});
+const out = path.join(outDir,`LANG_MODULES_V1_4_25_${stamp}.md`);
+fs.writeFileSync(out, lines.join('\n'),'utf8');
+console.log(out);
