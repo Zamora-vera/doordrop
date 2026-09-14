@@ -1448,8 +1448,10 @@ const AdminPlans = () => {
   };
 
   const statusBadge = (status: string) => {
-    const ok = String(status || '').toLowerCase() === 'synced';
-    return <span className={`px-3 py-1 rounded-full text-[11px] font-black ${ok ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-amber-50 text-amber-700 border border-amber-100'}`}>{ok ? 'Sincronizado' : 'Pendiente'}</span>;
+    const normalized = String(status || '').toLowerCase();
+    const ok = normalized === 'synced';
+    const notRequired = normalized === 'not_required';
+    return <span className={`px-3 py-1 rounded-full text-[11px] font-black ${ok ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : notRequired ? 'bg-slate-100 text-slate-600 border border-slate-200' : 'bg-amber-50 text-amber-700 border border-amber-100'}`}>{ok ? 'Sincronizado' : notRequired ? 'No requiere pago' : 'Pendiente'}</span>;
   };
 
   return (
