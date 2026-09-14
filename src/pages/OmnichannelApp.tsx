@@ -2941,7 +2941,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                       🧠 Apprendimento e Memoria Conversazionale Attiva
                     </span>
                     <span className="text-[11px] text-gray-400 block mt-0.5">
-                      L'AI analizza gli ultimi 14 messaggi cronologici della chat per mantenere il contesto (es. ricorda referenze, taglie e dettagli citati prima).
+                      L'AI analizza fino a 24 messaggi recenti e, quando disponibile, recupera la memoria dello stesso cliente nello stesso canale per mantenere il contesto senza ripetere domande.
                     </span>
                   </label>
                 </div>

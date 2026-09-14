@@ -245,13 +245,14 @@ function buildToolsForMerchant(settings: any) {
             product_name: { type: 'string', description: 'Nome esatto o parziale del prodotto acquistato' },
             quantity: { type: 'number', description: 'Quantità di articoli da ordinare' },
             buyer_name: { type: 'string', description: 'Nome e cognome completo del cliente' },
+            buyer_email: { type: 'string', description: 'Email del cliente per il checkout e le notifiche dell\'ordine' },
             buyer_phone: { type: 'string', description: 'Numero di telefono del cliente' },
             buyer_address: { type: 'string', description: 'Indirizzo completo con via e numero civico' },
             buyer_zip: { type: 'string', description: 'CAP / Codice postale' },
             buyer_city: { type: 'string', description: 'Città' },
             buyer_country: { type: 'string', description: 'Paese (default "IT")' }
           },
-          required: ['product_name', 'buyer_name', 'buyer_address', 'buyer_zip']
+          required: ['product_name', 'buyer_name', 'buyer_email', 'buyer_address', 'buyer_zip', 'buyer_city', 'buyer_country']
         }
       }
     });
@@ -308,11 +309,71 @@ function buildToolsForMerchant(settings: any) {
   return tools;
 }
 
+const CUSTOMER_MEMORY_MESSAGE_LIMIT = 24;
+const CUSTOMER_MEMORY_TEXT_LIMIT = 1200;
+
+function hasStableContactId(value: unknown): boolean {
+  const normalized = String(value || '').trim();
+  return Boolean(normalized) && !/^contact_\d+$/.test(normalized);
+}
+
+/**
+ * Load bounded, tenant-scoped memory for this contact. The existing durable
+ * conversation/message tables are the source of truth; no synthetic profile
+ * or demo memory is created. When the channel supplies a stable contact id,
+ * previous conversations for that same contact are included as well.
+ */
+async function loadCustomerConversationMemory(
+  userId: string,
+  conversationId: number | string
+): Promise<any[]> {
+  const localConversationId = Number(conversationId);
+  if (!Number.isFinite(localConversationId) || localConversationId <= 0) return [];
+
+  const [conversationRows]: any = await pool.query(
+    `SELECT platform, contact_id, contact_phone
+       FROM omnichannel_conversations
+      WHERE id = ? AND user_id = ?
+      LIMIT 1`,
+    [localConversationId, userId]
+  );
+  const conversation = conversationRows[0];
+  if (!conversation) return [];
+
+  const identityClauses = ['c.id = ?'];
+  const identityParams: any[] = [localConversationId];
+  const platform = String(conversation.platform || '').trim();
+  const contactId = String(conversation.contact_id || '').trim();
+  const contactPhone = String(conversation.contact_phone || '').trim();
+
+  if (platform && hasStableContactId(contactId)) {
+    identityClauses.push('(c.platform = ? AND c.contact_id = ?)');
+    identityParams.push(platform, contactId);
+  }
+  if (platform && contactPhone) {
+    identityClauses.push('(c.platform = ? AND c.contact_phone = ?)');
+    identityParams.push(platform, contactPhone);
+  }
+
+  const [rows]: any = await pool.query(
+    `SELECT m.direction, m.sender_name, m.text_content, m.conversation_id
+       FROM omnichannel_messages m
+       JOIN omnichannel_conversations c ON c.id = m.conversation_id
+      WHERE c.user_id = ?
+        AND (${identityClauses.join(' OR ')})
+      ORDER BY m.id DESC
+      LIMIT ${CUSTOMER_MEMORY_MESSAGE_LIMIT}`,
+    [userId, ...identityParams]
+  );
+
+  return rows.reverse();
+}
+
 /**
  * Generate Autonomous Conversational AI Employee Reply with Full Conversation Memory
  * Enforces:
  * 1. Credit Limit: Balance cannot go below -1.00 USD/EUR. If < -1.00, AI stops until recharge.
- * 2. Multi-turn conversation memory with the last 14 messages.
+ * 2. Bounded multi-turn memory with up to 24 recent messages for the same contact.
  * 3. Strict language matching.
  * 4. Human personality & brevity guidelines.
  */
@@ -354,6 +415,7 @@ export async function generateAIEmployeeReply(
     const agentName = settings.agent_name || 'DoorDrop Sales Consultant';
     const language = settings.language || 'it';
     const tone = settings.tone || 'friendly_professional';
+    const memoryEnabled = settings.auto_learn_conversations !== 0;
     const businessInfo = settings.business_info || 'Boutique di moda con spedizioni rapide e tracciate DoorDrop.';
     const personalityRules = settings.personality_instructions || 'Sii cordiale, conciso, umano e proattivo nel consigliare articoli e chiudere vendite.';
     const salesContract = settings.sales_contract_text || 'Spedizioni espresse 24/48h. Resi gratuiti entro 14 giorni.';
@@ -399,46 +461,44 @@ Regole commerciali e contrattuali del negozio:
 - Condizioni e Resi: ${salesContract}
 
 Istruzioni comportamentali e conversazionali fondamentali:
-1. MEMORIA CONVERSAZIONALE RIGOROSA: Consulta sempre la cronologia dei messaggi precedenti. Se hai presentato un elenco di articoli e il cliente risponde con un numero (es. "14", "1", "2"), con "sì", "inviami foto", o con "lo quiero", "prendo questo", capisci immediatamente a quale prodotto della lista si riferisce e procedi (invia le foto di quel prodotto o chiedi i dati per la spedizione). NON chiedere mai "a cosa ti riferisci?" se era nell'ultimo messaggio!
+1. MEMORIA CONVERSAZIONALE RIGOROSA: ${memoryEnabled ? 'Usa la cronologia disponibile della conversazione e, se esiste, la memoria recente dello stesso cliente nello stesso canale.' : 'La memoria conversazionale è disattivata: usa solo il messaggio attuale e le informazioni del negozio.'} Se hai presentato un elenco di articoli e il cliente risponde con un numero (es. "14", "1", "2"), con "sì", "inviami foto", o con "lo quiero", "prendo questo", capisci immediatamente a quale prodotto della lista si riferisce e procedi (invia le foto di quel prodotto o chiedi i dati per la spedizione). NON chiedere mai "a cosa ti riferisci?" se era già nel contesto!
 2. Sii SEMPRE CONVERSAZIONALE, naturale ed empatico. Non rispondere MAI come un robot o con elenchi rigidi privi di calore.
 3. Quando il cliente chiede informazioni su capi o prodotti, usa lo strumento "search_products" per trovare gli articoli disponibili e consigliali con entusiasmo.
 4. Se il cliente chiede di vedere il prodotto o foto (o se ha risposto "sì" / "14" dopo che gli hai offerto le foto), invoca SEMPRE "send_product_photos".
 5. Se il cliente chiede quanto costa la spedizione o dove si spedisce, chiedi gentilmente il suo CAP / Città e calcola la tariffa con "quote_shipping". Ricorda sempre al cliente la soglia di spedizione gratuita (€${freeShipping}) per incoraggiare acquisti aggiuntivi!
-6. Quando il cliente manifesta l'intenzione di acquistare ("lo voglio", "lo compro", "lo quiero"), chiedi con naturalezza i dati per la consegna (Nome e cognome, indirizzo, CAP, telefono) e concludi la vendita usando "create_order_checkout".
+6. Quando il cliente manifesta l'intenzione di acquistare, raccogli i dati mancanti e mostra prima il prodotto e il totale. Chiama "create_order_checkout" solo dopo una conferma esplicita del cliente (es. "confirmo", "puedes crear el pedido", "confermo l'ordine") e solo con dati completi e verificati.
 7. Se il cliente chiede dov'è il suo pacco o un tracking, usa "lookup_or_generate_tracking".
 8. Se il cliente chiede espressamente di parlare con una persona reale, invoca "handoff_to_human".
-9. Mantieni le risposte snelle, calorose ed efficaci (massimo 2-4 frasi), ideali per WhatsApp, Instagram o Facebook.`;
+9. Mantieni le risposte snelle, calorose ed efficaci: 2-4 frasi brevi e massimo circa 600 caratteri. Fai al massimo una domanda o richiesta di dati per messaggio.
+10. FORMATO ORDINATO: se proponi prodotti, mostra massimo 3 opzioni numerate, una per riga, con nome, prezzo e disponibilità solo se verificati. Evita tabelle, paragrafi lunghi, saluti ripetuti e spiegazioni tecniche.
+11. DATI VERIFICATI: non inventare stock, prezzi, tempi, políticas, pagos, pedidos, direcciones ni estados. Se manca un dato reale, dilo brevemente y pide solo ese dato.
+12. CONTINUITÀ: se la memoria contiene un dato ya confirmado por el cliente, reutilízalo y no vuelvas a preguntarlo. Si faltan varios datos, solicita únicamente el siguiente dato necesario.`;
 
     const tools = buildToolsForMerchant(settings);
 
     // 4. Load Conversation History from Database
     let historyMessages: any[] = [];
-    if (conversationId) {
-      const [histRows]: any = await pool.query(
-        `SELECT direction, sender_name, text_content 
-         FROM omnichannel_messages 
-         WHERE conversation_id = ? 
-         ORDER BY id DESC 
-         LIMIT 14`,
-        [conversationId]
-      );
-
-      const reversed = histRows.reverse();
-      for (const m of reversed) {
-        if (!m.text_content) continue;
-        if (m.text_content.trim() === incomingText.trim() && m.direction === 'inbound') {
+    if (memoryEnabled && conversationId) {
+      const histRows = await loadCustomerConversationMemory(userId, conversationId);
+      for (const m of histRows) {
+        const text = String(m.text_content || '').trim().slice(0, CUSTOMER_MEMORY_TEXT_LIMIT);
+        if (!text) continue;
+        if (text === incomingText.trim() && m.direction === 'inbound') {
           continue;
         }
         if (m.direction === 'inbound') {
-          historyMessages.push({ role: 'user', content: m.text_content });
+          historyMessages.push({ role: 'user', content: text });
         } else {
-          historyMessages.push({ role: 'assistant', content: m.text_content });
+          historyMessages.push({ role: 'assistant', content: text });
         }
       }
     }
 
     let messages: any[] = [
       { role: 'system', content: systemPrompt },
+      ...(memoryEnabled && historyMessages.length > 0
+        ? [{ role: 'system', content: 'Memoria del cliente disponible: reutiliza los datos ya confirmados y no repitas preguntas innecesarias.' }]
+        : []),
       ...historyMessages,
       { role: 'user', content: incomingText }
     ];
@@ -462,7 +522,7 @@ Istruzioni comportamentali e conversazionali fondamentali:
         let fnArgs: any = {};
         try { fnArgs = JSON.parse(tc.function?.arguments || '{}'); } catch {}
 
-        console.log(`[AI Sales Agent] Loop #${loopCount} Executing: ${fnName}`, fnArgs);
+        console.log(`[AI Sales Agent] Loop #${loopCount} Executing: ${fnName}`);
         const toolResult = await handleAIToolCall(fnName, fnArgs, userId);
 
         if (fnName === 'send_product_photos' && toolResult.media_attachment_url) {
@@ -511,7 +571,7 @@ export async function autoGenerateStoreAISettings(userId: string) {
   const [prods]: any = await pool.query(
     `SELECT title, price_minor, currency, quantity
      FROM marketplace_listings
-     WHERE (seller_id = ? OR 1=1) AND status = 'active'
+     WHERE seller_id = ? AND status = 'active'
      LIMIT 8`,
     [userId]
   );

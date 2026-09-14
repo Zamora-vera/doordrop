@@ -284,7 +284,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
         const [orders]: any = await pool.query(
           `SELECT id, order_number, status, tracking_code, shipping_service_name, created_at
            FROM marketplace_orders
-           WHERE (seller_id = ? OR 1=1)
+           WHERE seller_id = ?
              AND (order_number LIKE ? OR tracking_code LIKE ? OR id = ?)
            LIMIT 1`,
           [sellerUserId, `%${query}%`, `%${query}%`, query]
