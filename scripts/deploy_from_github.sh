@@ -5,12 +5,13 @@ APP_DIR="/www/wwwroot/doordrop.lat"
 CONTAINER="ship24go-doordrop"
 BRANCH="main"
 LOCK_FILE="/var/lock/doordrop-deploy.lock"
-SUCCESS_MARKER="$APP_DIR/.deploy_successful_sha"
+SUCCESS_MARKER="/var/lib/doordrop/deployed_sha"
 BACKUP_ROOT="/root/doordrop-private-backups"
 
 exec 9>"$LOCK_FILE"
 flock -n 9 || exit 0
 cd "$APP_DIR"
+mkdir -p "$(dirname "$SUCCESS_MARKER")"
 
 log() { printf '[%s] [DoorDrop-Deploy] %s\n' "$(date -u +%FT%TZ)" "$*"; }
 
