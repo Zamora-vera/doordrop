@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
 import {
+useLocation, useNavigate } from 'react-router-dom';
+import {
+  Settings,
   Volume2,
   VolumeX,
   MessageSquare,
@@ -46,8 +48,10 @@ import {
   Package,
   ChevronDown
 } from 'lucide-react';
-import { omnichannelApi } from '../lib/omnichannelApi';
-import { useI18n } from '../lib/i18n';
+import {
+omnichannelApi } from '../lib/omnichannelApi';
+import {
+useI18n } from '../lib/i18n';
 
 
 // Web Audio API soft chime for new incoming messages
