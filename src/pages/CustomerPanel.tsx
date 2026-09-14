@@ -2,7 +2,7 @@ import { OmnichannelApp } from './OmnichannelApp';
 /* ship24go-cache-bust-1789141438 */
 import React, { useEffect, useState, useRef } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
-import { BookOpen, Bot, MessageSquare, Users, LayoutDashboard, Package, Calculator, Store, Settings, LogOut, Plus, Search, Moon, Sun, Wallet, ChartPie, Plug, Box, Globe, ChevronDown, Menu, X, CheckCircle, Code, LifeBuoy, Sparkles, CreditCard, Crown, ShieldCheck, Trash2, Truck, ArrowLeft, User, MapPin, Pencil, Download, RotateCw, Clock, Eye, FileText, Info, Percent, ChevronUp } from 'lucide-react';
+import { BookOpen, Bot, MessageSquare, Users, LayoutDashboard, Package, Calculator, Store, Settings, LogOut, Plus, Search, Moon, Sun, Wallet, ChartPie, Plug, Box, Globe, ChevronDown, ChevronLeft, ChevronRight, Menu, X, CheckCircle, Code, LifeBuoy, Sparkles, CreditCard, Crown, ShieldCheck, Trash2, Truck, ArrowLeft, User, MapPin, Pencil, Download, RotateCw, Clock, Eye, FileText, Info, Percent, ChevronUp } from 'lucide-react';
 import { api, removeAuthToken, getAuthToken, setAuthToken } from '../lib/api';
 import { loadGuestQuoteSession, clearGuestQuoteSession, guestSessionToPanelState } from '../lib/guestQuoteSession';
 import { useI18n } from '../lib/i18n';
@@ -544,7 +544,7 @@ const getCarrierLogo = (_providerName: string, _serviceName: string) => {
   );
 };
 
-const Header = ({ toggleTheme, isDark, toggleMobileMenu, profile }: any) => {
+const Header = ({ toggleTheme, isDark, toggleMobileMenu, isMobileMenuOpen, profile }: any) => {
   const { t, language, setLanguage, availableLanguages } = useI18n();
   const [langOpen, setLangOpen] = useState(false);
   const { currency, setCurrency, format } = useCurrency();
@@ -559,7 +559,13 @@ const Header = ({ toggleTheme, isDark, toggleMobileMenu, profile }: any) => {
   return (
     <header className="h-16 glass-panel border-b border-gray-200 dark:border-gray-800/50 flex items-center justify-between px-4 z-50 sticky top-0 bg-white/70 dark:bg-dark-900/70 backdrop-blur-md">
         <div className="flex items-center gap-3">
-            <button onClick={toggleMobileMenu} className="md:hidden text-gray-500 hover:text-blue-500 text-xl">
+            <button
+              type="button"
+              onClick={() => toggleMobileMenu()}
+              aria-label="Abrir navegación"
+              aria-expanded={Boolean(isMobileMenuOpen)}
+              className="lg:hidden inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl text-gray-500 transition hover:bg-blue-50 hover:text-blue-500 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
               <Menu />
             </button>
             <BrandMark iconClassName="w-8 h-8 rounded-lg" textClassName="font-display text-xl hidden sm:block text-gray-900 dark:text-white" />
@@ -599,62 +605,135 @@ const Header = ({ toggleTheme, isDark, toggleMobileMenu, profile }: any) => {
   );
 };
 
-const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile }: any) => {
-  const { t } = useI18n();
+const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile, isSidebarCollapsed, toggleSidebarCollapsed }: any) => {
+  const { t, language } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
-  
-  const menu = [
-    { name: t('dashboard'), path: '/panel', icon: ChartPie },
-    { name: t('quote'), path: '/panel/quote', icon: Plus },
-    { name: t('tariffs'), path: '/panel/tariffa/', icon: Calculator },
-    { name: t('shipments'), path: '/panel/shipments', icon: Box },
-    { name: 'Marketplace', path: '/panel/marketplace', icon: Store },
-    { name: 'Omnicanal + AI', path: '/panel/omnichannel', icon: Bot },
-    { name: 'Live Chat Omnicanal', path: '/panel/omnichannel?tab=inbox', icon: MessageSquare },
-    { name: 'Equipo & Empleados', path: '/panel/omnichannel?tab=team', icon: Users },
-    { name: 'Integraciones', path: '/panel/stores', icon: Plug },
-    { name: 'Facturación & Saldo', path: '/panel/settings', icon: Wallet },
-    { name: t('tickets_support'), path: '/panel/tickets', icon: LifeBuoy },
-    { name: t('ai_copilot'), path: '/panel/copilot', icon: Sparkles },
-    { name: 'API Docs', path: '/panel/api-docs', icon: BookOpen },
+
+  const sectionCopy = language === 'it'
+    ? { principal: 'Principale', sales: 'Vendite e canali', account: 'Account e aiuto', collapse: 'Comprimi menu', expand: 'Espandi menu', close: 'Chiudi menu', logout: 'Disconnetti', active: 'Account attivo' }
+    : language.startsWith('en')
+      ? { principal: 'Main', sales: 'Sales & channels', account: 'Account & help', collapse: 'Collapse menu', expand: 'Expand menu', close: 'Close menu', logout: 'Sign out', active: 'Active account' }
+      : language === 'fr'
+        ? { principal: 'Principal', sales: 'Ventes et canaux', account: 'Compte et aide', collapse: 'Réduire le menu', expand: 'Développer le menu', close: 'Fermer le menu', logout: 'Se déconnecter', active: 'Compte actif' }
+        : language === 'de'
+          ? { principal: 'Übersicht', sales: 'Verkauf & Kanäle', account: 'Konto & Hilfe', collapse: 'Menü einklappen', expand: 'Menü ausklappen', close: 'Menü schließen', logout: 'Abmelden', active: 'Aktives Konto' }
+          : { principal: 'Principal', sales: 'Ventas y canales', account: 'Cuenta y ayuda', collapse: 'Contraer menú', expand: 'Expandir menú', close: 'Cerrar menú', logout: 'Cerrar sesión', active: 'Cuenta activa' };
+
+  const menuSections = [
+    {
+      title: sectionCopy.principal,
+      items: [
+        { name: t('dashboard'), path: '/panel', icon: ChartPie },
+        { name: t('quote'), path: '/panel/quote', icon: Plus },
+        { name: t('tariffs'), path: '/panel/tariffa/', icon: Calculator },
+        { name: t('shipments'), path: '/panel/shipments', icon: Box },
+      ],
+    },
+    {
+      title: sectionCopy.sales,
+      items: [
+        { name: 'Marketplace', path: '/panel/marketplace', icon: Store },
+        { name: 'Omnicanal + AI', path: '/panel/omnichannel', icon: Bot },
+        { name: 'Live Chat Omnicanal', path: '/panel/omnichannel?tab=inbox', icon: MessageSquare },
+        { name: 'Equipo & Empleados', path: '/panel/omnichannel?tab=team', icon: Users },
+      ],
+    },
+    {
+      title: sectionCopy.account,
+      items: [
+        { name: 'Integraciones', path: '/panel/stores', icon: Plug },
+        { name: 'Facturación & Saldo', path: '/panel/settings', icon: Wallet },
+        { name: t('tickets_support'), path: '/panel/tickets', icon: LifeBuoy },
+        { name: t('ai_copilot'), path: '/panel/copilot', icon: Sparkles },
+        { name: 'API Docs', path: '/panel/api-docs', icon: BookOpen },
+      ],
+    },
   ];
+
+  const menuItems = menuSections.flatMap((section) => section.items);
 
   return (
     <>
       {isMobileMenuOpen && (
-        <div onClick={toggleMobileMenu} className="fixed inset-0 bg-black/50 z-40 md:hidden"></div>
+        <div
+          role="presentation"
+          onClick={() => toggleMobileMenu(false)}
+          className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-[2px] lg:hidden"
+        />
       )}
-      <aside className={`fixed md:static inset-y-0 left-0 transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 transition-transform duration-300 w-64 glass-panel bg-white/80 dark:bg-dark-900/80 border-r border-gray-200 dark:border-gray-800 flex flex-col z-50`}>
-          <div className="p-4 border-b border-gray-200 dark:border-gray-800/50 flex justify-between items-center md:block">
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-gray-100 dark:bg-gray-800/50">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-400 to-cyan-500 dark:from-neon-cyan dark:to-neon-green flex items-center justify-center text-white font-bold text-lg">
+      <aside
+        aria-label="Navegación principal"
+        className={`fixed inset-y-0 left-0 z-50 flex h-screen shrink-0 transform flex-col border-r border-gray-200 bg-white/95 shadow-2xl backdrop-blur-md transition-[width,transform] duration-300 dark:border-gray-800 dark:bg-dark-900/95 lg:static lg:h-[calc(100dvh-4rem)] lg:translate-x-0 lg:shadow-none ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} w-[min(88vw,20rem)] ${isSidebarCollapsed ? 'lg:w-[4.75rem]' : 'lg:w-72'}`}
+      >
+          <div className={`flex min-h-[5.25rem] items-center gap-3 border-b border-gray-200 px-3 py-3 dark:border-gray-800/50 ${isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'}`}>
+              <div className={`flex min-w-0 items-center gap-3 rounded-2xl bg-gray-100 p-2.5 dark:bg-gray-800/50 ${isSidebarCollapsed ? 'lg:bg-transparent lg:p-0' : 'flex-1'}`}>
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-blue-400 to-cyan-500 text-lg font-bold text-white dark:from-neon-cyan dark:to-neon-green">
                       {profile?.name ? profile.name.substring(0, 2).toUpperCase() : 'US'}
                   </div>
-                  <div>
-                      <p className="text-sm font-bold text-gray-900 dark:text-white">{profile?.name || 'Cargando...'}</p>
-                      <p className="text-xs text-blue-600 dark:text-neon-cyan font-medium">Cuenta activa</p>
+                  <div className={`min-w-0 ${isSidebarCollapsed ? 'lg:hidden' : ''}`}>
+                      <p className="truncate text-sm font-bold text-gray-900 dark:text-white">{profile?.name || 'Cargando...'}</p>
+                      <p className="text-xs font-medium text-blue-600 dark:text-neon-cyan">{sectionCopy.active}</p>
                   </div>
               </div>
-              <button onClick={toggleMobileMenu} className="md:hidden text-gray-500 text-xl"><X /></button>
+              <button
+                type="button"
+                onClick={() => toggleMobileMenu(false)}
+                aria-label={sectionCopy.close}
+                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xl text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 lg:hidden"
+              >
+                <X className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleSidebarCollapsed()}
+                aria-label={isSidebarCollapsed ? sectionCopy.expand : sectionCopy.collapse}
+                title={isSidebarCollapsed ? sectionCopy.expand : sectionCopy.collapse}
+                className="hidden min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xl text-gray-500 transition hover:bg-blue-50 hover:text-blue-600 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-neon-cyan lg:inline-flex"
+              >
+                {isSidebarCollapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
+              </button>
           </div>
 
-          <nav className="p-4 space-y-1 flex-1 overflow-y-auto">
-              {menu.map(item => {
-                const active = item.path.includes('?')
-                  ? (location.pathname + location.search) === item.path
-                  : (location.pathname === item.path && (!location.search || !menu.some(m => m.path === location.pathname + location.search)));
-                return (
-                  <Link key={item.path} onClick={() => { if (window.innerWidth < 768) toggleMobileMenu(); }} to={item.path} className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${active ? 'bg-blue-50 text-blue-600 dark:bg-gray-800 dark:text-neon-cyan' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800/50'}`}>
-                      <item.icon className={`w-5 h-5 ${active ? 'text-blue-500 dark:text-neon-cyan' : ''}`} /> <span>{item.name}</span>
-                  </Link>
-                )
-              })}
+          <nav className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-3 sm:p-4" aria-label="Secciones del panel">
+              {menuSections.map((section) => (
+                <div key={section.title}>
+                  <div className={`mb-1.5 px-3 text-[10px] font-black uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500 ${isSidebarCollapsed ? 'lg:text-center lg:px-0' : ''}`}>
+                    <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>{section.title}</span>
+                    {isSidebarCollapsed && <span className="hidden lg:inline">···</span>}
+                  </div>
+                  <div className="space-y-1">
+                    {section.items.map((item) => {
+                      const active = item.path.includes('?')
+                        ? (location.pathname + location.search) === item.path
+                        : (location.pathname === item.path && (!location.search || !menuItems.some((menuItem) => menuItem.path === location.pathname + location.search)));
+                      return (
+                        <Link
+                          key={item.path}
+                          to={item.path}
+                          onClick={() => toggleMobileMenu(false)}
+                          title={isSidebarCollapsed ? item.name : undefined}
+                          className={`group flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${isSidebarCollapsed ? 'lg:justify-center lg:px-0' : ''} ${active ? 'bg-blue-50 text-blue-600 shadow-sm dark:bg-gray-800 dark:text-neon-cyan' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800/60'}`}
+                        >
+                          <item.icon className={`h-5 w-5 shrink-0 ${active ? 'text-blue-500 dark:text-neon-cyan' : 'text-gray-500 group-hover:text-blue-500 dark:text-gray-400'}`} />
+                          <span className={`min-w-0 truncate ${isSidebarCollapsed ? 'lg:hidden' : ''}`}>{item.name}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
           </nav>
-          
-          <div className="p-4 border-t border-gray-200 dark:border-gray-800/50">
-              <button onClick={() => { removeAuthToken(); navigate('/auth/login'); }} className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors">
-                  <LogOut className="w-5 h-5" /> <span>Cerrar Sesión</span>
+
+          <div className={`border-t border-gray-200 p-3 dark:border-gray-800/50 sm:p-4 ${isSidebarCollapsed ? 'lg:px-2' : ''}`}>
+              <button
+                type="button"
+                onClick={() => { removeAuthToken(); navigate('/auth/login'); }}
+                title={isSidebarCollapsed ? sectionCopy.logout : undefined}
+                className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-red-500 transition-colors hover:bg-red-50 dark:hover:bg-red-900/20 ${isSidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}
+              >
+                  <LogOut className="h-5 w-5 shrink-0" />
+                  <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>{sectionCopy.logout}</span>
               </button>
           </div>
       </aside>
@@ -665,6 +744,7 @@ const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile }: any) => {
 const Dashboard = ({ profile }: any) => {
   const { t, language } = useI18n();
   const { format } = useCurrency();
+  const accountCurrency = String(profile?.currency || 'EUR').toUpperCase();
   const [shipments, setShipments] = useState<any[]>([]);
   const [reports, setReports] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -780,7 +860,7 @@ const Dashboard = ({ profile }: any) => {
           <div className="glass-panel p-5 sm:p-6 rounded-3xl border-l-4 border-l-blue-500 dark:border-l-neon-cyan relative overflow-hidden group md:col-span-1">
               <div className="absolute right-[-10%] top-[-20%] text-blue-500/10 dark:text-neon-cyan/10 text-9xl group-hover:scale-110 transition-transform"><Wallet /></div>
               <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Saldo disponible</p>
-              <h3 className="font-display text-4xl font-bold text-gray-900 dark:text-white mb-4">{format(Number(profile?.balance || 0))}</h3>
+              <h3 className="font-display text-4xl font-bold text-gray-900 dark:text-white mb-4">{format(Number(profile?.balance || 0), accountCurrency)}</h3>
               <Link to="/panel/settings" className="text-xs font-bold text-blue-600 dark:text-neon-cyan uppercase tracking-wider hover:underline">Recargar saldo →</Link>
           </div>
 
@@ -890,7 +970,7 @@ const Quote = () => {
   const { t, language } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
-  const { currency, format, setCurrency } = useCurrency();
+  const { currency, convert, format, setCurrency } = useCurrency();
   const [form, setForm] = useState({
     originCountry: 'ES',
     originZip: '',
@@ -1317,7 +1397,9 @@ const Quote = () => {
 
   if (activeStep === 'complete') {
     const isInternational = form.originCountry !== form.destCountry;
-    const isBalanceEnough = (profile?.balance || 0) >= selectedQuote.total;
+    const walletCurrency = String(profile?.currency || currency || 'EUR').toUpperCase();
+    const requiredWalletAmount = convert(Number(selectedQuote.total || 0), selectedQuote.currency || form.currency || walletCurrency);
+    const isBalanceEnough = Number(profile?.balance || 0) >= requiredWalletAmount;
     const needsSenderPoint = quoteNeedsSenderPoint(selectedQuote);
     const needsReceiverPoint = quoteNeedsReceiverPoint(selectedQuote);
     const pointSelectionReady = (!needsSenderPoint || Boolean(selectedDrops.sender)) && (!needsReceiverPoint || Boolean(selectedDrops.receiver));
@@ -1700,7 +1782,7 @@ const Quote = () => {
             <div className="glass-panel p-6 rounded-3xl border border-gray-200 dark:border-gray-800 space-y-6">
               <div className="flex justify-between items-center">
                 <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Tu Monedero</span>
-                <span className="text-md font-black text-gray-900 dark:text-white">{format(profile?.balance || 0)}</span>
+                <span className="text-md font-black text-gray-900 dark:text-white">{format(Number(profile?.balance || 0), walletCurrency)}</span>
               </div>
 
               {isBalanceEnough ? (
@@ -2891,7 +2973,7 @@ const CustomerWalletTransfer = () => {
       const res = await api.submitWalletTransferProof({
         bankAccountId: selectedBankId,
         amount: Number(amount || 0),
-        currency,
+        currency: selected?.currency || currency,
         referenceNumber,
         payerName,
         note,
@@ -2936,7 +3018,8 @@ const CustomerWalletTransfer = () => {
         <div className="grid grid-cols-1 xl:grid-cols-[1fr_.9fr] gap-8">
           <div className="glass-panel rounded-3xl border border-gray-200 dark:border-gray-800 p-6 md:p-8">
             <h2 className="text-xl font-black text-gray-900 dark:text-white mb-2">{t('bank_selected_for_currency')}</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">{currency}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">{selected?.currency || currency}</p>
+            {selected?.currencyMismatch && <p className="mb-5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/50 p-3 text-xs font-bold text-amber-700 dark:text-amber-300">No hay una cuenta bancaria configurada en {currency}. Este ingreso se registrará en {selected.currency} y se convertirá a tu wallet al aprobarse.</p>}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               {accounts.map((account: any) => (
                 <button key={account.id} onClick={() => setSelectedBankId(account.id)} className={`text-left rounded-2xl border p-5 transition-all ${selectedBankId === account.id ? 'border-blue-500 bg-blue-50 dark:bg-neon-cyan/10 dark:border-neon-cyan' : 'border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-dark-800/60 hover:border-blue-300'}`}>
@@ -2969,7 +3052,7 @@ const CustomerWalletTransfer = () => {
           <form onSubmit={submit} className="glass-panel rounded-3xl border border-gray-200 dark:border-gray-800 p-6 md:p-8 space-y-5">
             <h2 className="text-xl font-black text-gray-900 dark:text-white">{t('bank_upload_receipt')}</h2>
             <div>
-              <label className="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('bank_transfer_amount')}</label>
+              <label className="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('bank_transfer_amount')} ({selected?.currency || currency})</label>
               <input required type="number" min="1" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="input-dynamic font-bold" />
             </div>
             <div>
@@ -3025,6 +3108,7 @@ const CustomerSettings = () => {
   const [selectedSubscriptionMethod, setSelectedSubscriptionMethod] = useState<'wallet' | 'polar' | 'paypal'>('wallet');
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [bankPreview, setBankPreview] = useState<any>(null);
+  const walletCurrency = String(profile?.currency || 'EUR').toUpperCase();
   
   const hydrateSettingsForm = (user: any, companyData: any = null) => {
     const accountCurrency = String(user?.currency || 'EUR').toUpperCase();
@@ -3240,10 +3324,11 @@ const CustomerSettings = () => {
         </div>
         <div className="glass-panel rounded-2xl p-5 border border-gray-200 dark:border-gray-800">
           <label className="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Moneda del panel</label>
-          <select value={billingForm.currency} onChange={e => { const nextCurrency = e.target.value; setBillingForm({...billingForm, currency: nextCurrency}); setCurrency(nextCurrency); localStorage.setItem('ship24go_currency_manual', '1'); loadSubscriptionAndBankOptions(nextCurrency); }} className="input-dynamic font-bold">
+          <select value={billingForm.currency} onChange={e => { const nextCurrency = e.target.value; setBillingForm({...billingForm, currency: nextCurrency}); loadSubscriptionAndBankOptions(nextCurrency); }} className="input-dynamic font-bold">
             {availableCurrencies.map(c => <option key={c.code} value={c.code}>{c.code} ({c.symbol}) - {c.name}</option>)}
           </select>
           <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">La cotización y el saldo se muestran en esta moneda.</p>
+          {billingForm.currency !== walletCurrency && <p className="text-[10px] text-amber-600 dark:text-amber-300 mt-1">Al guardar, tu saldo se convertirá de {walletCurrency} a {billingForm.currency} con la tasa vigente.</p>}
         </div>
         <div className="glass-panel rounded-2xl p-5 border border-gray-200 dark:border-gray-800">
           <label className="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Apariencia</label>
@@ -3281,7 +3366,7 @@ const CustomerSettings = () => {
                   <div className="flex items-center justify-between mb-6">
                       <h3 className="font-bold text-lg flex items-center gap-2 dark:text-white"><Wallet className="text-blue-500 dark:text-neon-cyan" /> Mi Monedero</h3>
                       <span className="text-2xl font-black text-blue-600 dark:text-neon-cyan">
-                        {format(Number(profile?.balance || 0))}
+                        {format(Number(profile?.balance || 0), walletCurrency)}
                       </span>
                   </div>
                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Añade fondos para generar etiquetas de forma instantánea. La recarga acredita el saldo solicitado, sin margen ni impuesto adicional.</p>
@@ -3292,21 +3377,21 @@ const CustomerSettings = () => {
                         disabled={rechargeLoading}
                         className="py-3 border border-gray-200 dark:border-gray-700 rounded-xl hover:border-pink-500 dark:hover:border-neon-pink text-gray-700 dark:text-gray-300 font-bold transition-all hover:scale-105 active:scale-95 disabled:opacity-50 cursor-pointer"
                       >
-                        +{format(50)}
+                        +{format(50, walletCurrency)}
                       </button>
                       <button 
                         onClick={() => handleRecharge(100)}
                         disabled={rechargeLoading}
                         className="py-3 border-2 border-pink-500 bg-pink-50/10 text-pink-600 dark:text-neon-pink rounded-xl font-bold shadow-sm hover:scale-105 active:scale-95 disabled:opacity-50 cursor-pointer"
                       >
-                        +{format(100)}
+                        +{format(100, walletCurrency)}
                       </button>
                       <button 
                         onClick={() => handleRecharge(200)}
                         disabled={rechargeLoading}
                         className="py-3 border border-gray-200 dark:border-gray-700 rounded-xl hover:border-pink-500 dark:hover:border-neon-pink text-gray-700 dark:text-gray-300 font-bold transition-all hover:scale-105 active:scale-95 disabled:opacity-50 cursor-pointer"
                       >
-                        +{format(200)}
+                        +{format(200, walletCurrency)}
                       </button>
                   </div>
               </div>
@@ -3423,7 +3508,7 @@ const CustomerSettings = () => {
           </div>
           <div className="rounded-2xl bg-gray-50 dark:bg-dark-800 border border-gray-100 dark:border-gray-800 p-4 min-w-[220px]">
             <p className="text-xs font-black text-gray-500 uppercase tracking-wider">Saldo disponible</p>
-            <p className="text-2xl font-black text-blue-600 dark:text-neon-cyan">{format(Number(profile?.balance || 0), billingForm.currency)}</p>
+            <p className="text-2xl font-black text-blue-600 dark:text-neon-cyan">{format(Number(profile?.balance || 0), walletCurrency)}</p>
           </div>
         </div>
 
@@ -3563,7 +3648,7 @@ const CustomerSettings = () => {
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Moneda predeterminada</label>
-                <select value={billingForm.currency} onChange={e => { const nextCurrency = e.target.value; setBillingForm({...billingForm, currency: nextCurrency}); setCurrency(nextCurrency); localStorage.setItem('ship24go_currency_manual', '1'); loadSubscriptionAndBankOptions(nextCurrency); }} className="input-dynamic font-bold">
+                <select value={billingForm.currency} onChange={e => { const nextCurrency = e.target.value; setBillingForm({...billingForm, currency: nextCurrency}); loadSubscriptionAndBankOptions(nextCurrency); }} className="input-dynamic font-bold">
                   {availableCurrencies.map(c => <option key={c.code} value={c.code}>{c.code} ({c.symbol}) - {c.name}</option>)}
                 </select>
                 <p className="text-[10px] text-gray-400 mt-1">El cotizador usará esta moneda automáticamente.</p>
@@ -3618,7 +3703,7 @@ const CustomerSettings = () => {
             </div>
 
             <div className="pt-4 border-t border-gray-200 dark:border-gray-800 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-               <p className="text-xs text-gray-500 dark:text-gray-400">Saldo actual: <span className="font-black text-gray-900 dark:text-white">{format(Number(profile?.balance || 0), billingForm.currency)}</span></p>
+               <p className="text-xs text-gray-500 dark:text-gray-400">Saldo actual: <span className="font-black text-gray-900 dark:text-white">{format(Number(profile?.balance || 0), walletCurrency)}</span></p>
                <button disabled={settingsSaving} className="bg-gray-900 dark:bg-white text-white dark:text-gray-900 px-6 py-2.5 rounded-full font-bold hover:shadow-lg transition-transform hover:-translate-y-1 text-sm disabled:opacity-50">
                  {settingsSaving ? 'Guardando...' : 'Guardar configuración'}
                </button>
@@ -3674,6 +3759,7 @@ export default function CustomerPanel() {
     return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches;
   });
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => localStorage.getItem('doordrop-sidebar-collapsed') === '1');
   const [profile, setProfile] = useState<any>(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -3687,6 +3773,24 @@ export default function CustomerPanel() {
     }
     api.getProfile().then(res => setProfile(res.user)).catch(() => {});
   }, [location.pathname]);
+
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    if (!isMobileMenuOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsMobileMenuOpen(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isMobileMenuOpen]);
 
   useEffect(() => {
     const applyTheme = () => {
@@ -3715,8 +3819,16 @@ export default function CustomerPanel() {
     window.dispatchEvent(new Event('ship24go-theme-change'));
   };
 
-  const toggleMobileMenu = () => {
-    setIsMobileMenuOpen(!isMobileMenuOpen);
+  const toggleMobileMenu = (next?: boolean) => {
+    setIsMobileMenuOpen((previous) => typeof next === 'boolean' ? next : !previous);
+  };
+
+  const toggleSidebarCollapsed = () => {
+    setIsSidebarCollapsed((previous) => {
+      const next = !previous;
+      localStorage.setItem('doordrop-sidebar-collapsed', next ? '1' : '0');
+      return next;
+    });
   };
 
   const adminBackupToken = typeof window !== 'undefined' ? localStorage.getItem('ship24go_admin_token_backup') : null;
@@ -3741,10 +3853,10 @@ export default function CustomerPanel() {
           <button onClick={returnToAdmin} className="px-3 py-1.5 rounded-lg bg-white text-slate-900 text-xs font-black hover:bg-slate-100">Volver al Super Admin</button>
         </div>
       )}
-      <div className="print:hidden"><Header toggleTheme={toggleTheme} isDark={isDark} toggleMobileMenu={toggleMobileMenu} profile={profile} /></div>
-      <div className="flex flex-1 overflow-hidden relative print:block print:overflow-visible">
-        <div className="print:hidden"><Sidebar isMobileMenuOpen={isMobileMenuOpen} toggleMobileMenu={toggleMobileMenu} profile={profile} /></div>
-        <main className="flex-1 p-4 md:p-8 overflow-y-auto h-[calc(100vh-4rem)] print:block print:h-auto print:min-h-0 print:overflow-visible print:p-0">
+      <div className="print:hidden"><Header toggleTheme={toggleTheme} isDark={isDark} isMobileMenuOpen={isMobileMenuOpen} toggleMobileMenu={toggleMobileMenu} profile={profile} /></div>
+      <div className="relative flex min-h-0 flex-1 overflow-hidden print:block print:overflow-visible">
+        <div className="print:hidden"><Sidebar isMobileMenuOpen={isMobileMenuOpen} toggleMobileMenu={toggleMobileMenu} isSidebarCollapsed={isSidebarCollapsed} toggleSidebarCollapsed={toggleSidebarCollapsed} profile={profile} /></div>
+        <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 md:p-8 h-[calc(100dvh-4rem)] print:block print:h-auto print:min-h-0 print:overflow-visible print:p-0">
           <PanelErrorBoundary>
           <Routes>
             <Route path="/" element={<Dashboard profile={profile} />} />

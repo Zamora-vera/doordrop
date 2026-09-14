@@ -828,37 +828,22 @@ export function OmnichannelApp({ profile }: { profile: any }) {
     try {
       const res = await omnichannelApi.getPlans(clientCurrency);
       setPlansData(res);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setPlansData({ plans: [], addOns: [], error: e?.message || 'No se pudo cargar el catálogo.' });
     }
   };
 
-  // Handle Polar / Wallet Subscription Checkout
-  const handleSubscribe = async (plan: any, method: 'polar' | 'wallet') => {
+  // Handle the only supported activation path: a recurring Polar checkout.
+  const handleSubscribe = async (plan: any) => {
     setSubscribingCode(plan.code);
     try {
-      if (method === 'polar') {
-        // Create Polar Checkout Session in USD
-        const polarRes = await fetch('/api/subscriptions/polar/plan-checkout', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: localStorage.getItem('spedire_token') || ''
-          },
-          body: JSON.stringify({ planId: plan.polar_plan_id || 'plan_enterprise' })
-        });
-        const pData = await polarRes.json();
-        if (pData.url) {
-          window.location.href = pData.url;
-          return;
-        }
+      if (!plan.checkout_ready) {
+        throw new Error('Este plan todavía no está configurado en Polar. El administrador debe asociar su producto recurrente.');
       }
-
-      // Wallet / Immediate fallback
-      await omnichannelApi.subscribePlan(plan.code);
-      alert('¡Plan Omnicanal activado con éxito!');
-      loadDashboard();
-      setActiveTab('dashboard');
+      const pData = await omnichannelApi.createPolarCheckout(plan.id);
+      if (!pData.url) throw new Error('Polar no devolvió una URL de checkout.');
+      window.location.href = pData.url;
     } catch (e: any) {
       alert(e.message || 'Error activando plan');
     } finally {
@@ -883,7 +868,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
     if (activeTab === 'team' || activeTab === 'inbox') loadTeam();
   }, [activeTab]);
 
-  const currentPlanCode = data?.subscription?.plan_code || 'whatsapp';
+  const currentPlanCode = data?.subscription?.is_active ? data.subscription.plan_code : null;
 
 
   // -------------------------------------------------------------------------
@@ -2166,17 +2151,22 @@ export function OmnichannelApp({ profile }: { profile: any }) {
               <div>
                 <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">{t.activePlan}</span>
                 <h3 className="text-base font-black text-gray-900 dark:text-white uppercase">
-                  {data?.subscription?.plan_code === 'omni3' ? 'DoorDrop Omni 3 (WhatsApp + IG + FB + Telegram)' : data?.subscription?.plan_code === 'duo' ? 'DoorDrop Duo' : 'WhatsApp Dedicated'}
+                  {data?.subscription?.is_active
+                    ? (data.subscription.plan_code === 'omni3' ? 'DoorDrop Omni 3 (WhatsApp + IG + FB)' : data.subscription.plan_code === 'duo' ? 'DoorDrop Duo' : 'WhatsApp Dedicated')
+                    : 'Sin suscripción Omnicanal activa'}
                 </h3>
               </div>
             </div>
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
                 <div className="text-sm font-bold text-gray-900 dark:text-white">
-                  {clientCurrency === 'USD' ? '$' : '€'}{data?.subscription?.monthly_price || '24.99'} / mes
+                  {data?.subscription?.is_active
+                    ? `${data.subscription.currency === 'USD' ? '$' : data.subscription.currency + ' '}${Number(data.subscription.monthly_price || 0).toFixed(2)} / mes`
+                    : '—'}
                 </div>
-                <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1 justify-end">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Activo
+                <div className={`text-[11px] font-semibold flex items-center gap-1 justify-end ${data?.subscription?.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                  <span className={`w-2 h-2 rounded-full ${data?.subscription?.is_active ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+                  {data?.subscription?.is_active ? 'Activo' : 'Requiere suscripción'}
                 </div>
               </div>
               <button
@@ -2196,9 +2186,9 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 <Share2 className="w-4 h-4 text-blue-500" />
               </div>
               <div className="text-2xl font-black mt-2 text-gray-900 dark:text-white">
-                {data?.metrics?.total_channels || 0} <span className="text-sm font-normal text-gray-400">/ {data?.metrics?.channels_limit || 15}</span>
+                {data?.metrics?.total_channels || 0} <span className="text-sm font-normal text-gray-400">/ {data?.metrics?.channels_limit ?? 0}</span>
               </div>
-              <p className="text-xs text-gray-500 mt-1">Límite ampliado</p>
+              <p className="text-xs text-gray-500 mt-1">{data?.subscription?.is_active ? 'Canales incluidos en tu plan' : 'Activa un plan para conectar canales'}</p>
             </div>
 
             <div className="p-5 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-sm">
@@ -2223,7 +2213,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 {data?.metrics?.messages?.total_messages || 0}
               </div>
               <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium mt-1">
-                {t.unlimited}
+                {data?.subscription?.is_active ? t.unlimited : 'Disponible con suscripción activa'}
               </p>
             </div>
 
@@ -2232,12 +2222,13 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 <span>{t.aiEmployee}</span>
                 <Bot className="w-4 h-4 text-purple-500" />
               </div>
-              <div className="text-lg font-bold mt-2 text-gray-900 dark:text-white truncate">
-                DeepSeek AI
-              </div>
-              <p className="text-xs text-purple-600 dark:text-purple-400 font-medium mt-1 flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span> 24/7 En línea
-              </p>
+                <div className="text-lg font-bold mt-2 text-gray-900 dark:text-white truncate">
+                 {data?.subscription?.is_active ? 'DeepSeek AI' : 'DeepSeek AI bloqueado'}
+                </div>
+                <p className="text-xs text-purple-600 dark:text-purple-400 font-medium mt-1 flex items-center gap-1">
+                 <span className={`w-2 h-2 rounded-full inline-block ${data?.subscription?.is_active ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+                 {data?.subscription?.is_active ? '24/7 En línea' : 'Requiere suscripción Polar'}
+                </p>
             </div>
           </div>
 
@@ -2297,10 +2288,12 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                   <Bot className="w-4 h-4" /> DeepSeek AI DoorDrop
                 </div>
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                  Herramientas Conectadas
+                  {data?.subscription?.is_active ? 'Herramientas Conectadas' : 'Capacidades disponibles al activar'}
                 </h3>
                 <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                  Tu empleado virtual consulta directamente la base de datos de DoorDrop para responder con precisión:
+                  {data?.subscription?.is_active
+                    ? 'Tu empleado virtual consulta directamente la base de datos de DoorDrop para responder con precisión:'
+                    : 'Activa una suscripción Polar para habilitar el empleado virtual y sus herramientas:'}
                 </p>
                 <div className="space-y-2 mt-4 text-xs font-medium text-gray-700 dark:text-gray-300">
                   <div className="flex items-center gap-2">
@@ -3184,12 +3177,14 @@ export function OmnichannelApp({ profile }: { profile: any }) {
             </p>
           </div>
 
+          {plansData?.error && (
+            <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs">
+              {plansData.error}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {(plansData?.plans || [
-              { code: 'whatsapp', name: 'WhatsApp Dedicated', price: 9.99, channels_included: 1 },
-              { code: 'duo', name: 'DoorDrop Duo', price: 18.00, channels_included: 2, popular: true },
-              { code: 'omni3', name: 'DoorDrop Omni 3', price: 24.99, channels_included: 3 }
-            ]).map((p: any) => {
+            {(plansData?.plans || []).map((p: any) => {
               const isCurrent = currentPlanCode === p.code;
               return (
                 <div
@@ -3216,7 +3211,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                     <h3 className="text-lg font-black text-gray-900 dark:text-white">{p.name}</h3>
                     <div className="mt-4 flex items-baseline gap-1">
                       <span className="text-4xl font-black text-gray-900 dark:text-white">
-                        {p.currency === 'USD' ? '$' : '€'}{p.price}
+                        {p.currency === 'USD' ? '$' : `${p.currency} `}{Number(p.price || 0).toFixed(2)}
                       </span>
                       <span className="text-xs text-gray-500">/ mes</span>
                     </div>
@@ -3242,25 +3237,21 @@ export function OmnichannelApp({ profile }: { profile: any }) {
 
                   <div className="mt-8 space-y-2">
                     <button
-                      onClick={() => handleSubscribe(p, 'polar')}
-                      disabled={subscribingCode === p.code || isCurrent}
+                      onClick={() => handleSubscribe(p)}
+                      disabled={subscribingCode === p.code || isCurrent || !p.checkout_ready}
                       className={`w-full py-2.5 rounded-xl font-bold text-xs transition shadow-md flex items-center justify-center gap-1.5 ${
                         isCurrent
                           ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 cursor-default'
+                          : !p.checkout_ready
+                          ? 'bg-gray-100 dark:bg-gray-800 text-gray-500 cursor-not-allowed'
                           : 'bg-blue-600 hover:bg-blue-700 text-white'
                       }`}
                     >
                       <CreditCard className="w-3.5 h-3.5" />
-                      {isCurrent ? t.currentPlanBadge : t.polarCheckout}
+                      {isCurrent ? t.currentPlanBadge : p.checkout_ready ? t.polarCheckout : 'Polar pendiente'}
                     </button>
-                    {!isCurrent && (
-                      <button
-                        onClick={() => handleSubscribe(p, 'wallet')}
-                        disabled={subscribingCode === p.code}
-                        className="w-full py-2 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 font-semibold text-xs transition flex items-center justify-center gap-1.5"
-                      >
-                        <Wallet className="w-3.5 h-3.5" /> {t.walletPay}
-                      </button>
+                    {!isCurrent && !p.checkout_ready && (
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 text-center">El Super Admin debe asociar el producto recurrente de Polar.</p>
                     )}
                   </div>
                 </div>
@@ -3268,31 +3259,26 @@ export function OmnichannelApp({ profile }: { profile: any }) {
             })}
           </div>
 
+          {(!plansData || plansData.plans?.length === 0) && !plansData?.error && (
+            <div className="p-8 rounded-2xl border border-dashed border-gray-300 dark:border-gray-700 text-center text-xs text-gray-500">
+              No hay planes Omnicanal publicados en este momento.
+            </div>
+          )}
+
           {/* Add-ons List */}
           <div className="p-6 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-sm">
             <h3 className="text-base font-bold text-gray-900 dark:text-white mb-3">Módulos & Canales Adicionales</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-4 rounded-xl border border-gray-200 dark:border-gray-800 flex justify-between items-center">
-                <div>
-                  <h4 className="text-xs font-bold text-gray-900 dark:text-white">Canal Adicional</h4>
-                  <p className="text-[11px] text-gray-500">Agrega cualquier red extra a tu plan.</p>
+              {(plansData?.addOns || []).map((addon: any) => (
+                <div key={addon.code} className="p-4 rounded-xl border border-gray-200 dark:border-gray-800 flex justify-between items-center gap-3">
+                  <div>
+                    <h4 className="text-xs font-bold text-gray-900 dark:text-white">{addon.name}</h4>
+                    <p className="text-[11px] text-gray-500">{addon.description}</p>
+                    {!addon.checkout_ready && <p className="text-[10px] text-amber-600 mt-1">Disponible cuando Polar esté configurado.</p>}
+                  </div>
+                  <span className="font-bold text-sm text-blue-600 whitespace-nowrap">{addon.currency === 'USD' ? '$' : `${addon.currency} `}{Number(addon.price || 0).toFixed(2)} / mes</span>
                 </div>
-                <span className="font-bold text-sm text-blue-600">USD 8.00 / mes</span>
-              </div>
-              <div className="p-4 rounded-xl border border-gray-200 dark:border-gray-800 flex justify-between items-center">
-                <div>
-                  <h4 className="text-xs font-bold text-gray-900 dark:text-white">Comment-to-DM</h4>
-                  <p className="text-[11px] text-gray-500">Convierte comentarios en ventas directas.</p>
-                </div>
-                <span className="font-bold text-sm text-blue-600">{clientCurrency === 'USD' ? '$' : '€'}2.00 / mes</span>
-              </div>
-              <div className="p-4 rounded-xl border border-gray-200 dark:border-gray-800 flex justify-between items-center">
-                <div>
-                  <h4 className="text-xs font-bold text-gray-900 dark:text-white">Auto-Publishing</h4>
-                  <p className="text-[11px] text-gray-500">Programador multicanal con calendario.</p>
-                </div>
-                <span className="font-bold text-sm text-blue-600">{clientCurrency === 'USD' ? '$' : '€'}2.00 / mes</span>
-              </div>
+              ))}
             </div>
           </div>
         </div>

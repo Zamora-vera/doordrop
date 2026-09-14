@@ -15,7 +15,8 @@ import {
   Check,
   Radio,
   Bot,
-  Percent
+  Percent,
+  CreditCard
 } from 'lucide-react';
 import { omnichannelApi } from '../lib/omnichannelApi';
 
@@ -26,17 +27,20 @@ export function AdminOmnichannel() {
   const [testingAi, setTestingAi] = useState(false);
   const [overview, setOverview] = useState<any>(null);
   const [clients, setClients] = useState<any[]>([]);
+  const [catalogPlans, setCatalogPlans] = useState<any[]>([]);
+  const [catalogAddons, setCatalogAddons] = useState<any[]>([]);
+  const [savingCatalogId, setSavingCatalogId] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Form settings
   const [formData, setFormData] = useState({
-    zernio_api_key: 'sk_895a0c3cf6da498f854c000ef72860d0ca5f5c313464055e44e07454a50cfa7a',
-    zernio_webhook_secret: 'whsec_dd_omni_895a0c3cf6da498f854c000ef72860d0',
+    zernio_api_key: '',
+    zernio_webhook_secret: '',
     zernio_api_url: 'https://zernio.com/api/v1',
     omnichannel_extra_channel_usd: '8.00',
     omnichannel_default_currency: 'EUR',
-    deepseek_api_key: 'sk-placeholder-api-key',
+    deepseek_api_key: '',
     deepseek_api_url: 'https://api.deepseek.com',
     deepseek_model: 'deepseek-chat',
     omnichannel_ai_margin_percent: '10.0'
@@ -51,12 +55,12 @@ export function AdminOmnichannel() {
         const map: any = {};
         res.settings.forEach((s: any) => { map[s.setting_key] = s.setting_value; });
         setFormData({
-          zernio_api_key: map.zernio_api_key || formData.zernio_api_key,
-          zernio_webhook_secret: map.zernio_webhook_secret || formData.zernio_webhook_secret,
+          zernio_api_key: map.zernio_api_key || '',
+          zernio_webhook_secret: map.zernio_webhook_secret || '',
           zernio_api_url: map.zernio_api_url || formData.zernio_api_url,
           omnichannel_extra_channel_usd: map.omnichannel_extra_channel_usd || '8.00',
           omnichannel_default_currency: map.omnichannel_default_currency || 'EUR',
-          deepseek_api_key: map.deepseek_api_key || formData.deepseek_api_key,
+          deepseek_api_key: map.deepseek_api_key || '',
           deepseek_api_url: map.deepseek_api_url || formData.deepseek_api_url,
           deepseek_model: map.deepseek_model || formData.deepseek_model,
           omnichannel_ai_margin_percent: map.omnichannel_ai_margin_percent || '10.0'
@@ -65,10 +69,41 @@ export function AdminOmnichannel() {
 
       const clientRes = await omnichannelApi.getAdminClients();
       setClients(clientRes.clients || []);
+      const catalogRes = await omnichannelApi.getAdminPlans();
+      setCatalogPlans(catalogRes.plans || []);
+      setCatalogAddons(catalogRes.addOns || []);
     } catch (err: any) {
       setErrorMsg(err.message || 'Error al cargar configuración de Super Admin');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCatalogSave = async (item: any, kind: 'plan' | 'addon') => {
+    setSavingCatalogId(item.id);
+    setStatusMsg(null);
+    setErrorMsg(null);
+    try {
+      const payload = {
+        name: item.name,
+        description: item.description,
+        price: Number(item.price),
+        currency: item.currency,
+        billing_interval: item.billing_interval || 'month',
+        channels_limit: Number(item.channels_limit || 1),
+        polar_product_id: item.polar_product_id || '',
+        polar_price_id: item.polar_price_id || '',
+        polar_enabled: Boolean(item.polar_enabled),
+        is_active: Boolean(item.is_active)
+      };
+      if (kind === 'plan') await omnichannelApi.updateAdminPlan(item.id, payload);
+      else await omnichannelApi.updateAdminAddon(item.id, payload);
+      setStatusMsg(`${kind === 'plan' ? 'Plan' : 'Complemento'} actualizado correctamente.`);
+      await loadData();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'No se pudo actualizar el catálogo.');
+    } finally {
+      setSavingCatalogId(null);
     }
   };
 
@@ -189,6 +224,63 @@ export function AdminOmnichannel() {
         <div className="p-5 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-sm">
           <div className="text-xs font-bold text-gray-400 uppercase">Mensajes Procesados</div>
           <div className="text-2xl font-black mt-2 text-indigo-600 dark:text-indigo-400">{overview?.total_messages || 0}</div>
+        </div>
+      </div>
+
+      {/* Polar catalog: IDs are public product references, never secrets. */}
+      <div className="p-6 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-sm space-y-5">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+            <CreditCard className="w-5 h-5 text-amber-500" /> Catálogo recurrente Polar
+          </h2>
+          <p className="text-xs text-gray-500 mt-1">
+            Aquí se vincula cada plan con su producto recurrente real de Polar. Sin un Product ID, el checkout permanece bloqueado y no se activa ningún acceso.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          {catalogPlans.map((plan, index) => (
+            <div key={plan.id} className="p-4 rounded-xl border border-gray-200 dark:border-gray-800 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-bold text-gray-900 dark:text-white">{plan.code}</div>
+                  <div className="text-[11px] text-gray-500">{plan.id} · {plan.checkout_ready ? 'Checkout listo' : 'Falta producto Polar'}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCatalogSave(plan, 'plan')}
+                  disabled={savingCatalogId === plan.id}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs font-bold"
+                >
+                  {savingCatalogId === plan.id ? 'Guardando...' : 'Guardar plan'}
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+                <input value={plan.name || ''} onChange={e => setCatalogPlans(prev => prev.map((x, i) => i === index ? { ...x, name: e.target.value } : x))} className="md:col-span-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs" placeholder="Nombre" />
+                <input type="number" step="0.01" value={plan.price ?? ''} onChange={e => setCatalogPlans(prev => prev.map((x, i) => i === index ? { ...x, price: e.target.value } : x))} className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs" placeholder="Precio" />
+                <input value={plan.currency || ''} onChange={e => setCatalogPlans(prev => prev.map((x, i) => i === index ? { ...x, currency: e.target.value.toUpperCase() } : x))} className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs" placeholder="USD" maxLength={3} />
+                <input type="number" min="1" value={plan.channels_limit ?? ''} onChange={e => setCatalogPlans(prev => prev.map((x, i) => i === index ? { ...x, channels_limit: e.target.value } : x))} className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs" placeholder="Canales" />
+                <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300"><input type="checkbox" checked={Boolean(plan.is_active)} onChange={e => setCatalogPlans(prev => prev.map((x, i) => i === index ? { ...x, is_active: e.target.checked } : x))} /> Publicado</label>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input value={plan.polar_product_id || ''} onChange={e => setCatalogPlans(prev => prev.map((x, i) => i === index ? { ...x, polar_product_id: e.target.value } : x))} className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs font-mono" placeholder="Polar Product ID" />
+                <input value={plan.polar_price_id || ''} onChange={e => setCatalogPlans(prev => prev.map((x, i) => i === index ? { ...x, polar_price_id: e.target.value } : x))} className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs font-mono" placeholder="Polar Price ID (opcional)" />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-sm font-bold text-gray-900 dark:text-white">Complementos</h3>
+          {catalogAddons.map((addon, index) => (
+            <div key={addon.id} className="grid grid-cols-1 md:grid-cols-6 gap-3 items-center p-3 rounded-xl border border-gray-200 dark:border-gray-800">
+              <div className="md:col-span-2"><div className="text-xs font-bold">{addon.name}</div><div className="text-[10px] text-gray-500">{addon.checkout_ready ? 'Checkout listo' : 'Falta producto Polar'}</div></div>
+              <input type="number" step="0.01" value={addon.price ?? ''} onChange={e => setCatalogAddons(prev => prev.map((x, i) => i === index ? { ...x, price: e.target.value } : x))} className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs" placeholder="Precio" />
+              <input value={addon.currency || ''} onChange={e => setCatalogAddons(prev => prev.map((x, i) => i === index ? { ...x, currency: e.target.value.toUpperCase() } : x))} className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs" placeholder="USD" maxLength={3} />
+              <input value={addon.polar_product_id || ''} onChange={e => setCatalogAddons(prev => prev.map((x, i) => i === index ? { ...x, polar_product_id: e.target.value } : x))} className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs font-mono" placeholder="Polar Product ID" />
+              <button type="button" onClick={() => handleCatalogSave(addon, 'addon')} disabled={savingCatalogId === addon.id} className="px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold">{savingCatalogId === addon.id ? 'Guardando...' : 'Guardar'}</button>
+            </div>
+          ))}
         </div>
       </div>
 

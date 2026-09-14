@@ -5,6 +5,7 @@ import fs from 'fs';
 import { GoogleGenAI } from '@google/genai';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import { validateEvent as validatePolarWebhookEvent } from '@polar-sh/sdk/webhooks';
 import { pool } from './server/db/connection';
 
 // Asegurar la carga de variables del archivo .env con override prioritario
@@ -679,6 +680,161 @@ function convertMoneyAmount(amount: number, fromCurrency: string, toCurrency: st
   const toRate = Number(rates?.[to] || 0);
   if (!fromRate || !toRate) return roundMoney(value);
   return roundMoney((value / fromRate) * toRate);
+}
+
+function convertMoneyAmountStrict(amount: number, fromCurrency: string, toCurrency: string, rates: Record<string, number>) {
+  const from = normalizeCurrencyCode(fromCurrency);
+  const to = normalizeCurrencyCode(toCurrency);
+  const value = Number(amount || 0);
+  if (!Number.isFinite(value)) throw new Error('El importe no es válido.');
+  if (from === to) return roundMoney(value);
+  const fromRate = Number(rates?.[from] || 0);
+  const toRate = Number(rates?.[to] || 0);
+  if (!fromRate || !toRate || !Number.isFinite(fromRate) || !Number.isFinite(toRate)) {
+    const error: any = new Error('No hay una tasa de cambio disponible para completar la operación.');
+    error.code = 'FX_UNAVAILABLE';
+    throw error;
+  }
+  return roundMoney((value / fromRate) * toRate);
+}
+
+let walletCurrencySchemaReady = false;
+let walletCurrencySchemaPromise: Promise<void> | null = null;
+
+async function ensureWalletCurrencySchema() {
+  if (walletCurrencySchemaReady) return;
+  if (walletCurrencySchemaPromise) return walletCurrencySchemaPromise;
+  walletCurrencySchemaPromise = (async () => {
+    await pool.query(`CREATE TABLE IF NOT EXISTS wallet_currency_conversions (
+      id CHAR(36) PRIMARY KEY,
+      user_id CHAR(36) NOT NULL,
+      from_currency CHAR(3) NOT NULL,
+      to_currency CHAR(3) NOT NULL,
+      from_balance DECIMAL(12,2) NOT NULL,
+      to_balance DECIMAL(12,2) NOT NULL,
+      exchange_rate DECIMAL(24,12) NOT NULL,
+      rate_source VARCHAR(80) NOT NULL DEFAULT 'fx_provider',
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_wallet_currency_conversion_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      INDEX idx_wallet_currency_conversion_user_created (user_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    for (const statement of [
+      `ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS source_amount DECIMAL(12,2) NULL`,
+      `ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS source_currency CHAR(3) NULL`,
+      `ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS fx_rate DECIMAL(24,12) NULL`
+    ]) {
+      try { await pool.query(statement); } catch {}
+    }
+    walletCurrencySchemaReady = true;
+  })().finally(() => {
+    walletCurrencySchemaPromise = null;
+  });
+  return walletCurrencySchemaPromise;
+}
+
+function walletFxRate(fromCurrency: string, toCurrency: string, rates: Record<string, number>) {
+  const from = normalizeCurrencyCode(fromCurrency);
+  const to = normalizeCurrencyCode(toCurrency);
+  if (from === to) return 1;
+  const fromRate = Number(rates?.[from] || 0);
+  const toRate = Number(rates?.[to] || 0);
+  if (!fromRate || !toRate) return 0;
+  return Number((toRate / fromRate).toFixed(12));
+}
+
+async function recordWalletCurrencyConversion(conn: any, options: {
+  userId: string;
+  fromCurrency: string;
+  toCurrency: string;
+  fromBalance: number;
+  toBalance: number;
+  rates: Record<string, number>;
+}) {
+  const fromCurrency = normalizeCurrencyCode(options.fromCurrency);
+  const toCurrency = normalizeCurrencyCode(options.toCurrency);
+  if (fromCurrency === toCurrency) return;
+  await conn.query(
+    `INSERT INTO wallet_currency_conversions
+      (id, user_id, from_currency, to_currency, from_balance, to_balance, exchange_rate, rate_source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'fx_provider')`,
+    [
+      generateId('wfx_'),
+      options.userId,
+      fromCurrency,
+      toCurrency,
+      roundMoney(options.fromBalance),
+      roundMoney(options.toBalance),
+      walletFxRate(fromCurrency, toCurrency, options.rates)
+    ]
+  );
+}
+
+async function lockedWalletUser(conn: any, userId: string) {
+  const [rows]: any = await conn.query(
+    `SELECT id, name, email, country, currency, balance, role
+     FROM users WHERE id = ? FOR UPDATE`,
+    [userId]
+  );
+  const user = rows?.[0];
+  if (!user) throw new Error('No se pudo encontrar la cuenta.');
+  user.currency = normalizeCurrencyCode(user.currency || 'EUR');
+  user.balance = roundMoney(Number(user.balance || 0));
+  return user;
+}
+
+async function applyWalletMutation(conn: any, options: {
+  userId: string;
+  type: 'credit' | 'debit';
+  amount: number;
+  currency: string;
+  description: string;
+  referenceType: string;
+  referenceId: string;
+  transactionId?: string;
+  status?: string;
+  adminNote?: string | null;
+  rates?: Record<string, number>;
+}) {
+  const user = await lockedWalletUser(conn, options.userId);
+  const sourceCurrency = normalizeCurrencyCode(options.currency || user.currency);
+  const sourceAmount = roundMoney(Number(options.amount || 0));
+  if (!Number.isFinite(sourceAmount) || sourceAmount < 0) throw new Error('El importe no es válido.');
+  const rates = options.rates || (sourceCurrency === user.currency ? { EUR: 1 } : await getFreshRatesInternal());
+  const walletAmount = convertMoneyAmountStrict(sourceAmount, sourceCurrency, user.currency, rates);
+  const nextBalance = options.type === 'debit'
+    ? roundMoney(user.balance - walletAmount)
+    : roundMoney(user.balance + walletAmount);
+  if (options.type === 'debit' && nextBalance < 0) {
+    const error: any = new Error('Saldo insuficiente para completar la operación.');
+    error.code = 'WALLET_INSUFFICIENT';
+    error.balance = user.balance;
+    error.required = walletAmount;
+    throw error;
+  }
+
+  const transactionId = options.transactionId || generateId('wtx_');
+  await conn.query('UPDATE users SET balance = ? WHERE id = ?', [nextBalance, user.id]);
+  await conn.query(
+    `INSERT INTO wallet_transactions
+      (id, user_id, type, amount, currency, source_amount, source_currency, fx_rate, description, reference_type, reference_id, status, admin_note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      transactionId,
+      user.id,
+      options.type,
+      walletAmount,
+      user.currency,
+      sourceAmount,
+      sourceCurrency,
+      walletFxRate(sourceCurrency, user.currency, rates),
+      options.description,
+      options.referenceType,
+      options.referenceId,
+      options.status || 'completed',
+      options.adminNote || null
+    ]
+  );
+  return { user, sourceAmount, sourceCurrency, walletAmount, walletCurrency: user.currency, newBalance: nextBalance, transactionId };
 }
 
 
@@ -2833,9 +2989,16 @@ function detectLanguageFromRequest(req: any): string {
 
 
 
-function normalizeMailLanguage(value: any): 'es' | 'en' | 'it' | 'fr' {
-  const lang = String(value || '').slice(0, 2).toLowerCase();
-  if (['es', 'en', 'it', 'fr'].includes(lang)) return lang as any;
+function normalizeMailLanguage(value: any): 'es' | 'en' | 'it' | 'fr' | 'de' {
+  const lang = String(value || '').trim().replace('_', '-').slice(0, 2).toLowerCase();
+  if (['es', 'en', 'it', 'fr', 'de'].includes(lang)) return lang as any;
+  const countryLanguage: Record<string, 'es' | 'en' | 'it' | 'fr' | 'de'> = {
+    us: 'en', gb: 'en', ca: 'en', au: 'en',
+    it: 'it', de: 'de', at: 'de', ch: 'de',
+    fr: 'fr', be: 'fr',
+    es: 'es', mx: 'es', do: 'es', co: 'es', ar: 'es', cl: 'es', pe: 'es'
+  };
+  if (countryLanguage[lang]) return countryLanguage[lang];
   return 'es';
 }
 
@@ -3050,7 +3213,9 @@ const SHIPMENT_CREATED_EMAIL_COPY: any = {
 };
 
 function detectCustomerEmailLanguage(user: any) {
-  return normalizeMailLanguage(user?.language || user?.locale || (user?.country === 'IT' ? 'it' : user?.country === 'FR' ? 'fr' : user?.country === 'US' ? 'en' : 'es'));
+  const explicit = user?.language || user?.locale;
+  if (explicit) return normalizeMailLanguage(explicit);
+  return normalizeMailLanguage(user?.country || 'ES');
 }
 
 async function sendShipmentCreatedEmail(shipment: any) {
@@ -4744,32 +4909,46 @@ async function loadShipmentForProcessing(shipmentId: string) {
 }
 
 async function debitShipmentWalletIfPossible(shipment: any) {
-  const amount = Number(shipment.total_amount || 0);
+  const amount = roundMoney(Number(shipment.total_amount || 0));
   if (!Number.isFinite(amount) || amount <= 0) return { charged: true, amount: 0 };
-
-  const [already]: any = await pool.query(
-    `SELECT id FROM wallet_transactions WHERE user_id = ? AND reference_type = 'shipment' AND reference_id = ? AND type = 'debit' LIMIT 1`,
-    [shipment.user_id, shipment.id]
-  );
-  if (already.length > 0) return { charged: true, amount: 0 };
-
+  await ensureWalletCurrencySchema();
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [walletRows]: any = await conn.query('SELECT balance FROM users WHERE id = ? FOR UPDATE', [shipment.user_id]);
-    const balance = Number(walletRows?.[0]?.balance || 0);
-    if (balance < amount) {
-      await conn.rollback();
-      return { charged: false, amount, balance };
-    }
-    await conn.query('UPDATE users SET balance = balance - ? WHERE id = ?', [amount, shipment.user_id]);
-    await conn.query(
-      `INSERT INTO wallet_transactions (id, user_id, type, amount, currency, description, reference_type, reference_id)
-       VALUES (?, ?, 'debit', ?, ?, ?, 'shipment', ?)`,
-      [generateId('wtx_'), shipment.user_id, amount, shipment.currency || 'EUR', `Cargo por envío ${shipment.tracking_code}`, shipment.id]
+    const [already]: any = await conn.query(
+      `SELECT id FROM wallet_transactions WHERE user_id = ? AND reference_type = 'shipment' AND reference_id = ? AND type = 'debit' LIMIT 1`,
+      [shipment.user_id, shipment.id]
     );
+    if (already.length > 0) {
+      await conn.commit();
+      return { charged: true, amount: 0 };
+    }
+    const rates = await getFreshRatesInternal();
+    let result: any;
+    try {
+      result = await applyWalletMutation(conn, {
+        userId: shipment.user_id,
+        type: 'debit',
+        amount,
+        currency: shipment.currency || 'EUR',
+        description: `Cargo por envío ${shipment.tracking_code}`,
+        referenceType: 'shipment',
+        referenceId: shipment.id,
+        rates
+      });
+    } catch (error: any) {
+      if (error?.code === 'WALLET_INSUFFICIENT') {
+        await conn.rollback();
+        return { charged: false, amount: error.required || amount, balance: error.balance || 0 };
+      }
+      throw error;
+    }
+    if (!result) {
+      await conn.rollback();
+      return { charged: false, amount, balance: 0 };
+    }
     await conn.commit();
-    return { charged: true, amount };
+    return { charged: true, amount: result.walletAmount, currency: result.walletCurrency };
   } catch (e) {
     await conn.rollback();
     throw e;
@@ -5843,15 +6022,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     await UserRepo.create(newUser);
 
-    const registrationLanguage = String(country || '').toUpperCase() === 'IT'
-      ? 'it'
-      : String(country || '').toUpperCase() === 'DE'
-        ? 'de'
-        : String(country || '').toUpperCase() === 'FR'
-          ? 'fr'
-          : String(country || '').toUpperCase() === 'US' || String(country || '').toUpperCase() === 'GB'
-            ? 'en'
-            : 'es';
+    const registrationLanguage = normalizeMailLanguage(country || 'ES');
     await sendNotificationEvent({
       eventCode: 'user_registered',
       entityType: 'user',
@@ -6452,28 +6623,60 @@ app.get('/api/user/profile', authMiddleware, async (req: any, res) => {
 
 app.post('/api/user/settings', authMiddleware, async (req: any, res) => {
   try {
+    await ensureWalletCurrencySchema();
     const allowedPaymentMethods = ['wallet', 'card', 'paypal'];
     const billing = req.body?.billing || {};
-    const currency = normalizeCurrencyCode(req.body?.currency || req.user.currency || 'EUR');
-    const country = String(req.body?.country || req.user.country || 'ES').toUpperCase().slice(0, 2);
+    const requestedCurrency = normalizeCurrencyCode(req.body?.currency || req.user.currency || 'EUR');
     const preferredPaymentMethod = allowedPaymentMethods.includes(String(req.body?.preferredPaymentMethod || '').toLowerCase())
       ? String(req.body.preferredPaymentMethod).toLowerCase()
       : 'wallet';
 
-    await UserRepo.update(req.user.id, {
-      name: String(req.body?.name || req.user.name || '').trim().slice(0, 191) || req.user.name,
-      phone: String(req.body?.phone || '').trim().slice(0, 50),
-      country,
-      currency,
-      business_type: String(req.body?.businessType || '').trim().slice(0, 100),
-      preferred_payment_method: preferredPaymentMethod
-    });
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [userRows]: any = await conn.query('SELECT * FROM users WHERE id = ? FOR UPDATE', [req.user.id]);
+      const currentUser = userRows?.[0];
+      if (!currentUser) throw new Error('No se pudo encontrar la cuenta.');
+      const currentCurrency = normalizeCurrencyCode(currentUser.currency || 'EUR');
+      const country = String(req.body?.country || currentUser.country || 'ES').toUpperCase().slice(0, 2);
+      const nextName = String(req.body?.name || currentUser.name || '').trim().slice(0, 191) || currentUser.name;
+      const nextPhone = String(req.body?.phone ?? currentUser.phone ?? '').trim().slice(0, 50);
+      const nextBusinessType = String(req.body?.businessType ?? currentUser.business_type ?? '').trim().slice(0, 100);
+      let nextBalance = roundMoney(Number(currentUser.balance || 0));
+      let rates: Record<string, number> = { EUR: 1 };
+      if (currentCurrency !== requestedCurrency) {
+        rates = await getFreshRatesInternal();
+        nextBalance = convertMoneyAmountStrict(nextBalance, currentCurrency, requestedCurrency, rates);
+        await recordWalletCurrencyConversion(conn, {
+          userId: currentUser.id,
+          fromCurrency: currentCurrency,
+          toCurrency: requestedCurrency,
+          fromBalance: Number(currentUser.balance || 0),
+          toBalance: nextBalance,
+          rates
+        });
+      }
+      await conn.query(
+        `UPDATE users
+         SET name = ?, phone = ?, country = ?, currency = ?, balance = ?, business_type = ?, preferred_payment_method = ?
+         WHERE id = ?`,
+        [nextName, nextPhone, country, requestedCurrency, nextBalance, nextBusinessType, preferredPaymentMethod, currentUser.id]
+      );
+      await conn.commit();
+    } catch (error) {
+      try { await conn.rollback(); } catch {}
+      throw error;
+    } finally {
+      conn.release();
+    }
 
     const existingCompany = await CompanyRepo.getByUserId(req.user.id);
+    const updatedBaseUser = await UserRepo.getById(req.user.id);
+    const country = String(updatedBaseUser?.country || req.user.country || 'ES').toUpperCase().slice(0, 2);
     const companyPayload = {
-      company_name: String(billing.companyName || req.body?.name || req.user.name || '').trim().slice(0, 191),
-      email: String(billing.email || req.user.email || '').trim().slice(0, 191),
-      phone: String(billing.phone || req.body?.phone || '').trim().slice(0, 50),
+      company_name: String(billing.companyName || req.body?.name || updatedBaseUser?.name || req.user.name || '').trim().slice(0, 191),
+      email: String(billing.email || updatedBaseUser?.email || req.user.email || '').trim().slice(0, 191),
+      phone: String(billing.phone || req.body?.phone || updatedBaseUser?.phone || '').trim().slice(0, 50),
       address: String(billing.address || '').trim().slice(0, 255),
       city: String(billing.city || '').trim().slice(0, 120),
       zip_code: String(billing.zipCode || '').trim().slice(0, 30),
@@ -6506,10 +6709,12 @@ app.post('/api/user/settings', authMiddleware, async (req: any, res) => {
       message: 'Configuración guardada correctamente.',
       user: {
         ...req.user,
+        id: updatedUser.id,
+        email: updatedUser.email,
         name: updatedUser.name,
         phone: updatedUser.phone,
         country: updatedUser.country,
-        currency: normalizeCurrencyCode(updatedUser.currency || currency),
+        currency: normalizeCurrencyCode(updatedUser.currency || requestedCurrency),
         businessType: updatedUser.business_type,
         balance: Number(updatedUser.balance || 0),
         preferredPaymentMethod: updatedUser.preferred_payment_method || preferredPaymentMethod
@@ -6525,7 +6730,11 @@ app.post('/api/user/settings', authMiddleware, async (req: any, res) => {
         country: updatedCompany.country
       } : null
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 'FX_UNAVAILABLE') {
+      return res.status(503).json({ error: 'No se pudo obtener la tasa de cambio. Tu saldo no fue modificado; inténtalo de nuevo.' });
+    }
+    console.error('[user/settings] error:', error?.message || error);
     res.status(500).json({ error: 'No se pudo guardar la configuración.' });
   }
 });
@@ -7539,6 +7748,7 @@ async function ship24goCreatePolarCheckoutSession(params: {
   polarToken: string;
   environment: string;
   productId: string;
+  productIds?: string[];
   priceId?: string;
   currency?: string;
   customerEmail?: string;
@@ -7553,7 +7763,7 @@ async function ship24goCreatePolarCheckoutSession(params: {
   const apiBase = ship24goPolarApiBase(params.polarToken, params.environment);
 
   const payload: any = {
-    products: [params.productId],
+    products: params.productIds?.length ? params.productIds : [params.productId],
     success_url: params.successUrl,
     return_url: params.returnUrl,
     customer_email: params.customerEmail || undefined,
@@ -7692,6 +7902,113 @@ app.post('/api/subscriptions/polar/plan-checkout', authMiddleware, async (req: a
 
     if (!polarToken) {
       return res.status(400).json({ error: 'Polar pendiente de configuración.' });
+    }
+
+    // DoorDrop Omnicanal uses its own catalog. It must never be activated by
+    // the shipping-plan checkout or by a client-side placeholder id.
+    const [omnichannelRows]: any = await pool.query(
+      `SELECT *
+         FROM omnichannel_plan_catalog
+        WHERE is_active = 1 AND (id = ? OR code = ?)
+        LIMIT 1`,
+      [planId, planId]
+    );
+    const omnichannelPlan = omnichannelRows?.[0];
+    if (omnichannelPlan) {
+      if (!omnichannelPlan.polar_enabled || !omnichannelPlan.polar_product_id) {
+        return res.status(400).json({
+          error: 'Este plan Omnicanal todavía no está configurado en Polar.',
+          code: 'OMNICHANNEL_POLAR_PRODUCT_REQUIRED'
+        });
+      }
+
+      const requestedAddOns = Array.isArray(req.body?.addOns)
+        ? req.body.addOns
+        : (Array.isArray(req.body?.add_ons) ? req.body.add_ons : []);
+      const addOnCodes = [...new Set(requestedAddOns.map((value: any) => String(value || '').trim()).filter(Boolean))];
+      const addOnProducts: any[] = [];
+      let addOnTotal = 0;
+      for (const addOnCode of addOnCodes) {
+        const [addOnRows]: any = await pool.query(
+          `SELECT code, price, currency, polar_product_id, polar_enabled
+             FROM omnichannel_addon_catalog
+            WHERE code = ? AND is_active = 1
+            LIMIT 1`,
+          [addOnCode]
+        );
+        const addOn = addOnRows?.[0];
+        if (!addOn || !addOn.polar_enabled || !addOn.polar_product_id) {
+          return res.status(400).json({
+            error: `El complemento ${addOnCode} todavía no está configurado en Polar.`,
+            code: 'OMNICHANNEL_POLAR_ADDON_REQUIRED'
+          });
+        }
+        addOnProducts.push(addOn.polar_product_id);
+        addOnTotal += Number(addOn.price || 0);
+      }
+
+      const appUrl = process.env.APP_URL || appBaseUrl() || 'https://doordrop.lat';
+      const user = await UserRepo.getById(req.user.id);
+      const currency = String(omnichannelPlan.currency || user?.currency || 'USD').toUpperCase();
+      const paymentId = generateId('spay_');
+      const metadata = {
+        purpose: 'omnichannel_subscription',
+        module: 'omnichannel',
+        user_id: req.user.id,
+        omnichannel_plan_id: omnichannelPlan.id,
+        omnichannel_plan_code: omnichannelPlan.code,
+        add_ons: addOnCodes
+      };
+
+      await pool.query(
+        `INSERT INTO subscription_payments
+          (id, user_id, plan_id, provider, amount, currency, status, metadata_json)
+         VALUES (?, ?, ?, 'polar', ?, ?, 'pending', ?)`,
+        [paymentId, req.user.id, omnichannelPlan.id, Number(omnichannelPlan.price || 0) + addOnTotal, currency, JSON.stringify(metadata)]
+      );
+
+      const result = await ship24goCreatePolarCheckoutSession({
+        polarToken,
+        environment: polarConfig.environment || 'sandbox',
+        productId: omnichannelPlan.polar_product_id,
+        productIds: [omnichannelPlan.polar_product_id, ...addOnProducts],
+        priceId: omnichannelPlan.polar_price_id || '',
+        currency,
+        customerEmail: user?.email || req.user.email,
+        customerName: user?.name || user?.email || req.user.email,
+        externalCustomerId: req.user.id,
+        customerIp: ship24goCheckoutCustomerIp(req),
+        successUrl: `${appUrl}/panel/omnichannel?tab=plans&subscription=polar_success&plan_id=${encodeURIComponent(omnichannelPlan.id)}&checkout_id={CHECKOUT_ID}`,
+        returnUrl: `${appUrl}/panel/omnichannel?tab=plans`,
+        metadata
+      });
+
+      const checkoutUrl = ship24goCheckoutUrlFromPolar(result.data);
+      await pool.query(
+        `UPDATE subscription_payments
+            SET status = ?, provider_payment_id = ?, checkout_url = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?`,
+        [result.response.ok && checkoutUrl ? 'pending' : 'failed', result.data?.id || null, checkoutUrl || null, paymentId]
+      );
+      await writePolarProviderLog(
+        'omnichannel_subscription_checkout_create',
+        { paymentId, planId: omnichannelPlan.id, planCode: omnichannelPlan.code, productCount: 1 + addOnProducts.length, currency },
+        result.data,
+        result.response.status
+      );
+
+      if (!result.response.ok || !checkoutUrl) {
+        return res.status(400).json({ error: 'No se pudo crear el checkout de Polar.' });
+      }
+
+      return res.json({
+        success: true,
+        pending: true,
+        url: checkoutUrl,
+        checkoutId: result.data.id,
+        paymentId,
+        planId: omnichannelPlan.id
+      });
     }
 
     const [rows]: any = await pool.query(
@@ -7851,98 +8168,6 @@ app.post('/api/subscriptions/polar/create-checkout', authMiddleware, async (req:
 
 // END SHIP24GO_POLAR_WEB_CHECKOUT_FIX_V1_4_37
 
-
-// 6. Recargar saldo del Monedero
-app.post('/api/user/recharge', authMiddleware, async (req: any, res) => {
-  try {
-    await ensureShip24GoBillingColumns();
-    const amount = roundMoney(Number(req.body?.amount || 0));
-
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ error: 'No se pudo crear la solicitud de recarga.' });
-    }
-
-    const keys = await ApiKeysRepo.get();
-    const polarToken = keys?.polarApiToken || process.env.POLAR_ACCESS_TOKEN || '';
-    const productId = keys?.polarWalletProductId || keys?.polarProductId || '';
-
-    if (!polarToken || !productId) {
-      return res.status(400).json({
-        error: 'El pago seguro todavía no está disponible. En Super Admin configura Polar y sincroniza los planes.'
-      });
-    }
-
-    const user = await UserRepo.getById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ error: 'No se pudo encontrar la cuenta.' });
-    }
-
-    const topupId = generateId('top_');
-    const currency = String(user.currency || 'EUR').toUpperCase();
-    const apiBase = ship24goPolarApiBase(polarToken, keys?.polarEnvironment || process.env.POLAR_ENV || 'sandbox');
-    const appUrl = process.env.APP_URL || 'https://doordrop.lat';
-
-    await pool.query(
-      `INSERT INTO wallet_topups
-        (id, user_id, amount, currency, status, payment_provider, provider_reference)
-       VALUES (?, ?, ?, ?, 'pending', 'polar', ?)`,
-      [topupId, req.user.id, amount, currency, `pending_${topupId}`]
-    );
-
-    const payload = {
-      products: [productId],
-      customer_email: user.email,
-      customer_name: user.name || user.email,
-      external_customer_id: req.user.id,
-      metadata: {
-        purpose: 'wallet_topup',
-        topup_id: topupId,
-        user_id: req.user.id,
-        requested_amount: String(amount),
-        credited_amount: String(amount),
-        credit_rule: 'wallet_exact_amount_no_margin_no_tax',
-        currency
-      },
-      success_url: `${appUrl}/panel/settings?polar_payment=success&topup_id=${topupId}&checkout_id={CHECKOUT_ID}`,
-      return_url: `${appUrl}/panel/settings`
-    };
-
-    const response = await fetch(`${apiBase}/v1/checkouts`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${polarToken}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
-
-    const data: any = await response.json().catch(() => ({}));
-    await ship24goPolarLog('wallet_checkout_create', { topupId, productId, amount, currency }, data, response.status);
-
-    if (!response.ok || !data.url) {
-      await pool.query(`UPDATE wallet_topups SET status = 'failed', provider_reference = ? WHERE id = ?`, [
-        data.id || `failed_${topupId}`,
-        topupId
-      ]);
-      return res.status(400).json({ error: 'No se pudo abrir el pago seguro.' });
-    }
-
-    await pool.query(`UPDATE wallet_topups SET provider_reference = ? WHERE id = ?`, [data.id, topupId]);
-
-    res.status(201).json({
-      success: true,
-      pending: true,
-      topupId,
-      checkoutId: data.id,
-      checkoutUrl: data.url,
-      message: 'Pago seguro creado correctamente.'
-    });
-  } catch (error: any) {
-    console.error('[Polar] wallet checkout error:', error?.message || error);
-    res.status(500).json({ error: 'No se pudo abrir el pago seguro.' });
-  }
-});
 
 // 7. Cotizaciones de Envío con motor de proveedores
 
@@ -9168,11 +9393,15 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
     try {
       if (quoteCurrency !== walletCurrency) {
         const walletRates = await getFreshRatesInternal();
-        cost = convertMoneyAmount(cost, quoteCurrency, walletCurrency, walletRates);
+        cost = convertMoneyAmountStrict(cost, quoteCurrency, walletCurrency, walletRates);
         chargeCurrency = walletCurrency;
       }
     } catch (fxErr: any) {
-      console.warn('[Create shipment FX]', fxErr?.message || fxErr);
+      console.warn('[Create shipment FX] conversion unavailable');
+      if (fxErr?.code === 'FX_UNAVAILABLE') {
+        return res.status(503).json({ error: 'La tasa de cambio no está disponible. No se creó ni cobró el envío.' });
+      }
+      throw fxErr;
     }
     cost = roundMoney(cost);
     const userBalance = Number(userInDb.balance || 0);
@@ -9346,7 +9575,7 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
         provider_payload_json: providerResult.providerPayload || null,
         walletDeduction,
         walletDescription: `Cargo por envío ${internalTracking} (${quote.service_name})`,
-        currency: quote.currency || 'EUR'
+        currency: chargeCurrency || quote.currency || 'EUR'
       };
 
       await ShipmentRepo.create(queuedShipment);
@@ -9396,7 +9625,7 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
       provider_payload_json: providerResult.providerPayload || null,
       walletDeduction,
       walletDescription: `Cargo por envío ${providerResult.trackingCode} (${quote.service_name})`,
-      currency: quote.currency || 'EUR'
+      currency: chargeCurrency || quote.currency || 'EUR'
     };
 
     await ShipmentRepo.create(newShipment);
@@ -9440,6 +9669,7 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
 // 8.1 Finalizar borrador
 app.post('/api/shipments/:id/finalize', authMiddleware, async (req: any, res) => {
   try {
+    await ensureWalletCurrencySchema();
     const draftShipment = await ShipmentRepo.getById(req.params.id);
     if (!draftShipment || draftShipment.user_id !== req.user.id || draftShipment.status !== 'draft') {
       return res.status(404).json({ error: 'No hay datos para mostrar.' });
@@ -9454,7 +9684,23 @@ app.post('/api/shipments/:id/finalize', authMiddleware, async (req: any, res) =>
     if (!quote) return res.status(404).json({ error: 'Cotización no encontrada.' });
 
     const userInDb = await UserRepo.getById(req.user.id);
-    const cost = Number(quote.total_amount || 0);
+    if (!userInDb) return res.status(404).json({ error: 'No se pudo encontrar la cuenta.' });
+    const quoteCurrency = normalizeCurrencyCode(quote.currency || 'EUR');
+    const walletCurrency = normalizeCurrencyCode(userInDb.currency || 'EUR');
+    const quoteAmount = roundMoney(Number(quote.total_amount || 0));
+    let walletRates: Record<string, number> = { EUR: 1 };
+    let cost = quoteAmount;
+    try {
+      if (quoteCurrency !== walletCurrency) {
+        walletRates = await getFreshRatesInternal();
+        cost = convertMoneyAmountStrict(quoteAmount, quoteCurrency, walletCurrency, walletRates);
+      }
+    } catch (fxErr: any) {
+      if (fxErr?.code === 'FX_UNAVAILABLE') {
+        return res.status(503).json({ error: 'La tasa de cambio no está disponible. No se cobró el envío.' });
+      }
+      throw fxErr;
+    }
     if (Number(userInDb.balance || 0) < cost) {
       return res.json({ success: true, isDraft: true, message: 'Saldo insuficiente para completar este envío.' });
     }
@@ -9484,14 +9730,18 @@ app.post('/api/shipments/:id/finalize', authMiddleware, async (req: any, res) =>
       const conn = await pool.getConnection();
       try {
         await conn.beginTransaction();
-        const [walletRows]: any = await conn.query('SELECT balance FROM users WHERE id = ? FOR UPDATE', [req.user.id]);
-        if (Number(walletRows?.[0]?.balance || 0) < cost) throw new Error('Saldo insuficiente para completar este envío.');
-        await conn.query('UPDATE users SET balance = balance - ? WHERE id = ?', [cost, req.user.id]);
-        await conn.query(
-          `INSERT INTO wallet_transactions (id, user_id, type, amount, currency, description, reference_type, reference_id)
-           VALUES (?, ?, 'debit', ?, ?, ?, 'shipment', ?)`,
-          [generateId('wtx_'), req.user.id, cost, quote.currency || 'EUR', `Cargo por envío ${internalTracking}`, draftShipment.id]
-        );
+        const walletUser = await lockedWalletUser(conn, req.user.id);
+        if (walletUser.currency !== walletCurrency) throw new Error('La moneda del wallet cambió. Intenta finalizar el borrador nuevamente.');
+        await applyWalletMutation(conn, {
+          userId: req.user.id,
+          type: 'debit',
+          amount: quoteAmount,
+          currency: quoteCurrency,
+          description: `Cargo por envío ${internalTracking}`,
+          referenceType: 'shipment',
+          referenceId: draftShipment.id,
+          rates: walletRates
+        });
         await conn.query(
           `UPDATE shipments SET tracking_code = ?, status = 'pending_provider', status_label = 'Preparando etiqueta', label_status = 'pending', label_error = ?, provider_payload_json = ?, provider_attempts = COALESCE(provider_attempts, 0) + 1, last_provider_attempt_at = NOW(), updated_at = NOW() WHERE id = ?`,
           [internalTracking, providerResult.errorMessage || 'Etiqueta en preparación', JSON.stringify(providerResult.providerPayload || {}), draftShipment.id]
@@ -9513,14 +9763,18 @@ app.post('/api/shipments/:id/finalize', authMiddleware, async (req: any, res) =>
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
-      const [walletRows]: any = await conn.query('SELECT balance FROM users WHERE id = ? FOR UPDATE', [req.user.id]);
-      if (Number(walletRows?.[0]?.balance || 0) < cost) throw new Error('Saldo insuficiente para completar este envío.');
-      await conn.query('UPDATE users SET balance = balance - ? WHERE id = ?', [cost, req.user.id]);
-      await conn.query(
-        `INSERT INTO wallet_transactions (id, user_id, type, amount, currency, description, reference_type, reference_id)
-         VALUES (?, ?, 'debit', ?, ?, ?, 'shipment', ?)`,
-        [generateId('wtx_'), req.user.id, cost, quote.currency || 'EUR', `Cargo por envío ${providerResult.trackingCode}`, draftShipment.id]
-      );
+      const walletUser = await lockedWalletUser(conn, req.user.id);
+      if (walletUser.currency !== walletCurrency) throw new Error('La moneda del wallet cambió. Intenta finalizar el borrador nuevamente.');
+      await applyWalletMutation(conn, {
+        userId: req.user.id,
+        type: 'debit',
+        amount: quoteAmount,
+        currency: quoteCurrency,
+        description: `Cargo por envío ${providerResult.trackingCode}`,
+        referenceType: 'shipment',
+        referenceId: draftShipment.id,
+        rates: walletRates
+      });
       await conn.query(
         `UPDATE shipments SET provider_shipment_code = ?, provider_tracking_code = ?, tracking_code = ?, status = ?, status_label = ?, label_url = ?, track_url = ?, payment_url = ?, provider_payload_json = ?, label_status = ?, label_error = NULL, provider_attempts = COALESCE(provider_attempts, 0) + 1, last_provider_attempt_at = NOW(), updated_at = NOW() WHERE id = ?`,
         [providerResult.providerShipmentCode || null, providerResult.providerTracking || null, providerResult.trackingCode, (providerResult.labelUrl || providerResult.labelBase64) ? providerResult.status : 'pending_label', (providerResult.labelUrl || providerResult.labelBase64) ? providerResult.statusLabel : 'Etiqueta en preparación', providerResult.labelUrl || null, providerResult.trackUrl || null, providerResult.paymentUrl || null, JSON.stringify(providerResult.providerPayload || {}), (providerResult.labelUrl || providerResult.labelBase64) ? 'available' : 'pending', draftShipment.id]
@@ -9543,8 +9797,11 @@ app.post('/api/shipments/:id/finalize', authMiddleware, async (req: any, res) =>
     await TrackingEventRepo.create({ shipment_id: draftShipment.id, tracking_code: providerResult.trackingCode, status: (providerResult.labelUrl || providerResult.labelBase64) ? providerResult.status : 'pending_label', status_label: (providerResult.labelUrl || providerResult.labelBase64) ? providerResult.statusLabel : 'Etiqueta en preparación', description: 'El borrador fue finalizado correctamente.' });
     await sendShipmentCreatedEmail(await ShipmentRepo.getById(draftShipment.id));
     return res.json({ success: true, shipment: { id: draftShipment.id, trackingCode: providerResult.trackingCode, status: (providerResult.labelUrl || providerResult.labelBase64) ? providerResult.statusLabel : 'Etiqueta en preparación', labelUrl: providerResult.labelUrl } });
-  } catch (error) {
+  } catch (error: any) {
     console.error('[Diagnóstico Interno] Error finalizando borrador:', error);
+    if (error?.code === 'FX_UNAVAILABLE') return res.status(503).json({ error: 'La tasa de cambio no está disponible. El borrador no fue cobrado.' });
+    if (error?.code === 'WALLET_INSUFFICIENT') return res.json({ success: true, isDraft: true, message: 'Saldo insuficiente para completar este envío.' });
+    if (String(error?.message || '').includes('La moneda del wallet cambió')) return res.status(409).json({ error: 'La moneda del wallet cambió. Actualiza el panel e inténtalo nuevamente.' });
     return res.status(500).json({ error: 'No se pudo completar la operación.' });
   }
 });
@@ -10668,6 +10925,7 @@ app.post('/api/admin/clients/:id/status', authMiddleware, requireSuperAdmin, asy
 app.post('/api/admin/clients/:id/recharge', authMiddleware, requireSuperAdmin, async (req: any, res) => {
   const conn = await pool.getConnection();
   try {
+    await ensureWalletCurrencySchema();
     const requestedAmount = Number(req.body?.amount || 0);
     const requestedCurrency = normalizeCurrencyCode(req.body?.currency || 'EUR');
     const note = String(req.body?.note || '').trim().slice(0, 160);
@@ -10683,25 +10941,28 @@ app.post('/api/admin/clients/:id/recharge', authMiddleware, requireSuperAdmin, a
 
     const clientCurrency = normalizeCurrencyCode(user.currency || 'EUR');
     const rates = await getFreshRatesInternal();
-    const convertedAmount = convertMoneyAmount(requestedAmount, requestedCurrency, clientCurrency, rates);
-    const txId = generateId('wtx_');
 
     await conn.beginTransaction();
-    await conn.query('UPDATE users SET balance = balance + ? WHERE id = ?', [convertedAmount, user.id]);
-    await conn.query(
-      `INSERT INTO wallet_transactions (id, user_id, type, amount, currency, description, reference_type, reference_id)
-       VALUES (?, ?, 'credit', ?, ?, ?, 'admin_recharge', ?)`,
-      [txId, user.id, convertedAmount, clientCurrency, note || `Recarga administrativa exacta ${requestedAmount.toFixed(2)} ${requestedCurrency} — sin margen ni impuestos`.slice(0, 255), txId]
-    );
+    const mutation = await applyWalletMutation(conn, {
+      userId: user.id,
+      type: 'credit',
+      amount: requestedAmount,
+      currency: requestedCurrency,
+      description: note || `Recarga administrativa exacta ${requestedAmount.toFixed(2)} ${requestedCurrency} — sin margen ni impuestos`.slice(0, 255),
+      referenceType: 'admin_recharge',
+      referenceId: generateId('adj_'),
+      rates
+    });
     await conn.commit();
 
     const updated = await UserRepo.getById(user.id);
     const payload = {
       requestedAmount: roundMoney(requestedAmount),
       requestedCurrency,
-      creditedAmount: convertedAmount,
+      creditedAmount: mutation.walletAmount,
       creditedCurrency: clientCurrency,
-      rateSource: 'rates_cache'
+      rateSource: 'rates_cache',
+      newBalance: mutation.newBalance
     };
     await writeAdminClientLog('client_recharge', { adminId: req.user.id, clientId: user.id, ...payload }, { success: true });
 
@@ -10711,8 +10972,9 @@ app.post('/api/admin/clients/:id/recharge', authMiddleware, requireSuperAdmin, a
       ...payload,
       client: normalizeClientForAdmin(updated)
     });
-  } catch (error) {
+  } catch (error: any) {
     try { await conn.rollback(); } catch {}
+    if (error?.code === 'FX_UNAVAILABLE') return res.status(503).json({ error: 'La tasa de cambio no está disponible. El saldo no fue modificado.' });
     res.status(500).json({ error: 'No se pudo completar la operación.' });
   } finally {
     conn.release();
@@ -10722,14 +10984,18 @@ app.post('/api/admin/clients/:id/recharge', authMiddleware, requireSuperAdmin, a
 app.post('/api/admin/clients/:id/clear-debt', authMiddleware, requireSuperAdmin, async (req: any, res) => {
   const conn = await pool.getConnection();
   try {
+    await ensureWalletCurrencySchema();
     const note = String(req.body?.note || '').trim().slice(0, 160);
-    const user = await UserRepo.getById(req.params.id);
+    await conn.beginTransaction();
+    const user = await lockedWalletUser(conn, req.params.id);
     if (!user || user.role === 'super_admin') {
+      await conn.rollback();
       return res.status(404).json({ error: 'Cliente no encontrado.' });
     }
 
-    const balance = Number(user.balance || 0);
+    const balance = roundMoney(Number(user.balance || 0));
     if (balance >= 0) {
+      await conn.rollback();
       return res.json({ success: true, message: 'El cliente no tiene saldo pendiente.', creditedAmount: 0, client: normalizeClientForAdmin(user) });
     }
 
@@ -10737,12 +11003,11 @@ app.post('/api/admin/clients/:id/clear-debt', authMiddleware, requireSuperAdmin,
     const creditedAmount = roundMoney(Math.abs(balance));
     const txId = generateId('wtx_');
 
-    await conn.beginTransaction();
     await conn.query('UPDATE users SET balance = 0 WHERE id = ?', [user.id]);
     await conn.query(
-      `INSERT INTO wallet_transactions (id, user_id, type, amount, currency, description, reference_type, reference_id)
-       VALUES (?, ?, 'credit', ?, ?, ?, 'admin_debt_clear', ?)`,
-      [txId, user.id, creditedAmount, clientCurrency, note || 'Ajuste administrativo de saldo pendiente', txId]
+      `INSERT INTO wallet_transactions (id, user_id, type, amount, currency, source_amount, source_currency, fx_rate, description, reference_type, reference_id, status, admin_note)
+       VALUES (?, ?, 'credit', ?, ?, ?, ?, 1, ?, 'admin_debt_clear', ?, 'completed', ?)`,
+      [txId, user.id, creditedAmount, clientCurrency, creditedAmount, clientCurrency, note || 'Ajuste administrativo de saldo pendiente', txId, note]
     );
     await conn.commit();
 
@@ -10756,7 +11021,7 @@ app.post('/api/admin/clients/:id/clear-debt', authMiddleware, requireSuperAdmin,
       creditedCurrency: clientCurrency,
       client: normalizeClientForAdmin(updated)
     });
-  } catch (error) {
+  } catch (error: any) {
     try { await conn.rollback(); } catch {}
     res.status(500).json({ error: 'No se pudo completar la operación.' });
   } finally {
@@ -11187,14 +11452,57 @@ app.post('/api/admin/polar/webhook/create', authMiddleware, requireSuperAdmin, a
 app.post('/api/webhooks/polar', async (req: any, res) => {
   try {
     await ensureShip24GoBillingColumns();
-    const payload = req.body || {};
+    await ensureWalletCurrencySchema();
+    const keys = await ApiKeysRepo.get();
+    let webhookSecret = String(keys?.polarWebhookSecret || '').trim();
+    if (!webhookSecret) {
+      try {
+        const [secretRows]: any = await pool.query(
+          `SELECT setting_value
+             FROM admin_settings
+            WHERE setting_key IN ('payments.polar.webhook_secret', 'polar.webhook_secret')
+              AND setting_value IS NOT NULL AND setting_value <> ''
+            ORDER BY CASE setting_key WHEN 'payments.polar.webhook_secret' THEN 0 ELSE 1 END
+            LIMIT 1`
+        );
+        webhookSecret = String(secretRows?.[0]?.setting_value || '').trim();
+      } catch {}
+    }
+    const rawBody = Buffer.isBuffer(req.rawBody)
+      ? req.rawBody.toString('utf8')
+      : JSON.stringify(req.body || {});
+    if (!webhookSecret) {
+      console.error('[Polar] Webhook rejected: secret is not configured.');
+      return res.status(503).json({ received: false, error: 'Webhook de Polar pendiente de configuración.' });
+    }
+
+    let payload: any;
+    try {
+      payload = validatePolarWebhookEvent(rawBody, req.headers, webhookSecret);
+    } catch {
+      console.warn('[Polar] Webhook rejected: invalid signature.');
+      return res.status(403).json({ received: false });
+    }
+
     const eventType = payload.type || payload.event || payload.name || '';
     const data = payload.data || payload.payload || payload;
     const metadata = data.metadata || data.checkout?.metadata || data.order?.metadata || {};
     const topupId = metadata.topup_id || metadata.topupId || null;
     const purpose = metadata.purpose || '';
 
-    await writePolarProviderLog('webhook_received', { eventType, topupId, purpose }, payload, 202);
+    const eventId = String(req.headers['webhook-id'] || payload.id || data.id || `${eventType}:${Date.now()}`);
+    const [eventRows]: any = await pool.query(
+      `SELECT id FROM payment_webhook_events WHERE provider = 'polar' AND event_id = ? LIMIT 1`,
+      [eventId]
+    );
+    if (eventRows?.length) return res.status(202).json({ received: true, duplicate: true });
+    await pool.query(
+      `INSERT INTO payment_webhook_events (provider, event_id, event_type, status, payload_json)
+       VALUES ('polar', ?, ?, 'received', ?)`,
+      [eventId, eventType, JSON.stringify(payload)]
+    );
+
+    await writePolarProviderLog('webhook_received', { eventType, topupId, purpose, eventId }, payload, 202);
 
     const isPaidEvent =
       eventType === 'order.paid' ||
@@ -11215,7 +11523,7 @@ app.post('/api/webhooks/polar', async (req: any, res) => {
         if (topup && !['paid', 'completed', 'success'].includes(String(topup.status || '').toLowerCase())) {
           const amount = roundMoney(Number(topup.amount || metadata.requested_amount || metadata.amount || 0));
           if (!amount || amount <= 0) { throw new Error('Monto de recarga no válido.'); }
-          const currency = String(topup.currency || metadata.currency || 'EUR').toUpperCase();
+          const currency = normalizeCurrencyCode(topup.currency || metadata.currency || 'EUR');
 
           await conn.query(
             `UPDATE wallet_topups
@@ -11224,28 +11532,26 @@ app.post('/api/webhooks/polar', async (req: any, res) => {
             [data.id || data.order_id || data.checkout_id || topup.provider_reference || topupId, topupId]
           );
 
-          await conn.query(
-            `UPDATE users SET balance = balance + ? WHERE id = ?`,
-            [amount, topup.user_id]
-          );
-
-          const [balanceRows]: any = await conn.query('SELECT balance, name, email, country FROM users WHERE id = ? LIMIT 1', [topup.user_id]);
-
-          await conn.query(
-            `INSERT INTO wallet_transactions
-              (id, user_id, type, amount, currency, description, reference_type, reference_id, status)
-             VALUES (?, ?, 'credit', ?, ?, 'Recarga confirmada por Polar — saldo exacto', 'wallet_topup', ?, 'completed')`,
-            [generateId('wtx_'), topup.user_id, amount, currency, topupId]
-          );
+          const rates = await getFreshRatesInternal();
+          const mutation = await applyWalletMutation(conn, {
+            userId: topup.user_id,
+            type: 'credit',
+            amount,
+            currency,
+            description: 'Recarga confirmada por Polar — saldo exacto',
+            referenceType: 'wallet_topup',
+            referenceId: topupId,
+            rates
+          });
 
           walletNotification = {
             userId: topup.user_id,
-            email: balanceRows?.[0]?.email || '',
-            name: balanceRows?.[0]?.name || '',
-            language: balanceRows?.[0]?.country || 'es',
-            amount,
-            currency,
-            newBalance: Number(balanceRows?.[0]?.balance || 0),
+            email: mutation.user?.email || '',
+            name: mutation.user?.name || '',
+            language: mutation.user?.country || 'es',
+            amount: mutation.walletAmount,
+            currency: mutation.walletCurrency,
+            newBalance: mutation.newBalance,
             paymentMethod: topup.payment_provider || 'Polar'
           };
         }
@@ -11318,8 +11624,182 @@ app.post('/api/webhooks/polar', async (req: any, res) => {
     }
 
     if (eventType.startsWith('subscription.')) {
-      await writePolarProviderLog('subscription_event', { eventType }, data, 202);
+      const subscriptionData: any = data.subscription || data;
+      const providerSubscriptionId = String(
+        subscriptionData.id || subscriptionData.subscription_id || payload.subscription_id || ''
+      ).trim();
+      const providerCustomerId = String(
+        subscriptionData.customer?.id || subscriptionData.customer_id || subscriptionData.external_customer_id || ''
+      ).trim() || null;
+      const providerProductId = String(
+        subscriptionData.product_id || subscriptionData.product?.id || metadata.polar_product_id || ''
+      ).trim();
+      const metadataUserId = String(
+        metadata.user_id || metadata.userId || metadata.external_customer_id || ''
+      ).trim();
+      const metadataPlanId = String(
+        metadata.omnichannel_plan_id || metadata.plan_id || ''
+      ).trim();
+      const metadataPlanCode = String(
+        metadata.omnichannel_plan_code || metadata.plan_code || ''
+      ).trim();
+
+      let userId = metadataUserId;
+      let existingSubscription: any = null;
+      if (providerSubscriptionId) {
+        const [existingRows]: any = await pool.query(
+          `SELECT * FROM omnichannel_subscriptions
+            WHERE provider = 'polar' AND provider_subscription_id = ?
+            LIMIT 1`,
+          [providerSubscriptionId]
+        );
+        existingSubscription = existingRows?.[0] || null;
+        if (!userId && existingSubscription?.user_id) userId = String(existingSubscription.user_id);
+      }
+
+      let plan: any = null;
+      if (metadataPlanId || metadataPlanCode) {
+        const [planRows]: any = await pool.query(
+          `SELECT * FROM omnichannel_plan_catalog
+            WHERE is_active = 1 AND (id = ? OR code = ?)
+            LIMIT 1`,
+          [metadataPlanId || metadataPlanCode, metadataPlanCode || metadataPlanId]
+        );
+        plan = planRows?.[0] || null;
+      }
+      if (!plan && providerProductId) {
+        const [planRows]: any = await pool.query(
+          `SELECT * FROM omnichannel_plan_catalog
+            WHERE is_active = 1 AND polar_product_id = ?
+            LIMIT 1`,
+          [providerProductId]
+        );
+        plan = planRows?.[0] || null;
+      }
+      if (!plan && existingSubscription?.plan_code) {
+        const [planRows]: any = await pool.query(
+          `SELECT * FROM omnichannel_plan_catalog
+            WHERE is_active = 1 AND code = ?
+            LIMIT 1`,
+          [existingSubscription.plan_code]
+        );
+        plan = planRows?.[0] || null;
+      }
+
+      const rawStatus = String(subscriptionData.status || '').toLowerCase();
+      let entitlementStatus = rawStatus;
+      if (eventType === 'subscription.active') entitlementStatus = 'active';
+      else if (eventType === 'subscription.past_due') entitlementStatus = 'past_due';
+      else if (eventType === 'subscription.canceled' || eventType === 'subscription.cancelled') entitlementStatus = 'canceled';
+      else if (eventType === 'subscription.revoked') entitlementStatus = 'revoked';
+      if (!['active', 'trialing', 'past_due', 'canceled', 'cancelled', 'revoked', 'expired', 'pending'].includes(entitlementStatus)) {
+        entitlementStatus = 'pending';
+      }
+
+      const periodStart = subscriptionData.current_period_start || subscriptionData.period_start || null;
+      const periodEnd = subscriptionData.current_period_end || subscriptionData.period_end || null;
+      const addOnCodes = Array.isArray(metadata.add_ons)
+        ? [...new Set(metadata.add_ons.map((value: any) => String(value || '').trim()).filter(Boolean))]
+        : [];
+      let addOnTotal = 0;
+      let commentAutomation = 0;
+      let autoPublish = 0;
+      let extraChannels = 0;
+      for (const addOnCode of addOnCodes) {
+        const [addOnRows]: any = await pool.query(
+          `SELECT price FROM omnichannel_addon_catalog
+            WHERE code = ? AND is_active = 1
+            LIMIT 1`,
+          [addOnCode]
+        );
+        const addOn = addOnRows?.[0];
+        if (!addOn) continue;
+        addOnTotal += Number(addOn.price || 0);
+        if (addOnCode === 'comment_automation') commentAutomation = 1;
+        if (addOnCode === 'auto_publish') autoPublish = 1;
+        if (addOnCode === 'extra_channel') extraChannels += 1;
+      }
+      if (userId && plan && providerSubscriptionId) {
+        const [userRows]: any = await pool.query('SELECT id FROM users WHERE id = ? LIMIT 1', [userId]);
+        if (userRows?.length) {
+          await pool.query(
+            `INSERT INTO omnichannel_subscriptions
+              (user_id, plan_code, status, provider, provider_subscription_id, provider_customer_id,
+               polar_product_id, channels_limit, ai_enabled, comment_automation, auto_publish,
+               extra_channels_count, monthly_price, currency, renews_at, current_period_start,
+               current_period_end, last_payment_status, last_provider_event_id, metadata_json)
+             VALUES (?, ?, ?, 'polar', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+               plan_code = VALUES(plan_code), status = VALUES(status), provider = 'polar',
+               provider_subscription_id = VALUES(provider_subscription_id),
+               provider_customer_id = VALUES(provider_customer_id), polar_product_id = VALUES(polar_product_id),
+               channels_limit = VALUES(channels_limit), ai_enabled = VALUES(ai_enabled),
+               comment_automation = VALUES(comment_automation), auto_publish = VALUES(auto_publish),
+               extra_channels_count = VALUES(extra_channels_count),
+               monthly_price = VALUES(monthly_price), currency = VALUES(currency),
+               renews_at = COALESCE(VALUES(renews_at), renews_at),
+               current_period_start = COALESCE(VALUES(current_period_start), current_period_start),
+               current_period_end = COALESCE(VALUES(current_period_end), current_period_end),
+               last_payment_status = VALUES(last_payment_status),
+               last_provider_event_id = VALUES(last_provider_event_id), metadata_json = VALUES(metadata_json),
+               updated_at = CURRENT_TIMESTAMP`,
+            [
+              userId,
+              plan.code,
+              entitlementStatus,
+              providerSubscriptionId,
+              providerCustomerId,
+              providerProductId || plan.polar_product_id || null,
+              Number(plan.channels_limit || 0),
+              commentAutomation,
+              autoPublish,
+              extraChannels,
+              Number(plan.price || 0) + addOnTotal,
+              String(plan.currency || 'USD').toUpperCase(),
+              periodEnd,
+              periodStart,
+              periodEnd,
+              rawStatus || entitlementStatus,
+              eventId,
+              JSON.stringify({ ...metadata, provider_event_id: eventId })
+            ]
+          );
+
+          const [pendingPayments]: any = await pool.query(
+            `SELECT id FROM subscription_payments
+              WHERE user_id = ? AND plan_id = ? AND provider = 'polar' AND status = 'pending'
+              ORDER BY created_at DESC LIMIT 1`,
+            [userId, plan.id]
+          );
+          if (pendingPayments?.[0]?.id) {
+            await pool.query(
+              `UPDATE subscription_payments
+                  SET status = ?, provider_payment_id = COALESCE(provider_payment_id, ?),
+                      provider_subscription_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?`,
+              [entitlementStatus === 'active' || entitlementStatus === 'trialing' ? 'completed' : entitlementStatus, subscriptionData.order_id || subscriptionData.order?.id || null, providerSubscriptionId, pendingPayments[0].id]
+            );
+          }
+        } else {
+          await writePolarProviderLog('omnichannel_subscription_unknown_user', { eventType, eventId }, { userId }, 422);
+        }
+      } else {
+        await writePolarProviderLog(
+          'omnichannel_subscription_unmapped',
+          { eventType, eventId, hasUserId: Boolean(userId), hasPlan: Boolean(plan), hasSubscriptionId: Boolean(providerSubscriptionId) },
+          {},
+          422
+        );
+      }
+      await writePolarProviderLog('subscription_event', { eventType, eventId, module: 'omnichannel' }, { status: entitlementStatus }, 202);
     }
+
+    await pool.query(
+      `UPDATE payment_webhook_events
+          SET status = 'processed', processed_at = CURRENT_TIMESTAMP
+        WHERE provider = 'polar' AND event_id = ?`,
+      [eventId]
+    );
 
     res.status(202).json({ received: true });
   } catch (error: any) {
@@ -11693,80 +12173,6 @@ app.post('/api/admin/polar/products/sync', authMiddleware, requireSuperAdmin, as
   }
 });
 
-app.post('/api/webhooks/polar', async (req: any, res) => {
-  try {
-    const payload = req.body || {};
-    const eventType = payload.type || payload.event || payload.name || '';
-    const data = payload.data || payload.payload || payload;
-    const metadata = data.metadata || data.checkout?.metadata || data.order?.metadata || {};
-    const purpose = metadata.purpose || '';
-    const topupId = metadata.topup_id || metadata.topupId || '';
-
-    await ship24goPolarLog('webhook_received', { eventType, topupId, purpose }, payload, 202);
-
-    const isPaid =
-      eventType === 'order.paid' ||
-      (eventType === 'checkout.updated' && ['succeeded', 'paid', 'complete'].includes(String(data.status || '').toLowerCase()));
-
-    if (isPaid && purpose === 'wallet_topup' && topupId) {
-      const conn = await pool.getConnection();
-
-      try {
-        await conn.beginTransaction();
-
-        const [rows]: any = await conn.query(
-          `SELECT * FROM wallet_topups WHERE id = ? FOR UPDATE`,
-          [topupId]
-        );
-
-        const topup = rows?.[0];
-
-        if (topup && !['paid', 'completed', 'success'].includes(String(topup.status || '').toLowerCase())) {
-          const amount = ship24goAmountFromPolar(data, Number(topup.amount || metadata.requested_amount || 0));
-          if (!amount || amount <= 0) { throw new Error('Monto de recarga no válido.'); }
-          const currency = String(topup.currency || metadata.currency || 'EUR').toUpperCase();
-
-          await conn.query(
-            `UPDATE wallet_topups
-             SET status = 'completed', provider_reference = ?
-             WHERE id = ?`,
-            [data.id || data.order_id || data.checkout_id || topup.provider_reference || topupId, topupId]
-          );
-
-          await conn.query(
-            `UPDATE users SET balance = balance + ? WHERE id = ?`,
-            [amount, topup.user_id]
-          );
-
-          await conn.query(
-            `INSERT INTO wallet_transactions
-              (id, user_id, type, amount, currency, description, reference_type, reference_id, status)
-             VALUES (?, ?, 'credit', ?, ?, 'Recarga confirmada por Polar — saldo exacto', 'wallet_topup', ?, 'completed')`,
-            [generateId('wtx_'), topup.user_id, amount, currency, topupId]
-          );
-        }
-
-        await conn.commit();
-      } catch (e) {
-        await conn.rollback();
-        throw e;
-      } finally {
-        conn.release();
-      }
-    }
-
-    if (eventType.startsWith('subscription.')) {
-      await ship24goPolarLog('subscription_event', { eventType }, data, 202);
-    }
-
-    res.status(202).json({ received: true });
-  } catch (error: any) {
-    console.error('[Polar] webhook error:', error?.message || error);
-    res.status(500).json({ received: false });
-  }
-});
-
-
 
 // SHIP24GO_BANK_TRANSFER_WALLET_ENDPOINTS_V1435
 app.get('/api/bank-accounts', authMiddleware, async (req: any, res) => {
@@ -11785,7 +12191,15 @@ app.get('/api/bank-accounts', authMiddleware, async (req: any, res) => {
       const [fallback]: any = await pool.query(`SELECT * FROM bank_accounts WHERE is_active = 1 AND currency IN ('USD','EUR') ORDER BY FIELD(currency, ?, 'USD','EUR'), sort_order ASC`, [requestedCurrency]);
       accounts = fallback || [];
     }
-    res.json({ success: true, currency: requestedCurrency, accounts: accounts.map((r: any) => publicBankAccount(r, lang)) });
+    res.json({
+      success: true,
+      currency: requestedCurrency,
+      exactCurrency: exact.length > 0,
+      accounts: accounts.map((r: any) => ({
+        ...publicBankAccount(r, lang),
+        currencyMismatch: normalizeCurrencyCode(r.currency) !== requestedCurrency
+      }))
+    });
   } catch {
     res.status(500).json({ error: 'No se pudo completar la operación.' });
   }
@@ -11807,6 +12221,10 @@ app.post('/api/user/wallet/transfer-proof', authMiddleware, async (req: any, res
     const [accounts]: any = await pool.query(`SELECT * FROM bank_accounts WHERE id = ? AND is_active = 1 LIMIT 1`, [bankAccountId]);
     const account = accounts?.[0];
     if (!account) return res.status(400).json({ error: 'Selecciona una cuenta bancaria disponible.' });
+    const accountCurrency = normalizeCurrencyCode(account.currency || 'EUR');
+    if (currency !== accountCurrency) {
+      return res.status(400).json({ error: `El monto debe estar expresado en ${accountCurrency}, la moneda de la cuenta bancaria seleccionada.` });
+    }
     const receiptId = generateId('rcp_');
     let receiptUrl = '';
     const file = normalizeReceiptFile(req.body?.receiptBase64 || '');
@@ -11890,6 +12308,7 @@ app.post('/api/admin/payment-receipts/:id/approve', authMiddleware, requireSuper
   let walletNotification: any = null;
   try {
     await ensureBankTransferWalletTables();
+    await ensureWalletCurrencySchema();
     const note = String(req.body?.adminNote || '').trim().slice(0, 1000);
     await conn.beginTransaction();
     const [rows]: any = await conn.query(`SELECT * FROM payment_receipts WHERE id = ? FOR UPDATE`, [req.params.id]);
@@ -11899,14 +12318,23 @@ app.post('/api/admin/payment-receipts/:id/approve', authMiddleware, requireSuper
       await conn.rollback();
       return res.json({ success: true, message: 'Este comprobante ya fue revisado.' });
     }
-    const amount = Number(receipt.amount || 0);
+    const amount = roundMoney(Number(receipt.amount || 0));
     const currency = normalizeCurrencyCode(receipt.currency || 'USD');
-    const txId = generateId('wtx_');
+    if (!amount || amount <= 0) throw new Error('El importe de la transferencia no es válido.');
     const [topupRows]: any = await conn.query('SELECT id FROM wallet_topups WHERE receipt_id = ? ORDER BY created_at DESC LIMIT 1', [receipt.id]);
-    await conn.query(`UPDATE users SET balance = balance + ?, currency = COALESCE(currency, ?) WHERE id = ?`, [amount, currency, receipt.user_id]);
-    const [userRows]: any = await conn.query('SELECT name, email, country, balance FROM users WHERE id = ? LIMIT 1', [receipt.user_id]);
-    await conn.query(`INSERT INTO wallet_transactions (id, user_id, type, amount, currency, description, reference_type, reference_id, status, admin_note)
-      VALUES (?, ?, 'credit', ?, ?, ?, 'payment_receipt', ?, 'completed', ?)`, [txId, receipt.user_id, amount, currency, 'Recarga por transferencia aprobada', receipt.id, note]);
+    const rates = await getFreshRatesInternal();
+    const mutation = await applyWalletMutation(conn, {
+      userId: receipt.user_id,
+      type: 'credit',
+      amount,
+      currency,
+      description: 'Recarga por transferencia aprobada',
+      referenceType: 'payment_receipt',
+      referenceId: receipt.id,
+      adminNote: note,
+      rates
+    });
+    const userRows: any[] = [mutation.user];
     await conn.query(`UPDATE payment_receipts SET status='approved', admin_note=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?`, [note, req.user.id, receipt.id]);
     try { await conn.query(`UPDATE wallet_topups SET status='completed', updated_at=NOW() WHERE receipt_id=?`, [receipt.id]); } catch {}
     await conn.commit();
@@ -11916,9 +12344,11 @@ app.post('/api/admin/payment-receipts/:id/approve', authMiddleware, requireSuper
       name: userRows?.[0]?.name || '',
       email: userRows?.[0]?.email || '',
       language: userRows?.[0]?.country || 'es',
-      amount,
-      currency,
-      newBalance: Number(userRows?.[0]?.balance || 0)
+      amount: mutation.walletAmount,
+      currency: mutation.walletCurrency,
+      sourceAmount: amount,
+      sourceCurrency: currency,
+      newBalance: mutation.newBalance
     };
     if (isValidEmailForProvider(walletNotification.email)) {
       await sendNotificationEvent({
@@ -11941,8 +12371,9 @@ app.post('/api/admin/payment-receipts/:id/approve', authMiddleware, requireSuper
       }).catch(() => undefined);
     }
     res.json({ success: true, message: 'Comprobante aprobado y saldo acreditado.' });
-  } catch (error) {
+  } catch (error: any) {
     try { await conn.rollback(); } catch {}
+    if (error?.code === 'FX_UNAVAILABLE') return res.status(503).json({ error: 'La tasa de cambio no está disponible. El comprobante sigue pendiente.' });
     res.status(500).json({ error: 'No se pudo completar la operación.' });
   } finally {
     conn.release();
@@ -11997,31 +12428,42 @@ app.post('/api/admin/payment-receipts/:id/reject', authMiddleware, requireSuperA
 app.post('/api/admin/clients/:id/adjust-balance', authMiddleware, requireSuperAdmin, async (req: any, res) => {
   const conn = await pool.getConnection();
   try {
+    await ensureWalletCurrencySchema();
     const mode = String(req.body?.mode || 'credit').toLowerCase();
     const amount = roundMoney(Number(req.body?.amount || 0));
     const note = String(req.body?.note || '').trim().slice(0, 1000);
     if (!['credit','debit','set'].includes(mode)) return res.status(400).json({ error: 'Selecciona una acción válida.' });
-    if (!amount || amount < 0) return res.status(400).json({ error: 'Ingresa un monto válido.' });
+    if (!Number.isFinite(amount) || amount < 0 || (mode !== 'set' && amount === 0)) return res.status(400).json({ error: 'Ingresa un monto válido.' });
     await conn.beginTransaction();
-    const [users]: any = await conn.query(`SELECT * FROM users WHERE id = ? FOR UPDATE`, [req.params.id]);
-    const user = users?.[0];
+    const user = await lockedWalletUser(conn, req.params.id);
     if (!user || user.role === 'super_admin') {
       await conn.rollback();
       return res.status(404).json({ error: 'Cliente no encontrado.' });
     }
-    const currency = normalizeCurrencyCode(req.body?.currency || user.currency || 'USD');
-    const current = Number(user.balance || 0);
-    const delta = mode === 'set' ? roundMoney(amount - current) : (mode === 'debit' ? -amount : amount);
+    const sourceCurrency = normalizeCurrencyCode(req.body?.currency || user.currency || 'EUR');
+    const rates = sourceCurrency === user.currency ? { EUR: 1 } : await getFreshRatesInternal();
+    const requestedWalletAmount = convertMoneyAmountStrict(amount, sourceCurrency, user.currency, rates);
+    const current = roundMoney(Number(user.balance || 0));
+    const delta = mode === 'set' ? roundMoney(requestedWalletAmount - current) : (mode === 'debit' ? -requestedWalletAmount : requestedWalletAmount);
+    if (delta < 0 && current + delta < 0) {
+      const error: any = new Error('Saldo insuficiente para aplicar el ajuste.');
+      error.code = 'WALLET_INSUFFICIENT';
+      throw error;
+    }
     if (delta !== 0) {
-      await conn.query(`UPDATE users SET balance = balance + ?, currency = ? WHERE id = ?`, [delta, currency, user.id]);
-      await conn.query(`INSERT INTO wallet_transactions (id, user_id, type, amount, currency, description, reference_type, reference_id, status, admin_note)
-        VALUES (?, ?, ?, ?, ?, ?, 'admin_adjustment', ?, 'completed', ?)`, [generateId('wtx_'), user.id, delta >= 0 ? 'credit' : 'debit', Math.abs(delta), currency, mode === 'set' ? 'Ajuste administrativo de saldo' : (delta > 0 ? 'Ajuste administrativo positivo' : 'Ajuste administrativo negativo'), generateId('adj_'), note]);
+      const referenceId = generateId('adj_');
+      const nextBalance = roundMoney(current + delta);
+      await conn.query(`UPDATE users SET balance = ? WHERE id = ?`, [nextBalance, user.id]);
+      await conn.query(`INSERT INTO wallet_transactions (id, user_id, type, amount, currency, source_amount, source_currency, fx_rate, description, reference_type, reference_id, status, admin_note)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'admin_adjustment', ?, 'completed', ?)`, [generateId('wtx_'), user.id, delta >= 0 ? 'credit' : 'debit', Math.abs(delta), user.currency, amount, sourceCurrency, walletFxRate(sourceCurrency, user.currency, rates), mode === 'set' ? 'Ajuste administrativo de saldo' : (delta > 0 ? 'Ajuste administrativo positivo' : 'Ajuste administrativo negativo'), referenceId, note]);
     }
     await conn.commit();
     const updated = await UserRepo.getById(user.id);
-    res.json({ success: true, client: normalizeClientForAdmin(updated), message: 'Saldo actualizado correctamente.' });
-  } catch {
+    res.json({ success: true, client: normalizeClientForAdmin(updated), message: 'Saldo actualizado correctamente.', requestedAmount: amount, requestedCurrency: sourceCurrency, appliedAmount: Math.abs(delta), appliedCurrency: user.currency });
+  } catch (error: any) {
     try { await conn.rollback(); } catch {}
+    if (error?.code === 'FX_UNAVAILABLE') return res.status(503).json({ error: 'La tasa de cambio no está disponible. El saldo no fue modificado.' });
+    if (error?.code === 'WALLET_INSUFFICIENT') return res.status(400).json({ error: 'El saldo no puede quedar negativo.' });
     res.status(500).json({ error: 'No se pudo completar la operación.' });
   } finally {
     conn.release();
@@ -12386,6 +12828,7 @@ app.get('/api/subscription-plans', authMiddleware, async (_req: any, res) => {
 app.post('/api/subscriptions/wallet/activate', authMiddleware, async (req: any, res) => {
   const conn = await pool.getConnection();
   try {
+    await ensureWalletCurrencySchema();
     const planId = String(req.body?.planId || '').trim();
     if (!planId) return res.status(400).json({ error: 'Selecciona un plan.' });
     const keys = await ApiKeysRepo.get();
@@ -12396,15 +12839,21 @@ app.post('/api/subscriptions/wallet/activate', authMiddleware, async (req: any, 
     if (!plan || plan.wallet_enabled === 0) throw new Error('Este plan no está disponible para wallet.');
     const amount = roundMoney(Number(plan.price || 0));
     const currency = String(plan.currency || 'EUR').toUpperCase();
-    const [userRows]: any = await conn.query('SELECT balance FROM users WHERE id = ? FOR UPDATE', [req.user.id]);
-    const balance = Number(userRows?.[0]?.balance || 0);
-    if (balance < amount) throw new Error('Saldo insuficiente. Recarga tu wallet para activar este plan.');
+    const rates = await getFreshRatesInternal();
     const subscriptionId = generateId('sub_');
     const paymentId = generateId('pay_');
-    await conn.query('UPDATE users SET balance = balance - ? WHERE id = ?', [amount, req.user.id]);
+    const mutation = await applyWalletMutation(conn, {
+      userId: req.user.id,
+      type: 'debit',
+      amount,
+      currency,
+      description: `Suscripción ${plan.name}`,
+      referenceType: 'subscription',
+      referenceId: subscriptionId,
+      rates
+    });
     await conn.query(`INSERT INTO subscriptions (id, user_id, plan_id, provider, external_subscription_id, status, current_period_start, current_period_end, metadata_json) VALUES (?, ?, ?, 'wallet', ?, 'active', NOW(), DATE_ADD(NOW(), INTERVAL 1 MONTH), ?)`, [subscriptionId, req.user.id, plan.id, subscriptionId, JSON.stringify({ method: 'wallet', planName: plan.name })]);
-    await conn.query(`INSERT INTO payments (id, user_id, provider, external_payment_id, amount, currency, status, plan_id, subscription_id, purpose, metadata_json) VALUES (?, ?, 'wallet', ?, ?, ?, 'paid', ?, ?, 'subscription', ?)`, [paymentId, req.user.id, subscriptionId, amount, currency, plan.id, subscriptionId, JSON.stringify({ planName: plan.name })]);
-    await conn.query(`INSERT INTO wallet_transactions (id, user_id, type, amount, currency, description, reference_type, reference_id, status) VALUES (?, ?, 'debit', ?, ?, ?, 'subscription', ?, 'completed')`, [generateId('wtx_'), req.user.id, amount, currency, `Suscripción ${plan.name}`, subscriptionId]);
+    await conn.query(`INSERT INTO payments (id, user_id, provider, external_payment_id, amount, currency, status, plan_id, subscription_id, purpose, metadata_json) VALUES (?, ?, 'wallet', ?, ?, ?, 'paid', ?, ?, 'subscription', ?)`, [paymentId, req.user.id, subscriptionId, mutation.walletAmount, mutation.walletCurrency, plan.id, subscriptionId, JSON.stringify({ planName: plan.name, planAmount: amount, planCurrency: currency })]);
     await conn.commit();
     const [fresh]: any = await pool.query('SELECT * FROM users WHERE id = ? LIMIT 1', [req.user.id]);
     res.json({ success: true, subscriptionId, user: fresh?.[0] || null, message: 'Suscripción activada con wallet.' });
@@ -13564,6 +14013,7 @@ app.post('/api/shipments/:id/cancel-request', authMiddleware, async (req: any, r
 app.post('/api/admin/cancellation-requests/:id/approve', authMiddleware, requireSuperAdmin, async (req: any, res) => {
   const conn = await pool.getConnection();
   try {
+    await ensureWalletCurrencySchema();
     const note = String(req.body?.note || '').trim().slice(0, 1000) || 'Solicitud aprobada. Importe acreditado en el monedero del cliente.';
     await conn.beginTransaction();
     const [rows]: any = await conn.query(`SELECT * FROM cancellation_requests WHERE id = ? FOR UPDATE`, [req.params.id]);
@@ -13577,18 +14027,24 @@ app.post('/api/admin/cancellation-requests/:id/approve', authMiddleware, require
       await conn.rollback();
       return res.status(400).json({ error: 'El reembolso ya fue aplicado.' });
     }
-    const amount = Number(request.amount || 0);
+    const amount = roundMoney(Number(request.amount || 0));
     if (amount <= 0) {
       await conn.rollback();
       return res.status(400).json({ error: 'No hay un importe disponible para reembolsar.' });
     }
     const refundTxId = generateId('wtx_');
-    await conn.query('UPDATE users SET balance = balance + ? WHERE id = ?', [amount, request.user_id]);
-    await conn.query(
-      `INSERT INTO wallet_transactions (id, user_id, type, amount, currency, description, reference_type, reference_id, status)
-       VALUES (?, ?, 'credit', ?, ?, ?, 'cancellation_refund', ?, 'completed')`,
-      [refundTxId, request.user_id, amount, request.currency || 'EUR', `Reembolso aprobado por cancelación de envío`, request.shipment_id]
-    );
+    const rates = await getFreshRatesInternal();
+    const mutation = await applyWalletMutation(conn, {
+      userId: request.user_id,
+      type: 'credit',
+      amount,
+      currency: request.currency || 'EUR',
+      description: 'Reembolso aprobado por cancelación de envío',
+      referenceType: 'cancellation_refund',
+      referenceId: request.shipment_id,
+      transactionId: refundTxId,
+      rates
+    });
     await conn.query(
       `UPDATE cancellation_requests SET status = 'refunded', admin_note = ?, reviewed_by = ?, reviewed_at = NOW(), refund_transaction_id = ?, updated_at = NOW() WHERE id = ?`,
       [note, req.user.id, refundTxId, request.id]
@@ -13603,11 +14059,12 @@ app.post('/api/admin/cancellation-requests/:id/approve', authMiddleware, require
 
     const shipment = await ShipmentRepo.getById(request.shipment_id);
     await TrackingEventRepo.create({ shipment_id: request.shipment_id, tracking_code: shipment?.tracking_code || '', status: 'reembolso_aprobado', status_label: 'Reembolso aprobado', description: 'La solicitud de cancelación fue aprobada y el importe fue acreditado en el monedero.' });
-    await sendCancellationEmail(shipment, { ...request, status: 'refunded', refund_transaction_id: refundTxId }, 'cancellation_approved_refunded', { adminNote: note }).catch(() => null);
+    await sendCancellationEmail(shipment, { ...request, status: 'refunded', refund_transaction_id: refundTxId, amount: mutation.walletAmount, currency: mutation.walletCurrency }, 'cancellation_approved_refunded', { adminNote: note }).catch(() => null);
 
     res.json({ success: true, message: 'Reembolso aprobado y acreditado en el monedero.', refundTransactionId: refundTxId });
   } catch (error: any) {
     try { await conn.rollback(); } catch {}
+    if (error?.code === 'FX_UNAVAILABLE') return res.status(503).json({ error: 'La tasa de cambio no está disponible. El reembolso no fue aplicado.' });
     res.status(500).json({ error: 'No se pudo completar la operación.' });
   } finally {
     conn.release();

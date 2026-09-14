@@ -1,6 +1,13 @@
 import https from 'https';
 import crypto from 'crypto';
 import { pool } from '../db/connection.js';
+export {
+  getUserOmnichannelSubscription,
+  hasActiveOmnichannelSubscription,
+  getOmnichannelPlanByRef,
+  getOmnichannelPlanByPolarProduct,
+  parseCatalogJson
+} from './entitlements.js';
 
 export interface ZernioRequestOptions {
   method?: string;
@@ -10,8 +17,8 @@ export interface ZernioRequestOptions {
 }
 
 // Global cached config
-let cachedApiKey = 'sk_895a0c3cf6da498f854c000ef72860d0ca5f5c313464055e44e07454a50cfa7a';
-let cachedWebhookSecret = 'whsec_dd_omni_895a0c3cf6da498f854c000ef72860d0';
+let cachedApiKey = '';
+let cachedWebhookSecret = '';
 let cachedApiUrl = 'https://zernio.com/api/v1';
 
 export async function getZernioSettings() {
@@ -137,54 +144,6 @@ export async function getOrCreateUserProfile(userId: string, userName?: string):
     console.error(`[Omnichannel] Failed to create profile for user ${userId}:`, err.message);
     throw err;
   }
-}
-
-/**
- * Gets or initializes user subscription record with default limits.
- */
-export async function getUserOmnichannelSubscription(userId: string) {
-  const [rows]: any = await pool.query(
-    "SELECT * FROM omnichannel_subscriptions WHERE user_id = ? LIMIT 1",
-    [userId]
-  );
-
-  if (rows.length > 0) {
-    return rows[0];
-  }
-
-  // Default initial trial / whatsapp plan
-  const defaultSub = {
-    user_id: userId,
-    plan_code: 'whatsapp',
-    status: 'active',
-    channels_limit: 1,
-    ai_enabled: 1,
-    comment_automation: 0,
-    auto_publish: 0,
-    extra_channels_count: 0,
-    monthly_price: 9.99,
-    currency: 'EUR'
-  };
-
-  const [res]: any = await pool.query(
-    `INSERT INTO omnichannel_subscriptions 
-      (user_id, plan_code, status, channels_limit, ai_enabled, comment_automation, auto_publish, extra_channels_count, monthly_price, currency)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      defaultSub.user_id,
-      defaultSub.plan_code,
-      defaultSub.status,
-      defaultSub.channels_limit,
-      defaultSub.ai_enabled,
-      defaultSub.comment_automation,
-      defaultSub.auto_publish,
-      defaultSub.extra_channels_count,
-      defaultSub.monthly_price,
-      defaultSub.currency
-    ]
-  );
-
-  return { id: res.insertId, ...defaultSub };
 }
 
 /**

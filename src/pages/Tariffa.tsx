@@ -473,16 +473,27 @@ export default function DoorDropTariffa() {
           if (!firstPlanResponse) {
             firstPlanResponse = response;
             const nextPlans = planOptionsFromResponse(response);
-            setPlans(nextPlans);
-            const quoteList = Array.isArray(response?.quotes) ? response.quotes : [];
-            const activeFromQuote = quoteList.find((quote: any) => quote?.planId)?.planId;
-            const activeFromComparison = quoteList.flatMap((quote: any) => Array.isArray(quote?.planComparisons) ? quote.planComparisons : []).find((plan: any) => plan?.isActive)?.planId;
-            setActivePlanId(String(activeFromQuote || activeFromComparison || nextPlans[0]?.planId || ''));
+            // Providers answer at different speeds. An unavailable provider can
+            // legitimately return an empty payload before another provider
+            // returns the real plan comparison. Never replace a visible catalog
+            // with an empty one because of that partial response.
+            if (nextPlans.length) {
+              setPlans(nextPlans);
+              const quoteList = Array.isArray(response?.quotes) ? response.quotes : [];
+              const activeFromQuote = quoteList.find((quote: any) => quote?.planId)?.planId;
+              const activeFromComparison = quoteList.flatMap((quote: any) => Array.isArray(quote?.planComparisons) ? quote.planComparisons : []).find((plan: any) => plan?.isActive)?.planId;
+              setActivePlanId(String(activeFromQuote || activeFromComparison || nextPlans[0]?.planId || ''));
+            }
           }
           if (Array.isArray(response?.quotes) && response.quotes.length) {
             responses.push({ weight, data: response });
-            setRows(mergeResponses(responses, originCountry, destCountry, copy));
-            setLastQuery(new Date());
+            const nextRows = mergeResponses(responses, originCountry, destCountry, copy);
+            // A malformed/partial provider payload must not erase the last
+            // real rows already rendered by another provider.
+            if (nextRows.length) {
+              setRows(nextRows);
+              setLastQuery(new Date());
+            }
           }
           return response;
         } catch (providerError: any) {

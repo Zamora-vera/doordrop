@@ -1,6 +1,7 @@
 import https from 'https';
 import { pool } from '../db/connection.js';
 import { handleAIToolCall } from './ai_sales_tools.js';
+import { getUserOmnichannelSubscription, hasActiveOmnichannelSubscription } from './entitlements.js';
 
 let cachedDeepseekKey = process.env.DEEPSEEK_API_KEY || '';
 let cachedMarginPercent = 10.0; // Standard resale margin
@@ -294,12 +295,9 @@ export async function generateAIEmployeeReply(
   conversationId?: number | string
 ): Promise<{ text: string; mediaUrl?: string | null; blockedCredit?: boolean } | string | null> {
   try {
-    // 1. Subscription & credit limit check
-    const [subRows]: any = await pool.query(
-      "SELECT ai_enabled, status FROM omnichannel_subscriptions WHERE user_id = ? LIMIT 1",
-      [userId]
-    );
-    if (!subRows.length || !subRows[0].ai_enabled || subRows[0].status !== 'active') {
+    // 1. Subscription & credit limit check. Access is granted only by Polar.
+    const subscription = await getUserOmnichannelSubscription(userId);
+    if (!hasActiveOmnichannelSubscription(subscription) || !subscription.ai_enabled) {
       return null;
     }
 

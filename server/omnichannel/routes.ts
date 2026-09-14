@@ -4,6 +4,11 @@ import https from 'https';
 import crypto from 'crypto';
 import { handleAIToolCall } from './ai_sales_tools';
 import { sendNotificationEvent } from '../services/emailService';
+import {
+  getUserOmnichannelSubscription,
+  hasActiveOmnichannelSubscription,
+  parseCatalogJson
+} from './entitlements';
 
 export function setupOmnichannelRoutes(app: any, options: {
   pool: any;
@@ -15,8 +20,8 @@ export function setupOmnichannelRoutes(app: any, options: {
   const adminRouter = Router();
   const { pool, authMiddleware, requireSuperAdmin, UserRepo } = options;
 
-  let cachedApiKey = 'sk_895a0c3cf6da498f854c000ef72860d0ca5f5c313464055e44e07454a50cfa7a';
-  let cachedWebhookSecret = 'whsec_dd_omni_895a0c3cf6da498f854c000ef72860d0';
+  let cachedApiKey = '';
+  let cachedWebhookSecret = '';
   let cachedApiUrl = 'https://zernio.com/api/v1';
 
   async function getZernioSettings() {
@@ -120,44 +125,23 @@ export function setupOmnichannelRoutes(app: any, options: {
     return zernioProfileId;
   }
 
-  async function getUserOmnichannelSubscription(userId: string) {
-    const [rows]: any = await pool.query(
-      "SELECT * FROM omnichannel_subscriptions WHERE user_id = ? LIMIT 1",
-      [userId]
-    );
-    if (rows.length > 0) return rows[0];
-
-    const defaultSub = {
-      user_id: userId,
-      plan_code: 'whatsapp',
-      status: 'active',
-      channels_limit: 1,
-      ai_enabled: 1,
-      comment_automation: 0,
-      auto_publish: 0,
-      extra_channels_count: 0,
-      monthly_price: 9.99,
-      currency: 'EUR'
-    };
-
-    const [res]: any = await pool.query(
-      `INSERT INTO omnichannel_subscriptions 
-        (user_id, plan_code, status, channels_limit, ai_enabled, comment_automation, auto_publish, extra_channels_count, monthly_price, currency)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        defaultSub.user_id,
-        defaultSub.plan_code,
-        defaultSub.status,
-        defaultSub.channels_limit,
-        defaultSub.ai_enabled,
-        defaultSub.comment_automation,
-        defaultSub.auto_publish,
-        defaultSub.extra_channels_count,
-        defaultSub.monthly_price,
-        defaultSub.currency
-      ]
-    );
-    return { id: res.insertId, ...defaultSub };
+  async function requireActiveSubscription(req: any, res: Response, next: any) {
+    try {
+      const userId = String(req.user?.id || req.user?.userId || '');
+      const subscription = await getUserOmnichannelSubscription(userId);
+      if (!hasActiveOmnichannelSubscription(subscription)) {
+        return res.status(402).json({
+          error: 'Necesitas una suscripción Omnicanal activa para usar esta función.',
+          code: 'OMNICHANNEL_SUBSCRIPTION_REQUIRED',
+          subscription_status: subscription.status
+        });
+      }
+      req.omnichannelSubscription = subscription;
+      next();
+    } catch (err: any) {
+      console.error('[Omnichannel] Entitlement check error:', err?.message || err);
+      return res.status(503).json({ error: 'No se pudo validar la suscripción Omnicanal.' });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -192,14 +176,14 @@ export function setupOmnichannelRoutes(app: any, options: {
       switch (eventType) {
         case 'message.received': {
           const msg = payload.data || payload.message || payload;
-          const convId = msg.conversationId || msg.conversation?._id || msg.conversation?.id || 'conv_default';
+          const convId = msg.conversationId || msg.conversation?._id || msg.conversation?.id;
           const contactId = msg.senderId || msg.contactId || msg.from;
           const contactName = msg.senderName || msg.sender?.name || 'Cliente';
           const textContent = msg.text || msg.body || msg.content || '';
           const platform = msg.platform || payload.platform || 'whatsapp';
           const profileId = payload.profileId || msg.profileId;
 
-                    let userId = 'usr_cd9c5499356269546b7c9aa27e0adebe';
+          let userId = '';
           const zAccountId = payload.account?.id || payload.account?.accountId || msg.accountId;
           
           if (zAccountId) {
@@ -207,13 +191,18 @@ export function setupOmnichannelRoutes(app: any, options: {
               "SELECT user_id FROM omnichannel_accounts WHERE zernio_account_id = ? LIMIT 1",
               [zAccountId]
             );
-            if (accs.length > 0) userId = accs[0].user_id;
+            if (accs.length > 0) userId = String(accs[0].user_id || '');
           } else if (profileId) {
             const [prof]: any = await pool.query(
               "SELECT user_id FROM omnichannel_profiles WHERE zernio_profile_id = ? LIMIT 1",
               [profileId]
             );
-            if (prof.length > 0) userId = prof[0].user_id;
+            if (prof.length > 0) userId = String(prof[0].user_id || '');
+          }
+
+          if (!userId || !convId) {
+            console.warn('[Omnichannel Webhook] Evento ignorado: cuenta/perfil o conversación no reconocidos.');
+            return res.status(202).json({ status: 'unmatched_account_ignored' });
           }
 
           const [existingConv]: any = await pool.query(
@@ -516,7 +505,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/channels/connect-url', authMiddleware, async (req: any, res: Response) => {
+  router.post('/channels/connect-url', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { platform } = req.body;
@@ -582,7 +571,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/conversations', authMiddleware, async (req: any, res: Response) => {
+  router.post('/conversations', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { contact_name, contact_phone, platform, initial_message } = req.body;
@@ -616,7 +605,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.get('/conversations', authMiddleware, async (req: any, res: Response) => {
+  router.get('/conversations', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { channel, status, search } = req.query;
@@ -647,7 +636,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.get('/conversations/:id/messages', authMiddleware, async (req: any, res: Response) => {
+  router.get('/conversations/:id/messages', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const convId = Number(req.params.id);
@@ -671,7 +660,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/conversations/:id/messages', authMiddleware, async (req: any, res: Response) => {
+  router.post('/conversations/:id/messages', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const convId = Number(req.params.id);
@@ -759,7 +748,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/conversations/:id/toggle-ai', authMiddleware, async (req: any, res: Response) => {
+  router.post('/conversations/:id/toggle-ai', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const convId = Number(req.params.id);
@@ -780,7 +769,7 @@ export function setupOmnichannelRoutes(app: any, options: {
   // ---------------------------------------------------------------------------
   // Team Management & Agent Transfer Endpoints
   // ---------------------------------------------------------------------------
-  router.get('/team', authMiddleware, async (req: any, res: Response) => {
+  router.get('/team', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const [members]: any = await pool.query(
@@ -794,7 +783,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/team', authMiddleware, async (req: any, res: Response) => {
+  router.post('/team', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { name, role, email, phone, type, status } = req.body;
@@ -824,7 +813,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.put('/team/:id', authMiddleware, async (req: any, res: Response) => {
+  router.put('/team/:id', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const memberId = req.params.id;
@@ -850,7 +839,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.delete('/team/:id', authMiddleware, async (req: any, res: Response) => {
+  router.delete('/team/:id', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const memberId = req.params.id;
@@ -866,7 +855,7 @@ export function setupOmnichannelRoutes(app: any, options: {
   });
 
   // Transfer conversation to an agent (AI or human team member)
-  router.post('/conversations/:id/transfer', authMiddleware, async (req: any, res: Response) => {
+  router.post('/conversations/:id/transfer', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const convId = Number(req.params.id);
@@ -971,7 +960,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.get('/comments', authMiddleware, async (req: any, res: Response) => {
+  router.get('/comments', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const [comments]: any = await pool.query(
@@ -989,7 +978,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/comments/:id/reply', authMiddleware, async (req: any, res: Response) => {
+  router.post('/comments/:id/reply', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const commentId = Number(req.params.id);
@@ -1025,7 +1014,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/comments/rules', authMiddleware, async (req: any, res: Response) => {
+  router.post('/comments/rules', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { name, platform, keywords, public_reply_text, dm_reply_text } = req.body;
@@ -1052,7 +1041,7 @@ export function setupOmnichannelRoutes(app: any, options: {
 
   
   // AI Autofill: Generate entire employee setup based on catalog and merchant profile
-  router.post('/ai-employee/autofill', authMiddleware, async (req: any, res: Response) => {
+  router.post('/ai-employee/autofill', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       console.log('[AI Autofill] Triggered for user:', userId);
@@ -1064,7 +1053,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.get('/ai-employee', authMiddleware, async (req: any, res: Response) => {
+  router.get('/ai-employee', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const [rows]: any = await pool.query(
@@ -1115,7 +1104,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/ai-employee', authMiddleware, async (req: any, res: Response) => {
+  router.post('/ai-employee', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const {
@@ -1207,7 +1196,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/ai-employee/test-tool', authMiddleware, async (req: any, res: Response) => {
+  router.post('/ai-employee/test-tool', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { tool, args } = req.body;
@@ -1221,7 +1210,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.get('/posts', authMiddleware, async (req: any, res: Response) => {
+  router.get('/posts', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const [posts]: any = await pool.query(
@@ -1235,7 +1224,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/posts', authMiddleware, async (req: any, res: Response) => {
+  router.post('/posts', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { caption, media_urls, target_platforms, scheduled_at } = req.body;
@@ -1266,104 +1255,64 @@ export function setupOmnichannelRoutes(app: any, options: {
 
   router.get('/plans', async (req: Request, res: Response) => {
     try {
-      const [settings]: any = await pool.query(
-        "SELECT setting_key, setting_value FROM admin_settings WHERE setting_key IN ('omnichannel_extra_channel_usd', 'omnichannel_default_currency')"
+      const requestedCurrency = String(req.query.currency || '').toUpperCase();
+      const [planRows]: any = await pool.query(
+        `SELECT id, code, name, description, price, currency, billing_interval,
+                channels_limit, included_platforms_json, features_json,
+                polar_product_id, polar_price_id, polar_enabled, is_active
+           FROM omnichannel_plan_catalog
+          WHERE is_active = 1
+          ORDER BY price ASC, id ASC`
       );
-      let extraChannelPrice = 8.00;
-      for (const s of settings) {
-        if (s.setting_key === 'omnichannel_extra_channel_usd') extraChannelPrice = Number(s.setting_value) || 8.00;
-      }
+      const [addonRows]: any = await pool.query(
+        `SELECT id, code, name, description, price, currency, billing_interval,
+                polar_product_id, polar_price_id, polar_enabled, is_active
+           FROM omnichannel_addon_catalog
+          WHERE is_active = 1
+          ORDER BY price ASC, id ASC`
+      );
 
-      // Base prices defined in USD (official Polar requirement)
-      const basePlansUSD = [
-        {
-          code: 'whatsapp',
-          name: 'WhatsApp Dedicated',
-          priceUSD: 10.99,
-          polar_plan_id: 'plan_omni_whatsapp',
-          channels_included: 1,
-          included_platforms: ['whatsapp'],
-          features: [
-            '1 canal WhatsApp dedicado',
-            'Bandeja de conversaciones unificada',
-            'Gestión de contactos y clientes',
-            'Empleado AI disponible 24/7 (DeepSeek)',
-            'Conocimiento del negocio y FAQs ilimitadas',
-            'Control total y traspaso a humano en DoorDrop',
-            'Mensajes ilimitados'
-          ]
-        },
-        {
-          code: 'duo',
-          name: 'DoorDrop Duo',
-          priceUSD: 19.99,
-          polar_plan_id: 'plan_omni_duo',
-          popular: true,
-          channels_included: 2,
-          included_platforms: ['whatsapp', 'instagram | facebook | telegram'],
-          features: [
-            'WhatsApp + 1 canal a elección del cliente',
-            'Bandeja omnicanal combinada',
-            'Empleado AI en ambos canales (DeepSeek)',
-            'Historial de pedidos y tracking conectado',
-            'Filtros inteligentes y etiquetas',
-            'Mensajes ilimitados'
-          ]
-        },
-        {
-          code: 'omni3',
-          name: 'DoorDrop Omni 3',
-          priceUSD: 27.99,
-          polar_plan_id: 'plan_omni_omni3',
-          channels_included: 3,
-          included_platforms: ['whatsapp', 'instagram', 'facebook'],
-          features: [
-            'WhatsApp + Instagram + Facebook incluidos',
-            'Empleado AI multicanal sincronizado (DeepSeek)',
-            'Soporte prioritario DoorDrop',
-            'Cotizador de envíos y catálogo integrado',
-            'Respuestas rápidas y notas internas',
-            'Mensajes ilimitados'
-          ]
-        }
-      ];
-
-      // Format with client currency
-      const userCurrency = String(req.query.currency || 'EUR').toUpperCase();
-      let rate = 1.0;
-      if (userCurrency === 'EUR') rate = 0.92;
-
-      const plans = basePlansUSD.map(p => ({
-        ...p,
-        price: Number((p.priceUSD * (userCurrency === 'USD' ? 1.0 : rate)).toFixed(2)),
-        currency: userCurrency
+      const plans = (planRows || []).map((plan: any) => ({
+        id: plan.id,
+        code: plan.code,
+        name: plan.name,
+        description: plan.description,
+        price: Number(plan.price || 0),
+        currency: String(plan.currency || 'USD').toUpperCase(),
+        billing_interval: plan.billing_interval || 'month',
+        channels_included: Number(plan.channels_limit || 0),
+        included_platforms: parseCatalogJson(plan.included_platforms_json),
+        features: parseCatalogJson(plan.features_json),
+        polar_plan_id: plan.id,
+        polar_product_id: plan.polar_product_id || null,
+        polar_price_id: plan.polar_price_id || null,
+        polar_enabled: Boolean(plan.polar_enabled),
+        checkout_ready: Boolean(plan.polar_enabled && plan.polar_product_id),
+        popular: plan.code === 'duo'
       }));
 
-      const addOns = [
-        {
-          code: 'extra_channel',
-          name: 'Canal Adicional',
-          price: extraChannelPrice,
-          currency: 'USD',
-          description: 'Suma cualquier red adicional (Telegram, TikTok, etc.) a tu plan actual.'
-        },
-        {
-          code: 'comment_automation',
-          name: 'Comment-to-DM Automation',
-          price: Number((2.20 * (userCurrency === 'USD' ? 1.0 : rate)).toFixed(2)),
-          currency: userCurrency,
-          description: 'Convierte comentarios de publicaciones en conversaciones y ventas directas por DM automáticamente.'
-        },
-        {
-          code: 'auto_publish',
-          name: 'Auto-Publishing Multicanal',
-          price: Number((2.20 * (userCurrency === 'USD' ? 1.0 : rate)).toFixed(2)),
-          currency: userCurrency,
-          description: 'Programa y publica posts, fotos y promociones en todas tus redes con calendario visual.'
-        }
-      ];
+      const addOns = (addonRows || []).map((addon: any) => ({
+        id: addon.id,
+        code: addon.code,
+        name: addon.name,
+        description: addon.description,
+        price: Number(addon.price || 0),
+        currency: String(addon.currency || 'USD').toUpperCase(),
+        billing_interval: addon.billing_interval || 'month',
+        polar_product_id: addon.polar_product_id || null,
+        polar_price_id: addon.polar_price_id || null,
+        polar_enabled: Boolean(addon.polar_enabled),
+        checkout_ready: Boolean(addon.polar_enabled && addon.polar_product_id)
+      }));
 
-      return res.json({ success: true, plans, addOns, currency: userCurrency });
+      return res.json({
+        success: true,
+        plans,
+        addOns,
+        currency: requestedCurrency || (plans[0]?.currency || 'USD'),
+        pricing_source: 'omnichannel_plan_catalog',
+        note: 'Los precios se cobran con el producto recurrente configurado en Polar; no se convierten automáticamente.'
+      });
     } catch (err: any) {
       console.error('[Omnichannel] Get plans error:', err);
       return res.status(500).json({ error: 'Error al consultar planes.' });
@@ -1371,46 +1320,10 @@ export function setupOmnichannelRoutes(app: any, options: {
   });
 
   router.post('/subscribe', authMiddleware, async (req: any, res: Response) => {
-    try {
-      const userId = String(req.user.id || req.user.userId);
-      const { plan_code, add_ons } = req.body;
-
-      let channelsLimit = 1;
-      let price = 9.99;
-      if (plan_code === 'duo') {
-        channelsLimit = 2;
-        price = 18.00;
-      } else if (plan_code === 'omni3') {
-        channelsLimit = 3;
-        price = 24.99;
-      }
-
-      const commentAutomation = add_ons?.includes('comment_automation') ? 1 : 0;
-      const autoPublish = add_ons?.includes('auto_publish') ? 1 : 0;
-      const extraChannels = Number(req.body.extra_channels) || 0;
-
-      await pool.query(
-        `INSERT INTO omnichannel_subscriptions 
-          (user_id, plan_code, status, channels_limit, ai_enabled, comment_automation, auto_publish, extra_channels_count, monthly_price, currency)
-         VALUES (?, ?, 'active', ?, 1, ?, ?, ?, ?, 'EUR')
-         ON DUPLICATE KEY UPDATE 
-           plan_code = VALUES(plan_code),
-           status = 'active',
-           channels_limit = VALUES(channels_limit),
-           ai_enabled = 1,
-           comment_automation = VALUES(comment_automation),
-           auto_publish = VALUES(auto_publish),
-           extra_channels_count = VALUES(extra_channels_count),
-           monthly_price = VALUES(monthly_price),
-           updated_at = CURRENT_TIMESTAMP`,
-        [userId, plan_code || 'whatsapp', channelsLimit, commentAutomation, autoPublish, extraChannels, price]
-      );
-
-      res.json({ success: true, message: 'Plan Omnicanal activado con éxito.' });
-    } catch (err: any) {
-      console.error('[Omnichannel] Subscribe error:', err);
-      res.status(500).json({ error: 'Error al actualizar suscripción.' });
-    }
+    return res.status(410).json({
+      error: 'La activación directa fue retirada. Debes completar el checkout recurrente de Polar.',
+      code: 'OMNICHANNEL_POLAR_CHECKOUT_REQUIRED'
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1421,8 +1334,13 @@ export function setupOmnichannelRoutes(app: any, options: {
       const [rows]: any = await pool.query(
         "SELECT setting_key, setting_value, is_secret, updated_at FROM admin_settings WHERE setting_key LIKE 'zernio_%' OR setting_key LIKE 'omnichannel_%'"
       );
+      const safeSettings = (rows || []).map((row: any) => ({
+        ...row,
+        setting_value: row.is_secret ? '' : row.setting_value,
+        configured: row.is_secret ? Boolean(row.setting_value) : undefined
+      }));
       const [subCount]: any = await pool.query(
-        "SELECT COUNT(*) AS total_clients, COALESCE(SUM(monthly_price), 0) AS mrr FROM omnichannel_subscriptions WHERE status = 'active'"
+        "SELECT COUNT(*) AS total_clients, COALESCE(SUM(monthly_price), 0) AS mrr FROM omnichannel_subscriptions WHERE status = 'active' AND provider = 'polar'"
       );
       const [accCount]: any = await pool.query(
         "SELECT COUNT(*) AS total_connected_channels FROM omnichannel_accounts"
@@ -1433,7 +1351,7 @@ export function setupOmnichannelRoutes(app: any, options: {
 
       res.json({
         success: true,
-        settings: rows,
+        settings: safeSettings,
         overview: {
           total_subscribers: subCount[0]?.total_clients || 0,
           mrr: Number(subCount[0]?.mrr || 0).toFixed(2),
@@ -1459,7 +1377,7 @@ export function setupOmnichannelRoutes(app: any, options: {
       ];
 
       for (const [key, val, secret] of updates) {
-        if (val !== undefined && val !== null) {
+        if (val !== undefined && val !== null && (!secret || String(val).trim() !== '')) {
           await pool.query(
             `INSERT INTO admin_settings (setting_key, setting_value, is_secret)
              VALUES (?, ?, ?)
@@ -1475,10 +1393,128 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
+  adminRouter.get('/plans', authMiddleware, requireSuperAdmin, async (_req: any, res: Response) => {
+    try {
+      const [plans]: any = await pool.query(
+        `SELECT id, code, name, description, price, currency, billing_interval,
+                channels_limit, included_platforms_json, features_json,
+                polar_product_id, polar_price_id, polar_enabled, is_active, updated_at
+           FROM omnichannel_plan_catalog
+          ORDER BY price ASC, id ASC`
+      );
+      const [addOns]: any = await pool.query(
+        `SELECT id, code, name, description, price, currency, billing_interval,
+                polar_product_id, polar_price_id, polar_enabled, is_active, updated_at
+           FROM omnichannel_addon_catalog
+          ORDER BY price ASC, id ASC`
+      );
+      res.json({
+        success: true,
+        plans: (plans || []).map((p: any) => ({
+          ...p,
+          price: Number(p.price || 0),
+          included_platforms: parseCatalogJson(p.included_platforms_json),
+          features: parseCatalogJson(p.features_json),
+          checkout_ready: Boolean(p.polar_enabled && p.polar_product_id)
+        })),
+        addOns: (addOns || []).map((a: any) => ({
+          ...a,
+          price: Number(a.price || 0),
+          checkout_ready: Boolean(a.polar_enabled && a.polar_product_id)
+        }))
+      });
+    } catch (err: any) {
+      console.error('[Omnichannel Admin] Get catalog error:', err?.message || err);
+      res.status(500).json({ error: 'Error al consultar el catálogo Omnicanal.' });
+    }
+  });
+
+  adminRouter.put('/plans/:id', authMiddleware, requireSuperAdmin, async (req: any, res: Response) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      const [existing]: any = await pool.query('SELECT id FROM omnichannel_plan_catalog WHERE id = ? LIMIT 1', [id]);
+      if (!existing?.length) return res.status(404).json({ error: 'Plan Omnicanal no encontrado.' });
+
+      const body = req.body || {};
+      const price = Number(body.price);
+      const channelsLimit = Number(body.channels_limit);
+      if (!Number.isFinite(price) || price < 0 || price > 100000) {
+        return res.status(400).json({ error: 'El precio del plan no es válido.' });
+      }
+      if (!Number.isInteger(channelsLimit) || channelsLimit < 1 || channelsLimit > 100) {
+        return res.status(400).json({ error: 'El límite de canales no es válido.' });
+      }
+      const currency = String(body.currency || 'USD').trim().toUpperCase();
+      if (!/^[A-Z]{3}$/.test(currency)) return res.status(400).json({ error: 'La moneda no es válida.' });
+
+      await pool.query(
+        `UPDATE omnichannel_plan_catalog
+            SET name = ?, description = ?, price = ?, currency = ?, billing_interval = ?,
+                channels_limit = ?, polar_product_id = ?, polar_price_id = ?,
+                polar_enabled = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?`,
+        [
+          String(body.name || '').trim().slice(0, 120),
+          String(body.description || '').trim().slice(0, 500),
+          price,
+          currency,
+          String(body.billing_interval || 'month').trim().slice(0, 20),
+          channelsLimit,
+          String(body.polar_product_id || '').trim().slice(0, 190) || null,
+          String(body.polar_price_id || '').trim().slice(0, 190) || null,
+          body.polar_enabled === false || body.polar_enabled === 0 ? 0 : 1,
+          body.is_active === false || body.is_active === 0 ? 0 : 1,
+          id
+        ]
+      );
+      res.json({ success: true, message: 'Plan Omnicanal actualizado.' });
+    } catch (err: any) {
+      console.error('[Omnichannel Admin] Update catalog plan error:', err?.message || err);
+      res.status(500).json({ error: 'No se pudo actualizar el plan Omnicanal.' });
+    }
+  });
+
+  adminRouter.put('/addons/:id', authMiddleware, requireSuperAdmin, async (req: any, res: Response) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      const [existing]: any = await pool.query('SELECT id FROM omnichannel_addon_catalog WHERE id = ? LIMIT 1', [id]);
+      if (!existing?.length) return res.status(404).json({ error: 'Complemento Omnicanal no encontrado.' });
+
+      const body = req.body || {};
+      const price = Number(body.price);
+      const currency = String(body.currency || 'USD').trim().toUpperCase();
+      if (!Number.isFinite(price) || price < 0 || price > 100000 || !/^[A-Z]{3}$/.test(currency)) {
+        return res.status(400).json({ error: 'Los datos del complemento no son válidos.' });
+      }
+      await pool.query(
+        `UPDATE omnichannel_addon_catalog
+            SET name = ?, description = ?, price = ?, currency = ?, billing_interval = ?,
+                polar_product_id = ?, polar_price_id = ?, polar_enabled = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?`,
+        [
+          String(body.name || '').trim().slice(0, 120),
+          String(body.description || '').trim().slice(0, 500),
+          price,
+          currency,
+          String(body.billing_interval || 'month').trim().slice(0, 20),
+          String(body.polar_product_id || '').trim().slice(0, 190) || null,
+          String(body.polar_price_id || '').trim().slice(0, 190) || null,
+          body.polar_enabled === false || body.polar_enabled === 0 ? 0 : 1,
+          body.is_active === false || body.is_active === 0 ? 0 : 1,
+          id
+        ]
+      );
+      res.json({ success: true, message: 'Complemento Omnicanal actualizado.' });
+    } catch (err: any) {
+      console.error('[Omnichannel Admin] Update catalog addon error:', err?.message || err);
+      res.status(500).json({ error: 'No se pudo actualizar el complemento Omnicanal.' });
+    }
+  });
+
   adminRouter.get('/clients', authMiddleware, requireSuperAdmin, async (_req: any, res: Response) => {
     try {
       const [clients]: any = await pool.query(
-        `SELECT s.*, u.email, u.name, u.store_name,
+         `SELECT s.*, u.email, u.name,
                 (SELECT COUNT(*) FROM omnichannel_accounts a WHERE a.user_id = s.user_id) AS active_channels_count,
                 (SELECT COUNT(*) FROM omnichannel_conversations c WHERE c.user_id = s.user_id) AS total_conversations
          FROM omnichannel_subscriptions s

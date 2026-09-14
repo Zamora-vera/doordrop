@@ -108,28 +108,35 @@ function normalizeNotificationEmail(value: any): string {
 }
 
 function normalizeNotificationLanguage(value: any): string {
-  const raw = String(value || '').trim().toLowerCase().slice(0, 2);
-  return ['es', 'it', 'en', 'de', 'fr'].includes(raw) ? raw : 'es';
+  const rawValue = String(value || '').trim().toLowerCase().replace('_', '-');
+  const raw = rawValue.slice(0, 2);
+  if (['es', 'it', 'en', 'de', 'fr'].includes(raw)) return raw;
+  const countryLanguage: Record<string, string> = {
+    us: 'en', gb: 'en', ca: 'en', au: 'en',
+    it: 'it', de: 'de', at: 'de', ch: 'de',
+    fr: 'fr', be: 'fr',
+    es: 'es', mx: 'es', do: 'es', co: 'es', ar: 'es', cl: 'es', pe: 'es'
+  };
+  return countryLanguage[raw] || 'es';
 }
 
 async function loadTemplateTranslation(templateId: string, language: string): Promise<any> {
   const requestedLanguage = normalizeNotificationLanguage(language);
+  const candidates = Array.from(new Set([requestedLanguage, 'en', 'es']));
+  const placeholders = candidates.map(() => '?').join(', ');
   const [rows]: any = await pool.query(
-    `SELECT subject, preheader, body_html, body_text
+    `SELECT subject, preheader, body_html, body_text, language
      FROM email_template_translations
-     WHERE template_id = ? AND language = ? AND is_active = 1
-     UNION
-     SELECT subject, preheader, body_html, body_text
-     FROM email_template_translations
-     WHERE template_id = ? AND language = 'es' AND is_active = 1
+     WHERE template_id = ? AND language IN (${placeholders}) AND is_active = 1
+     ORDER BY FIELD(language, ${placeholders})
      LIMIT 1`,
-    [templateId, requestedLanguage, templateId]
+    [templateId, ...candidates, ...candidates]
   );
 
   if (!rows || rows.length === 0) {
     throw new Error(`Plantilla de correo '${templateId}' no encontrada.`);
   }
-  return rows[0];
+  return { ...rows[0], resolvedLanguage: normalizeNotificationLanguage(rows[0].language || requestedLanguage) };
 }
 
 function templateVariables(toEmail: string, recipientName: string | undefined, variables: Record<string, any>) {
@@ -331,8 +338,9 @@ export async function sendNotificationEvent(params: SendNotificationEventParams)
     return { success: false, skipped: true, reason: 'send_in_progress', templateId: existingLog.template_id || event.template_id, subject: existingLog.subject || undefined };
   }
 
-  const language = normalizeNotificationLanguage(params.language || 'es');
-  const tmpl = await loadTemplateTranslation(event.template_id, language);
+  const requestedLanguage = normalizeNotificationLanguage(params.language || 'es');
+  const tmpl = await loadTemplateTranslation(event.template_id, requestedLanguage);
+  const language = tmpl.resolvedLanguage || requestedLanguage;
   const allVars = templateVariables(safeToEmail, params.recipientName, params.variables || {});
   const subject = renderTemplateText(tmpl.subject, allVars, false);
   // email_logs.id es CHAR(36): conserva el UUID completo para no truncar la inserción.

@@ -108,7 +108,11 @@ export const omnichannelApi = {
   }),
 
   // Plans & Subscriptions
-  getPlans: () => request('/omnichannel/plans'),
+  getPlans: (currency?: string) => request(`/omnichannel/plans${currency ? `?currency=${encodeURIComponent(currency)}` : ''}`),
+  createPolarCheckout: (planId: string, addOns?: string[]) => request('/subscriptions/polar/plan-checkout', {
+    method: 'POST',
+    body: JSON.stringify({ planId, addOns })
+  }),
   subscribePlan: (plan_code: string, add_ons?: string[], extra_channels?: number) => request('/omnichannel/subscribe', {
     method: 'POST',
     body: JSON.stringify({ plan_code, add_ons, extra_channels })
@@ -121,5 +125,14 @@ export const omnichannelApi = {
     body: JSON.stringify(data)
   }),
   getAdminClients: () => request('/admin/omnichannel/clients'),
+  getAdminPlans: () => request('/admin/omnichannel/plans'),
+  updateAdminPlan: (id: string, data: any) => request(`/admin/omnichannel/plans/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  }),
+  updateAdminAddon: (id: string, data: any) => request(`/admin/omnichannel/addons/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  }),
   testProviderConnection: () => request('/admin/omnichannel/test-connection', { method: 'POST' })
 };
