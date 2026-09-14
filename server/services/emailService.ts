@@ -1,7 +1,8 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
+import { pool } from '../db/connection';
 
-// Asegurar carga de .env con override para que las variables de .env manden sobre Docker
+// Asegurar carga de .env con override prioritario
 dotenv.config({ override: true });
 
 interface SendPasswordResetParams {
@@ -11,9 +12,17 @@ interface SendPasswordResetParams {
   expirationMinutes?: number;
 }
 
+interface SendTemplatedEmailParams {
+  templateId: string;
+  language?: string;
+  toEmail: string;
+  recipientName?: string;
+  variables?: Record<string, any>;
+}
+
 let transporter: nodemailer.Transporter | null = null;
 
-function getTransporter(): nodemailer.Transporter {
+export function getTransporter(): nodemailer.Transporter {
   if (transporter) return transporter;
 
   const host = process.env.SMTP_HOST || 'smtp.truobox.com';
@@ -29,14 +38,14 @@ function getTransporter(): nodemailer.Transporter {
   transporter = nodemailer.createTransport({
     host,
     port,
-    secure: isSecure, // TLS implícito en puerto 465
+    secure: isSecure,
     auth: {
       user,
       pass
     },
     tls: {
-      rejectUnauthorized: true, // Verifica certificado TLS estrictamente
-      servername: host // Garantiza SNI correcto para smtp.truobox.com
+      rejectUnauthorized: true,
+      servername: host
     }
   });
 
@@ -46,13 +55,189 @@ function getTransporter(): nodemailer.Transporter {
 /**
  * Escapa caracteres HTML para evitar inyección en correos
  */
-function escapeHtml(str: string): string {
+export function escapeHtml(str: string): string {
   return String(str || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+/**
+ * Reemplaza variables {{variableName}} en una plantilla de texto o HTML
+ */
+export function renderTemplateText(templateText: string, variables: Record<string, any>, isHtml: boolean = false): string {
+  let result = templateText || '';
+  for (const [key, val] of Object.entries(variables || {})) {
+    const rawVal = val !== undefined && val !== null ? String(val) : '';
+    const safeVal = isHtml ? escapeHtml(rawVal) : rawVal;
+    const regex = new RegExp(`{{\\s*${key}\\s*}}`, 'g');
+    result = result.replace(regex, safeVal);
+  }
+  return result;
+}
+
+/**
+ * Prueba la conexión SMTP y opcionalmente envía un correo de diagnóstico
+ */
+export async function testSmtpConnection(options: {
+  host?: string;
+  port?: number;
+  secure?: boolean;
+  user?: string;
+  pass?: string;
+  toEmail?: string;
+  senderName?: string;
+  senderEmail?: string;
+}): Promise<{ success: boolean; message: string; details?: any }> {
+  const host = options.host || process.env.SMTP_HOST || 'smtp.truobox.com';
+  const port = Number(options.port || process.env.SMTP_PORT) || 465;
+  const isSecure = options.secure !== undefined ? options.secure : (port === 465);
+  const user = options.user || process.env.SMTP_USER;
+  const pass = options.pass || process.env.SMTP_PASS;
+
+  if (!user || !pass) {
+    return { success: false, message: 'Faltan credenciales de usuario o contraseña SMTP.' };
+  }
+
+  const customTransporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: isSecure,
+    auth: { user, pass },
+    tls: {
+      rejectUnauthorized: true,
+      servername: host
+    }
+  });
+
+  try {
+    // 1. Validar conexión y autenticación
+    await customTransporter.verify();
+
+    // 2. Si se proporcionó destinatario, enviar correo de prueba
+    if (options.toEmail) {
+      const fromEmail = options.senderEmail || process.env.MAIL_FROM_EMAIL || 'info@doordrop.lat';
+      const fromName = options.senderName || process.env.MAIL_FROM_NAME || 'DoorDrop';
+
+      const info = await customTransporter.sendMail({
+        from: `"${fromName}" <${fromEmail}>`,
+        sender: fromEmail,
+        envelope: {
+          from: fromEmail,
+          to: [options.toEmail]
+        },
+        to: options.toEmail,
+        subject: `[Prueba SMTP DoorDrop] Conexión Exitosa (${new Date().toLocaleDateString('es-ES')})`,
+        text: `Hola,\n\nEste es un correo de prueba enviado desde el panel administrativo de DoorDrop.\n\nDetalles del Relay:\n- Servidor: ${host}:${port}\n- Seguridad: ${isSecure ? 'TLS Implícito' : 'STARTTLS'}\n- Remitente: ${fromEmail}\n- Destinatario: ${options.toEmail}\n\nSi has recibido este correo, tu configuración SMTP está 100% operativa.`,
+        html: `<!DOCTYPE html><html><body style="font-family:sans-serif;background:#f8fafc;padding:32px;color:#1e293b;">
+          <div style="max-width:560px;margin:auto;background:#fff;border-radius:16px;padding:32px;border:1px solid #e2e8f0;box-shadow:0 4px 6px rgba(0,0,0,0.05);">
+            <div style="background:#0f172a;padding:16px;border-radius:12px;text-align:center;margin-bottom:24px;">
+              <span style="color:#ffffff;font-size:22px;font-weight:800;">Door<span style="color:#3b82f6;">Drop</span></span>
+            </div>
+            <div style="background:#ecfdf5;border:1px solid #a7f3d0;padding:16px;border-radius:12px;margin-bottom:24px;text-align:center;">
+              <h2 style="color:#065f46;margin:0 0 8px 0;font-size:18px;">✅ Conexión SMTP Verificada</h2>
+              <p style="color:#047857;margin:0;font-size:13px;">El servidor de correo <strong>${host}:${port}</strong> ha procesado y entregado este mensaje correctamente.</p>
+            </div>
+            <p style="font-size:14px;line-height:1.6;color:#475569;">Hola,</p>
+            <p style="font-size:14px;line-height:1.6;color:#475569;">Este es un mensaje de prueba enviado directamente desde la nueva vista de administración <strong>/admin/settings/smtp</strong> de DoorDrop.</p>
+            <table style="width:100%;font-size:12px;margin:20px 0;border-collapse:collapse;">
+              <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 0;color:#64748b;">Relay SMTP</td><td style="padding:8px 0;font-weight:bold;color:#0f172a;">${host}:${port}</td></tr>
+              <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 0;color:#64748b;">Seguridad</td><td style="padding:8px 0;font-weight:bold;color:#0f172a;">${isSecure ? 'TLS Implícito' : 'STARTTLS'} (Certificado Validado)</td></tr>
+              <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 0;color:#64748b;">Remitente</td><td style="padding:8px 0;font-weight:bold;color:#0f172a;">${fromName} &lt;${fromEmail}&gt;</td></tr>
+              <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 0;color:#64748b;">Destinatario</td><td style="padding:8px 0;font-weight:bold;color:#0f172a;">${options.toEmail}</td></tr>
+            </table>
+            <p style="font-size:12px;color:#94a3b8;text-align:center;margin-top:24px;">© 2026 DoorDrop Logistics. Todos los derechos reservados.</p>
+          </div></body></html>`
+      });
+
+      return {
+        success: true,
+        message: `Conexión SMTP exitosa. Correo de prueba enviado a ${options.toEmail}.`,
+        details: { messageId: info.messageId, response: info.response, accepted: info.accepted }
+      };
+    }
+
+    return {
+      success: true,
+      message: `Conexión SMTP con ${host}:${port} autenticada exitosamente.`
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err.message || 'Error al conectar con el servidor SMTP.',
+      details: err
+    };
+  }
+}
+
+/**
+ * Envía un correo utilizando una plantilla multilingüe de la base de datos
+ */
+export async function sendTemplatedEmail({
+  templateId,
+  language = 'es',
+  toEmail,
+  recipientName,
+  variables = {}
+}: SendTemplatedEmailParams): Promise<{ success: boolean; messageId?: string }> {
+  // 1. Buscar la traducción para el idioma solicitado (o fallback a 'es')
+  const [rows]: any = await pool.query(
+    `SELECT subject, preheader, body_html, body_text 
+     FROM email_template_translations 
+     WHERE template_id = ? AND language = ? AND is_active = 1
+     UNION
+     SELECT subject, preheader, body_html, body_text 
+     FROM email_template_translations 
+     WHERE template_id = ? AND language = 'es' AND is_active = 1
+     LIMIT 1`,
+    [templateId, language, templateId]
+  );
+
+  if (!rows || rows.length === 0) {
+    throw new Error(`Plantilla de correo '${templateId}' no encontrada.`);
+  }
+
+  const tmpl = rows[0];
+
+  // Variables base obligatorias
+  const appUrl = (process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '');
+  const allVars = {
+    appUrl,
+    loginUrl: `${appUrl}/auth/login`,
+    siteName: 'DoorDrop',
+    recipientName: recipientName || toEmail,
+    userName: recipientName || toEmail.split('@')[0],
+    userEmail: toEmail,
+    ...variables
+  };
+
+  const subject = renderTemplateText(tmpl.subject, allVars, false);
+  const htmlBody = renderTemplateText(tmpl.body_html, allVars, true);
+  const textBody = renderTemplateText(tmpl.body_text, allVars, false);
+
+  const mailer = getTransporter();
+  const fromEmail = process.env.MAIL_FROM_EMAIL || 'info@doordrop.lat';
+  const fromName = process.env.MAIL_FROM_NAME || 'DoorDrop';
+
+  const info = await mailer.sendMail({
+    from: `"${fromName}" <${fromEmail}>`,
+    sender: fromEmail,
+    envelope: {
+      from: fromEmail,
+      to: [toEmail]
+    },
+    to: toEmail,
+    subject,
+    text: textBody,
+    html: htmlBody
+  });
+
+  return {
+    success: true,
+    messageId: info.messageId
+  };
 }
 
 /**
@@ -69,15 +254,8 @@ export async function sendPasswordResetEmail({
   const appUrl = (process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '');
   const resetUrl = `${appUrl}/auth/reset-password?token=${encodeURIComponent(resetToken)}`;
   
-  // Forzar remitente oficial de DoorDrop según requerimiento #12 y #13
-  let fromEmail = process.env.MAIL_FROM_EMAIL || 'info@doordrop.lat';
-  if (!fromEmail || fromEmail.includes('ship24go')) {
-    fromEmail = 'info@doordrop.lat';
-  }
-  let fromName = process.env.MAIL_FROM_NAME || 'DoorDrop';
-  if (!fromName || fromName.toLowerCase().includes('ship24go')) {
-    fromName = 'DoorDrop';
-  }
+  const fromEmail = 'info@doordrop.lat';
+  const fromName = 'DoorDrop';
 
   const safeName = recipientName ? escapeHtml(recipientName.trim()) : 'estimado/a usuario/a';
   const subject = 'Restablece tu contraseña de DoorDrop';
@@ -111,13 +289,11 @@ ${appUrl}
     <tr>
       <td align="center">
         <table role="presentation" width="100%" max-width="560" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background-color:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 6px -1px rgba(0,0,0,0.1),0 2px 4px -2px rgba(0,0,0,0.1);border:1px solid #e2e8f0;">
-          <!-- Header -->
           <tr>
             <td style="background-color:#0f172a;padding:28px 32px;text-align:center;">
               <span style="color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-0.5px;">Door<span style="color:#3b82f6;">Drop</span></span>
             </td>
           </tr>
-          <!-- Content -->
           <tr>
             <td style="padding:32px 32px 24px 32px;">
               <h1 style="margin:0 0 16px 0;font-size:20px;font-weight:700;color:#0f172a;line-height:1.3;">
@@ -129,7 +305,6 @@ ${appUrl}
               <p style="margin:0 0 24px 0;font-size:14px;line-height:1.6;color:#475569;">
                 Recibimos una solicitud para restablecer la contraseña de tu cuenta en <strong>DoorDrop</strong>. Haz clic en el botón siguiente para definir una nueva contraseña:
               </p>
-              <!-- Button -->
               <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto 28px auto;">
                 <tr>
                   <td align="center" style="border-radius:12px;background-color:#2563eb;">
@@ -139,19 +314,16 @@ ${appUrl}
                   </td>
                 </tr>
               </table>
-              <!-- Expiration notice -->
               <div style="background-color:#eff6ff;border-left:4px solid #3b82f6;border-radius:6px;padding:12px 16px;margin-bottom:24px;">
                 <p style="margin:0;font-size:13px;line-height:1.5;color:#1e40af;">
                   ⏱ Este enlace expirará en <strong>${expirationMinutes} minutos</strong>.
                 </p>
               </div>
-              <!-- Security Warning -->
               <div style="background-color:#fef2f2;border-left:4px solid #ef4444;border-radius:6px;padding:12px 16px;margin-bottom:24px;">
                 <p style="margin:0;font-size:12px;line-height:1.5;color:#991b1b;">
                   🔒 <strong>Advertencia de seguridad:</strong> Nunca compartas este enlace con nadie. Si tú no solicitaste este cambio, puedes ignorar este mensaje; tu cuenta permanecerá segura y tu contraseña no cambiará.
                 </p>
               </div>
-              <!-- Plain text link fallback -->
               <p style="margin:0 0 8px 0;font-size:12px;color:#64748b;line-height:1.5;">
                 Si el botón no funciona, copia y pega la siguiente URL en tu navegador:
               </p>
@@ -160,7 +332,6 @@ ${appUrl}
               </p>
             </td>
           </tr>
-          <!-- Footer -->
           <tr>
             <td style="background-color:#f8fafc;padding:20px 32px;border-top:1px solid #e2e8f0;text-align:center;">
               <p style="margin:0;font-size:12px;color:#94a3b8;">

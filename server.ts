@@ -41,7 +41,7 @@ import {
 } from './server/db/repos';
 import { getDocBundle, docsToMarkdown, docsToPdfBuffer, getOpenApiSpec, getOpenAiToolSchemas } from './server/docs/apiDocs';
 import { swaggerUiHtml } from './server/docs/swaggerUi';
-import { sendPasswordResetEmail } from './server/services/emailService';
+import { sendPasswordResetEmail, sendTemplatedEmail, testSmtpConnection, renderTemplateText } from './server/services/emailService';
 
 
 const app = express();
@@ -5983,6 +5983,215 @@ app.post('/api/auth/reset-password', async (req, res) => {
   } catch (err: any) {
     console.error('[auth/reset-password] Error procesando cambio de contraseña:', err?.message || err);
     return res.status(500).json({ error: 'No se pudo restablecer la contraseña. Intenta nuevamente.' });
+  }
+});
+
+
+// =============================================================================
+// ADMIN: CONFIGURACIÓN SMTP & GESTOR DE PLANTILLAS MULTILINGÜES
+// =============================================================================
+
+// requireSuperAdmin ya declarado arriba
+
+// 1. Obtener configuración SMTP actual (sin exponer contraseñas)
+app.get('/api/admin/smtp/config', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    const host = process.env.SMTP_HOST || 'smtp.truobox.com';
+    const port = Number(process.env.SMTP_PORT) || 465;
+    const isSecure = process.env.SMTP_SECURE === 'true' || port === 465;
+    const user = process.env.SMTP_USER || '';
+    const pass = process.env.SMTP_PASS || '';
+    const fromName = process.env.MAIL_FROM_NAME || 'DoorDrop';
+    const fromEmail = process.env.MAIL_FROM_EMAIL || 'info@doordrop.lat';
+
+    res.json({
+      success: true,
+      config: {
+        host,
+        port,
+        secure: isSecure,
+        userMasked: user ? `${user.substring(0, 4)}...${user.slice(-3)}` : '',
+        hasPassword: Boolean(pass),
+        fromName,
+        fromEmail
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Error al obtener configuración SMTP.' });
+  }
+});
+
+// 2. Probar conexión SMTP y opcionalmente enviar correo de prueba
+app.post('/api/admin/smtp/test', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    const { toEmail, host, port, secure, user, pass, senderName, senderEmail } = req.body;
+    const targetEmail = toEmail ? String(toEmail).trim() : 'grupoohla@gmail.com';
+
+    const testResult = await testSmtpConnection({
+      host,
+      port,
+      secure,
+      user,
+      pass,
+      toEmail: targetEmail,
+      senderName,
+      senderEmail
+    });
+
+    if (!testResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: testResult.message,
+        details: testResult.details
+      });
+    }
+
+    res.json({
+      success: true,
+      message: testResult.message,
+      details: testResult.details
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Error durante la prueba de conexión SMTP.' });
+  }
+});
+
+// 3. Listar todas las plantillas y sus idiomas disponibles
+app.get('/api/admin/smtp/templates', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    const [templates]: any = await pool.query(
+      'SELECT id, category, name, description, variables_json, created_at, updated_at FROM email_templates ORDER BY category, name'
+    );
+
+    const [translations]: any = await pool.query(
+      'SELECT template_id, language, subject, is_active, updated_at FROM email_template_translations'
+    );
+
+    const transMap: Record<string, string[]> = {};
+    for (const tr of translations) {
+      if (!transMap[tr.template_id]) transMap[tr.template_id] = [];
+      transMap[tr.template_id].push(tr.language);
+    }
+
+    const result = templates.map((t: any) => ({
+      ...t,
+      variables: typeof t.variables_json === 'string' ? JSON.parse(t.variables_json) : t.variables_json,
+      languages: transMap[t.id] || []
+    }));
+
+    res.json({ success: true, templates: result });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Error al listar plantillas de correo.' });
+  }
+});
+
+// 4. Obtener detalle de una plantilla con sus traducciones
+app.get('/api/admin/smtp/templates/:id', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const [templateRows]: any = await pool.query('SELECT * FROM email_templates WHERE id = ?', [id]);
+    if (!templateRows || templateRows.length === 0) {
+      return res.status(404).json({ error: 'Plantilla no encontrada.' });
+    }
+
+    const [transRows]: any = await pool.query(
+      'SELECT * FROM email_template_translations WHERE template_id = ? ORDER BY language',
+      [id]
+    );
+
+    const template = templateRows[0];
+    template.variables = typeof template.variables_json === 'string' ? JSON.parse(template.variables_json) : template.variables_json;
+
+    res.json({
+      success: true,
+      template,
+      translations: transRows
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Error al obtener detalle de plantilla.' });
+  }
+});
+
+// 5. Guardar o actualizar traducción de plantilla
+app.put('/api/admin/smtp/templates/:id', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { language, subject, preheader, body_html, body_text, is_active } = req.body;
+
+    if (!language || !subject || !body_html) {
+      return res.status(400).json({ error: 'Idioma, asunto y cuerpo HTML son obligatorios.' });
+    }
+
+    const [exists]: any = await pool.query(
+      'SELECT id FROM email_template_translations WHERE template_id = ? AND language = ?',
+      [id, language]
+    );
+
+    if (exists.length > 0) {
+      await pool.query(
+        `UPDATE email_template_translations 
+         SET subject = ?, preheader = ?, body_html = ?, body_text = ?, is_active = ?, updated_at = NOW()
+         WHERE template_id = ? AND language = ?`,
+        [subject, preheader || '', body_html, body_text || '', is_active !== undefined ? (is_active ? 1 : 0) : 1, id, language]
+      );
+    } else {
+      const transId = generateId('trans_');
+      await pool.query(
+        `INSERT INTO email_template_translations 
+         (id, template_id, language, subject, preheader, body_html, body_text, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [transId, id, language, subject, preheader || '', body_html, body_text || '', is_active !== undefined ? (is_active ? 1 : 0) : 1]
+      );
+    }
+
+    res.json({ success: true, message: 'Traducción de plantilla guardada con éxito.' });
+  } catch (err: any) {
+    console.error('[admin/smtp/templates PUT]', err);
+    res.status(500).json({ error: 'Error al actualizar plantilla.' });
+  }
+});
+
+// 6. Enviar prueba real de una plantilla a un destinatario
+app.post('/api/admin/smtp/templates/:id/send-test', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { language, toEmail, sampleVariables } = req.body;
+    const recipient = toEmail ? String(toEmail).trim() : 'grupoohla@gmail.com';
+    const lang = language || 'es';
+
+    // Mock data según variables de la plantilla
+    const defaultSampleVars: Record<string, any> = {
+      userName: 'Cliente VIP DoorDrop',
+      userEmail: recipient,
+      trackingCode: 'SHIP-9482-1',
+      carrierName: 'Poste Italiane / SpedirePRO',
+      trackingUrl: 'https://doordrop.lat/tracking/SHIP-9482-1',
+      originCity: 'Madrid',
+      destCity: 'Roma',
+      amount: '50.00',
+      currency: 'EUR',
+      newBalance: '150.00',
+      paymentMethod: 'Tarjeta / SafePay',
+      panelUrl: 'https://doordrop.lat/panel/wallet',
+      ...sampleVariables
+    };
+
+    const sendRes = await sendTemplatedEmail({
+      templateId: id,
+      language: lang,
+      toEmail: recipient,
+      recipientName: 'Equipo DoorDrop',
+      variables: defaultSampleVars
+    });
+
+    res.json({
+      success: true,
+      message: `Correo de prueba de la plantilla '${id}' enviado exitosamente a ${recipient} en idioma '${lang.toUpperCase()}'.`,
+      messageId: sendRes.messageId
+    });
+  } catch (err: any) {
+    console.error('[admin/smtp/templates send-test]', err);
+    res.status(500).json({ error: err.message || 'Error al enviar correo de prueba.' });
   }
 });
 

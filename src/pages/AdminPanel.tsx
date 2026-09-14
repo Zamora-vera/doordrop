@@ -1,8 +1,10 @@
+import SmtpSettings from './admin/SmtpSettings';
+import EmailTemplates from './admin/EmailTemplates';
 import { AdminOmnichannel } from './AdminOmnichannel';
 import { getCountryName, WORLD_COUNTRIES } from '../lib/countries';
 import React, { useEffect, useState } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Bot, Users, Package, Settings, LogOut, BarChart3, Truck, Crown, Edit, Save, LifeBuoy, Sparkles, Menu, X, Eye, Lock, Unlock, LogIn, CreditCard, Wallet, ShieldCheck, XCircle, Moon, Sun, MapPin, Clipboard, PlayCircle, RefreshCw, Mail, Send, Activity, Clock, Plug, Store, Link2, CheckCircle2, AlertTriangle, ExternalLink, BookOpen } from 'lucide-react';
+import { LayoutDashboard, Server, Bot, Users, Package, Settings, LogOut, BarChart3, Truck, Crown, Edit, Save, LifeBuoy, Sparkles, Menu, X, Eye, Lock, Unlock, LogIn, CreditCard, Wallet, ShieldCheck, XCircle, Moon, Sun, MapPin, Clipboard, PlayCircle, RefreshCw, Mail, Send, Activity, Clock, Plug, Store, Link2, CheckCircle2, AlertTriangle, ExternalLink, BookOpen } from 'lucide-react';
 import { api, removeAuthToken, getAuthToken, setAuthToken } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 
@@ -2950,6 +2952,12 @@ const AdminSettings = () => {
           <Link to="/admin/settings/status" className="bg-cyan-600 hover:bg-cyan-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-colors shadow-lg self-start sm:self-auto">
             <Activity className="w-4 h-4" /> Estados
           </Link>
+          <Link to="/admin/settings/smtp" className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-colors shadow-lg self-start sm:self-auto">
+            <Server className="w-4 h-4" /> Servidor SMTP
+          </Link>
+          <Link to="/admin/settings/smtp/template" className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-colors shadow-lg self-start sm:self-auto">
+            <Mail className="w-4 h-4" /> Plantillas Email
+          </Link>
           <Link to="/admin/settings/email/logs" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-colors shadow-sm self-start sm:self-auto">
             <Mail className="w-4 h-4" /> Emails
           </Link>
@@ -3390,6 +3398,9 @@ export default function AdminPanel() {
             <Route path="/settings" element={<AdminSettings />} />
             <Route path="/settings/cron" element={<AdminLabelCron />} />
             <Route path="/settings/status" element={<AdminStatusCron />} />
+            <Route path="/settings/smtp" element={<SmtpSettings />} />
+            <Route path="/settings/smtp/template" element={<EmailTemplates />} />
+            <Route path="/settings/smtp/template/" element={<EmailTemplates />} />
             <Route path="/settings/email/logs" element={<AdminEmailLogs />} />
             <Route path="/tickets" element={<AdminTickets />} />
             <Route path="/copilot" element={<AiCopilotChat />} />
