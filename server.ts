@@ -502,15 +502,16 @@ async function ship24goPolarRuntimeConfig(keys: any = {}) {
     process.env.POLAR_ACCESS_TOKEN ||
     '';
 
-  // Prefer explicit production from .env / payments flags; avoid stale sandbox keys blocking live mode
+  // Prefer the persisted DoorDrop configuration so a stale container environment
+  // cannot silently route live checkouts to Polar sandbox.
   const rawEnv = String(
-    process.env.PAYMENTS_POLAR_ENVIRONMENT ||
-    process.env.POLAR_ENV ||
+    keys?.polarEnvironment ||
+    keys?.paymentPolarEnvironment ||
     settings['payments.polar.environment'] ||
     settings['polar.environment'] ||
     settings['POLAR_ENV'] ||
-    keys?.polarEnvironment ||
-    keys?.paymentPolarEnvironment ||
+    process.env.PAYMENTS_POLAR_ENVIRONMENT ||
+    process.env.POLAR_ENV ||
     'production'
   ).toLowerCase().trim();
   const environment = (rawEnv === 'sandbox' || rawEnv === 'test' || rawEnv === 'development')
