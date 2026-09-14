@@ -1,3 +1,5 @@
+import { podRouter, handleContradoWebhook } from './server/marketplace/podRoutes';
+import { PodSyncWorker } from './server/marketplace/podSyncWorker';
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
@@ -13548,6 +13550,11 @@ app.get('/api/currencies', async (req, res) => {
 import { setupMarketplaceRoutes } from './server/marketplace/routes';
 setupMarketplaceRoutes(app, { pool, authMiddleware, requireSuperAdmin, UserRepo, generateId });
 
+// --- CONTRADO HELIX POD / ZUBUY PRINT INTEGRATION ---
+app.post('/api/webhooks/contrado', handleContradoWebhook);
+app.use('/api/pod', podRouter);
+
+
 // --- OMNICHANNEL INTEGRATION ---
 import { setupOmnichannelRoutes } from './server/omnichannel/routes';
 setupOmnichannelRoutes(app, { pool, authMiddleware, requireSuperAdmin, UserRepo });
@@ -13594,6 +13601,8 @@ app.get('*', (req, res) => {
     });
   }
 
+  // Iniciar programador nocturno de Zubuy Print POD (cada 12 horas)
+  try { PodSyncWorker.initCron(); } catch (e) { console.error('Error starting PodSyncWorker:', e); }
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Servidor ejecutándose en http://localhost:${PORT}`);
   });

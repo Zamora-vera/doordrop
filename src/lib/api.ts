@@ -31,6 +31,13 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
 }
 
 export const api = {
+  // Contrado Helix POD - Zubuy Print
+  getAdminPodStatus: () => fetchAPI('/pod/admin/status'),
+  triggerAdminPodSync: (data?: any) => fetchAPI('/pod/admin/sync', { method: 'POST', body: JSON.stringify(data || {}) }),
+  updateAdminPodSettings: (data: any) => fetchAPI('/pod/admin/settings', { method: 'PUT', body: JSON.stringify(data) }),
+  getPodProductDetail: (idOrSlug: string) => fetchAPI(`/pod/products/${encodeURIComponent(idOrSlug)}`),
+  getPodShippingQuote: (data: { listingId?: string; countryCode: string; cultureCode?: string; quantity?: number }) => fetchAPI('/pod/shipping/quote', { method: 'POST', body: JSON.stringify(data) }),
+
   getAdminSmtpConfig: () => fetchAPI('/admin/smtp/config'),
   testAdminSmtp: (data: any) => fetchAPI('/admin/smtp/test', { method: 'POST', body: JSON.stringify(data) }),
   getAdminEmailTemplates: () => fetchAPI('/admin/smtp/templates'),

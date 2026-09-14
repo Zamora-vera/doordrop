@@ -428,6 +428,18 @@ const translations = {
     ai_chat_suggest_3: 'Are there any open support tickets?'
   },
   it: {
+    pod_badge: 'Fabbricato su ordinazione',
+    pod_personalize: 'Personalizza',
+    pod_custom_title: 'Personalizza questo prodotto',
+    pod_production_time: 'Tempo di produzione',
+    pod_shipping_calc: 'Spedizione calcolata alla cassa',
+    pod_specifications: 'Specifiche e materiali',
+    pod_care: 'Istruzioni per la cura',
+    pod_size_chart: 'Guida alle taglie',
+    pod_canvas_notice: 'Modulo canvas in validazione con il produttore',
+    pod_official_store: 'Negozio ufficiale Print On Demand di DoorDrop',
+    pod_buy_now: 'Acquista con Wallet',
+
     home: 'Home',
     tracking: 'Tracciamento Pacchi',
     login: 'Accedi',

@@ -1,3 +1,4 @@
+import AdminPodSettings from './admin/AdminPodSettings';
 import SmtpSettings from './admin/SmtpSettings';
 import EmailTemplates from './admin/EmailTemplates';
 import { AdminOmnichannel } from './AdminOmnichannel';
@@ -3385,6 +3386,7 @@ export default function AdminPanel() {
             <Route path="/" element={<AdminDashboard />} />
             <Route path="/clients" element={<AdminClients />} />
             <Route path="/shipments" element={<AdminShipments />} />
+            <Route path="/marketplace/zubuy-print" element={<AdminPodSettings />} />
             <Route path="/marketplace/*" element={<AdminMarketplace />} />
             <Route path="/omnichannel/*" element={<AdminOmnichannel />} />
             <Route path="/providers" element={<AdminProviders />} />
