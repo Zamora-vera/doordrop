@@ -744,6 +744,9 @@ export const MarketplaceRepo = {
     shippingProviderCode?: string;
     quoteId?: string;
     paymentMethod: string;
+    status?: MarketplaceOrder['status'];
+    paymentReference?: string | null;
+    reserveListing?: boolean;
   }): Promise<MarketplaceOrder> {
     const listing = await this.getListingById(data.listingId);
     if (!listing) throw new Error('Publicación no encontrada.');
@@ -751,14 +754,16 @@ export const MarketplaceRepo = {
 
     const orderId = generateUuid();
     const orderNumber = `DD-${Math.floor(100000 + Math.random() * 900000)}`;
+    const status = data.status || 'paid';
+    const reserveListing = data.reserveListing !== false;
 
     await pool.query(
       `INSERT INTO marketplace_orders (
         id, order_number, listing_id, buyer_id, seller_id, quote_id, product_amount_minor,
         shipping_amount_minor, commission_amount_minor, protection_amount_minor, total_amount_minor,
-        currency, status, payment_method, buyer_address_json, seller_address_json,
+        currency, status, payment_method, payment_reference, buyer_address_json, seller_address_json,
         shipping_service_name, shipping_provider_code, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paid', ?, ?, ?, ?, ?, NOW(), NOW())`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         orderId,
         orderNumber,
@@ -772,7 +777,9 @@ export const MarketplaceRepo = {
         data.protectionAmountMinor,
         data.totalAmountMinor,
         data.currency,
+        status,
         data.paymentMethod,
+        data.paymentReference || null,
         JSON.stringify(data.buyerAddress),
         JSON.stringify(data.sellerAddress),
         data.shippingServiceName || null,
@@ -780,24 +787,115 @@ export const MarketplaceRepo = {
       ]
     );
 
-    // Mark listing as sold or reduce quantity
-    if (listing.quantity <= 1) {
-      await pool.query(`UPDATE marketplace_listings SET status = 'sold', updated_at = NOW() WHERE id = ?`, [data.listingId]);
-    } else {
-      await pool.query(`UPDATE marketplace_listings SET quantity = quantity - 1, updated_at = NOW() WHERE id = ?`, [data.listingId]);
-    }
+    if (reserveListing) {
+      // Paid wallet orders are sold immediately. PayPal pending orders reserve
+      // the listing so two approved checkouts cannot consume the same item.
+      const [listingUpdate]: any = status === 'pending_payment'
+        ? await pool.query(`UPDATE marketplace_listings SET status = 'reserved', updated_at = NOW() WHERE id = ? AND status = 'active' AND quantity > 0`, [data.listingId])
+        : listing.quantity <= 1
+          ? await pool.query(`UPDATE marketplace_listings SET status = 'sold', updated_at = NOW() WHERE id = ? AND status = 'active' AND quantity > 0`, [data.listingId])
+          : await pool.query(`UPDATE marketplace_listings SET quantity = quantity - 1, updated_at = NOW() WHERE id = ? AND status = 'active' AND quantity > 0`, [data.listingId]);
+      if (!listingUpdate?.affectedRows) {
+        await pool.query(`DELETE FROM marketplace_orders WHERE id = ?`, [orderId]);
+        throw new Error('El producto ya no está disponible.');
+      }
 
-    // Update seller total sales
-    await pool.query(
-      `UPDATE marketplace_seller_profiles SET total_sales = total_sales + 1 WHERE user_id = ?`,
-      [listing.seller_id]
-    );
+      // Update seller total sales only after the payment is final.
+      if (status !== 'pending_payment') {
+        await pool.query(
+          `UPDATE marketplace_seller_profiles SET total_sales = total_sales + 1 WHERE user_id = ?`,
+          [listing.seller_id]
+        );
+      }
+    }
 
     const [created]: any = await pool.query(
       `SELECT * FROM marketplace_orders WHERE id = ?`,
       [orderId]
     );
     return created[0];
+  },
+
+  async markOrderPaid(orderId: string, paymentReference: string): Promise<{ order: MarketplaceOrder; activated: boolean }> {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [rows]: any = await conn.query(
+        `SELECT o.*, l.status AS listing_status, l.quantity AS listing_quantity
+           FROM marketplace_orders o
+           JOIN marketplace_listings l ON l.id = o.listing_id
+          WHERE o.id = ?
+          FOR UPDATE`,
+        [orderId]
+      );
+      const order = rows?.[0];
+      if (!order) throw new Error('Pedido Marketplace no encontrado.');
+      if (String(order.status) !== 'pending_payment') {
+        await conn.commit();
+        return { order, activated: false };
+      }
+      if (!['active', 'reserved'].includes(String(order.listing_status)) || Number(order.listing_quantity || 0) <= 0) {
+        throw new Error('El producto ya no está disponible para completar el pago.');
+      }
+
+      await conn.query(
+        `UPDATE marketplace_orders
+            SET status = 'paid', payment_reference = ?, updated_at = NOW()
+          WHERE id = ? AND status = 'pending_payment'`,
+        [paymentReference, orderId]
+      );
+      if (Number(order.listing_quantity) <= 1) {
+        await conn.query(`UPDATE marketplace_listings SET status = 'sold', updated_at = NOW() WHERE id = ?`, [order.listing_id]);
+      } else {
+        await conn.query(`UPDATE marketplace_listings SET quantity = quantity - 1, status = 'active', updated_at = NOW() WHERE id = ?`, [order.listing_id]);
+      }
+      await conn.query(
+        `UPDATE marketplace_seller_profiles SET total_sales = total_sales + 1 WHERE user_id = ?`,
+        [order.seller_id]
+      );
+      const [freshRows]: any = await conn.query(`SELECT * FROM marketplace_orders WHERE id = ? LIMIT 1`, [orderId]);
+      await conn.commit();
+      return { order: freshRows?.[0] || { ...order, status: 'paid', payment_reference: paymentReference }, activated: true };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  },
+
+  async cancelPendingOrder(orderId: string, buyerId?: string): Promise<boolean> {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [rows]: any = await conn.query(
+        `SELECT id, listing_id, status FROM marketplace_orders WHERE id = ? ${buyerId ? 'AND buyer_id = ?' : ''} FOR UPDATE`,
+        buyerId ? [orderId, buyerId] : [orderId]
+      );
+      const order = rows?.[0];
+      if (!order || String(order.status) !== 'pending_payment') {
+        await conn.commit();
+        return false;
+      }
+      await conn.query(`UPDATE marketplace_orders SET status = 'cancelled', cancelled_at = NOW(), updated_at = NOW() WHERE id = ?`, [orderId]);
+      await conn.query(
+        `UPDATE marketplace_listings
+            SET status = 'active', updated_at = NOW()
+          WHERE id = ? AND status = 'reserved'
+            AND NOT EXISTS (
+              SELECT 1 FROM marketplace_orders other
+               WHERE other.listing_id = l.id AND other.status = 'pending_payment' AND other.id <> ?
+            )`,
+        [order.listing_id, orderId]
+      );
+      await conn.commit();
+      return true;
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
   },
 
   async listUserOrders(userId: string, role: 'buyer' | 'seller' = 'buyer'): Promise<MarketplaceOrder[]> {

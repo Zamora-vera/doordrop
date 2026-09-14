@@ -23,9 +23,17 @@ export function setupMarketplaceRoutes(app: any, options: {
     adminNote?: string | null;
     rates?: Record<string, number>;
   }) => Promise<any>;
+  paypalCreateOrder?: (options: {
+    referenceId: string;
+    amount: number;
+    currency: string;
+    description: string;
+    returnUrl: string;
+    cancelUrl: string;
+  }) => Promise<{ orderId: string; checkoutUrl: string; chargeAmount: number; chargeCurrency: string }>;
 }) {
   const router = Router();
-  const { authMiddleware, requireSuperAdmin, UserRepo, pool, walletMutation: mutateWallet } = options;
+  const { authMiddleware, requireSuperAdmin, UserRepo, pool, walletMutation: mutateWallet, paypalCreateOrder } = options;
 
   // Ensure uploads directory exists
   const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'marketplace');
@@ -700,6 +708,10 @@ export function setupMarketplaceRoutes(app: any, options: {
         buyerAddress,
         paymentMethod = 'wallet'
       } = req.body;
+      const normalizedPaymentMethod = String(paymentMethod || 'wallet').trim().toLowerCase();
+      if (!['wallet', 'paypal'].includes(normalizedPaymentMethod)) {
+        return res.status(400).json({ error: 'Método de pago no válido.' });
+      }
 
       const listing = await MarketplaceRepo.getListingById(listingId);
       if (!listing) return res.status(404).json({ error: 'Publicación no encontrada.' });
@@ -718,7 +730,7 @@ export function setupMarketplaceRoutes(app: any, options: {
       let walletDebit: any = null;
 
       // Handle payment method: Wallet
-      if (paymentMethod === 'wallet') {
+      if (normalizedPaymentMethod === 'wallet') {
         if (!mutateWallet) {
           return res.status(503).json({ error: 'El cobro del Marketplace no está disponible temporalmente.' });
         }
@@ -757,6 +769,56 @@ export function setupMarketplaceRoutes(app: any, options: {
         phone: sellerProfile?.phone || ''
       };
 
+      if (normalizedPaymentMethod === 'paypal') {
+        if (!paypalCreateOrder) {
+          return res.status(503).json({ error: 'PayPal no está disponible temporalmente.' });
+        }
+        let pendingOrder: any = null;
+        try {
+          pendingOrder = await MarketplaceRepo.createOrder({
+            listingId,
+            buyerId: req.user.id,
+            productAmountMinor,
+            shippingAmountMinor,
+            commissionAmountMinor,
+            protectionAmountMinor,
+            totalAmountMinor,
+            currency: sourceCurrency,
+            buyerAddress,
+            sellerAddress,
+            shippingServiceName,
+            shippingProviderCode,
+            quoteId,
+            paymentMethod: 'paypal',
+            status: 'pending_payment',
+            reserveListing: true
+          });
+          const appUrl = (process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '');
+          const checkout = await paypalCreateOrder({
+            referenceId: pendingOrder.id,
+            amount: totalAmountMinor / 100,
+            currency: sourceCurrency,
+            description: `Compra Marketplace DoorDrop: ${String(listing.title || listing.id).slice(0, 120)}`,
+            returnUrl: `${appUrl}/marketplace?paypal_payment=success&order_id=${encodeURIComponent(pendingOrder.id)}`,
+            cancelUrl: `${appUrl}/marketplace?paypal_payment=cancel&order_id=${encodeURIComponent(pendingOrder.id)}`
+          });
+          await pool.query(`UPDATE marketplace_orders SET payment_reference = ?, updated_at = NOW() WHERE id = ?`, [checkout.orderId, pendingOrder.id]);
+          return res.status(201).json({
+            success: true,
+            pending: true,
+            checkoutUrl: checkout.checkoutUrl,
+            paypalOrderId: checkout.orderId,
+            chargeAmount: checkout.chargeAmount,
+            chargeCurrency: checkout.chargeCurrency,
+            order: { ...pendingOrder, payment_reference: checkout.orderId }
+          });
+        } catch (error: any) {
+          if (pendingOrder?.id) await MarketplaceRepo.cancelPendingOrder(pendingOrder.id, req.user.id).catch(() => null);
+          console.error('[Marketplace] No se pudo crear checkout PayPal:', error?.code || error?.message || 'error');
+          return res.status(400).json({ error: 'No se pudo abrir el pago seguro con PayPal.' });
+        }
+      }
+
       let order: any;
       try {
         order = await MarketplaceRepo.createOrder({
@@ -773,7 +835,7 @@ export function setupMarketplaceRoutes(app: any, options: {
           shippingServiceName,
           shippingProviderCode,
           quoteId,
-          paymentMethod
+          paymentMethod: normalizedPaymentMethod
         });
       } catch (error) {
         if (walletDebit && mutateWallet) {

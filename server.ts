@@ -7829,6 +7829,76 @@ app.post('/api/user/recharge', authMiddleware, async (req: any, res) => {
     }
 
     const keys = await ApiKeysRepo.get();
+
+    const requestedProvider = String(req.body?.paymentProvider || req.body?.provider || 'polar').toLowerCase().trim();
+    if (requestedProvider === 'paypal') {
+      if (!ship24goPayPalIntegrationEnabled(keys)) {
+        return res.status(400).json({ error: ship24goPayPalUnavailableMessage(keys) });
+      }
+
+      const user = await UserRepo.getById(req.user.id);
+      if (!user) return res.status(404).json({ error: 'No se pudo encontrar la cuenta.' });
+
+      const topupId = generateId('top_');
+      const walletCurrency = normalizeCurrencyCode(user.currency || 'EUR');
+      const rates = await getFreshRatesInternal();
+      const chargeAmount = convertMoneyAmountStrict(amount, walletCurrency, 'EUR', rates);
+      if (!chargeAmount || chargeAmount <= 0) {
+        return res.status(400).json({ error: 'No se pudo calcular el importe del pago.' });
+      }
+
+      await pool.query(
+        `INSERT INTO wallet_topups
+          (id, user_id, amount, currency, status, payment_provider, provider_reference)
+         VALUES (?, ?, ?, ?, 'pending', 'paypal', ?)` ,
+        [topupId, req.user.id, amount, walletCurrency, `pending_${topupId}`]
+      );
+
+      try {
+        const token = await ship24goGetPayPalAccessToken(keys);
+        const base = ship24goPayPalApiBase(keys?.paypalEnvironment);
+        const appUrl = appBaseUrl();
+        const customId = `doordrop:wallet:${topupId}`;
+        const orderResponse = await fetch(`${base}/v2/checkout/orders`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'PayPal-Request-Id': topupId
+          },
+          body: JSON.stringify({
+            intent: 'CAPTURE',
+            purchase_units: [{
+              custom_id: customId,
+              description: `Recarga de wallet DoorDrop (${walletCurrency})`,
+              amount: { currency_code: 'EUR', value: chargeAmount.toFixed(2) }
+            }],
+            application_context: {
+              brand_name: 'DoorDrop',
+              user_action: 'PAY_NOW',
+              return_url: `${appUrl}/panel/settings?paypal_payment=success&topup_id=${encodeURIComponent(topupId)}`,
+              cancel_url: `${appUrl}/panel/settings?paypal_payment=cancel&topup_id=${encodeURIComponent(topupId)}`
+            }
+          })
+        });
+        const order = await orderResponse.json().catch(() => ({}));
+        await writeProviderLog('paypal', 'wallet_checkout_create', { topupId, amount, walletCurrency, chargeAmount, chargeCurrency: 'EUR' }, { httpStatus: orderResponse.status, id: order?.id, hasApprovalUrl: Boolean((order?.links || []).find((link: any) => link.rel === 'approve')) }, orderResponse.status);
+        const checkoutUrl = (order.links || []).find((link: any) => link.rel === 'approve')?.href || '';
+        if (!orderResponse.ok || !order.id || !checkoutUrl) {
+          await pool.query(`UPDATE wallet_topups SET status = 'failed', provider_reference = ? WHERE id = ?`, [order?.id || `failed_${topupId}`, topupId]);
+          return res.status(400).json({ error: 'No se pudo abrir el pago seguro con PayPal.' });
+        }
+        await pool.query(`UPDATE wallet_topups SET provider_reference = ? WHERE id = ?`, [order.id, topupId]);
+        return res.status(201).json({ success: true, pending: true, topupId, orderId: order.id, checkoutUrl, chargeAmount, chargeCurrency: 'EUR', message: 'Pago seguro de PayPal creado correctamente.' });
+      } catch (error: any) {
+        await pool.query(`UPDATE wallet_topups SET status = 'failed' WHERE id = ?`, [topupId]).catch(() => null);
+        throw error;
+      }
+    }
+
+    if (requestedProvider !== 'polar') {
+      return res.status(400).json({ error: 'Proveedor de pago no válido.' });
+    }
     const polarConfig = await ship24goPolarRuntimeConfig(keys);
     const polarToken = polarConfig.token;
 
@@ -9374,7 +9444,11 @@ app.post('/api/shipments/quote', async (req: any, res) => {
 // 8. Crear un Envío
 app.post('/api/shipments', authMiddleware, async (req: any, res) => {
   try {
-    const { quoteId, sender, recipient, packages, customs, content, reference, declaredValue, exportReason, termsOfTrade, manifest } = req.body;
+    const { quoteId, sender, recipient, packages, customs, content, reference, declaredValue, exportReason, termsOfTrade, manifest, paymentMethod = 'wallet' } = req.body;
+    const normalizedPaymentMethod = String(paymentMethod || 'wallet').trim().toLowerCase();
+    if (!['wallet', 'paypal'].includes(normalizedPaymentMethod)) {
+      return res.status(400).json({ error: 'Método de pago no válido.' });
+    }
     const normalizedPackages = Array.isArray(packages) && packages.length > 0 ? packages : [{ width: 10, height: 10, length: 10, weight: 1, qty: 1 }];
     const keys = await ApiKeysRepo.get();
 
@@ -9459,6 +9533,108 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
     if (senderForShipment?.saveToBook) await saveToAddressBook('sender', senderForShipment);
     if (recipientForShipment?.saveToBook) await saveToAddressBook('recipient', recipientForShipment);
 
+    const requestedManifest = Number(manifest ?? 1) === 1;
+    if (normalizedPaymentMethod === 'paypal') {
+      if (!requestedManifest) {
+        return res.status(400).json({ error: 'El pago PayPal solo está disponible para crear el envío ahora.' });
+      }
+      if (!ship24goPayPalIntegrationEnabled(keys)) {
+        return res.status(400).json({ error: ship24goPayPalUnavailableMessage(keys) });
+      }
+
+      const internalTracking = `S24G-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
+      const pendingShipment = {
+        id: shipmentId,
+        user_id: req.user.id,
+        quote_id: quoteId,
+        provider_id: quote.db_provider_id || quote.provider_id || null,
+        provider_code: providerCode,
+        provider_shipment_code: null,
+        provider_tracking_code: null,
+        tracking_code: internalTracking,
+        order_number: shipmentId,
+        reference: reference || '',
+        status: 'pending_payment',
+        status_label: 'Pendiente de pago',
+        sender: senderForShipment,
+        recipient: recipientForShipment,
+        packages: normalizedPackages.map((pkg: any) => ({ ...pkg, customs: Array.isArray(customs) ? customs : [] })),
+        label_url: null,
+        label_base64: null,
+        track_url: null,
+        payment_url: null,
+        provider_payload_json: {
+          quoteId,
+          providerCode,
+          paymentMethod: 'paypal',
+          content: compactText(content || 'General goods', 150),
+          declaredValue,
+          exportReason,
+          termsOfTrade,
+          services: req.body?.services || null
+        },
+        walletDeduction: 0,
+        currency: quoteCurrency
+      };
+      await ShipmentRepo.create(pendingShipment);
+      await TrackingEventRepo.create({
+        shipment_id: shipmentId,
+        tracking_code: internalTracking,
+        status: 'pending_payment',
+        status_label: 'Pendiente de pago',
+        description: 'El envío fue creado y está pendiente de confirmación del pago PayPal.'
+      });
+
+      try {
+        await ensureShip24GoBillingColumns();
+        const checkout = await ship24goCreatePayPalCheckoutOrder({
+          referenceId: shipmentId,
+          amount: Number(quote.total_amount || 0),
+          currency: quoteCurrency,
+          purpose: 'shipment_payment',
+          description: `Envío DoorDrop ${internalTracking}`,
+          returnUrl: `${appBaseUrl()}/panel/shipments?paypal_payment=success&shipment_id=${encodeURIComponent(shipmentId)}`,
+          cancelUrl: `${appBaseUrl()}/panel/shipments?paypal_payment=cancel&shipment_id=${encodeURIComponent(shipmentId)}`
+        });
+        await pool.query(
+          `INSERT INTO payments (id, user_id, shipment_id, provider, external_payment_id, amount, currency, status, purpose, provider_payment_id, metadata_json)
+           VALUES (?, ?, ?, 'paypal', ?, ?, ?, 'pending', 'shipment_payment', ?, ?)`,
+          [
+            generateId('pay_'),
+            req.user.id,
+            shipmentId,
+            checkout.orderId,
+            checkout.chargeAmount,
+            checkout.chargeCurrency,
+            checkout.orderId,
+            JSON.stringify({ shipmentId, quoteId, sourceAmount: Number(quote.total_amount || 0), sourceCurrency: quoteCurrency })
+          ]
+        );
+        await pool.query(
+          `UPDATE shipments SET payment_url = ?, provider_payload_json = ?, updated_at = NOW() WHERE id = ?`,
+          [checkout.checkoutUrl, JSON.stringify({ ...pendingShipment.provider_payload_json, paypalOrderId: checkout.orderId, chargeAmount: checkout.chargeAmount, chargeCurrency: checkout.chargeCurrency }), shipmentId]
+        );
+        return res.status(201).json({
+          success: true,
+          pendingPayment: true,
+          pendingLabel: true,
+          checkoutUrl: checkout.checkoutUrl,
+          paypalOrderId: checkout.orderId,
+          chargeAmount: checkout.chargeAmount,
+          chargeCurrency: checkout.chargeCurrency,
+          message: 'Envío creado. Completa el pago seguro con PayPal para preparar la etiqueta.',
+          shipment: { id: shipmentId, trackingCode: internalTracking, status: 'Pendiente de pago', paymentUrl: checkout.checkoutUrl }
+        });
+      } catch (error: any) {
+        await pool.query(
+          `UPDATE shipments SET status = 'payment_failed', status_label = 'Pago no iniciado', label_status = 'pending', label_error = ?, updated_at = NOW() WHERE id = ?`,
+          ['No se pudo abrir el pago seguro con PayPal.', shipmentId]
+        ).catch(() => null);
+        console.error('[PayPal shipment] checkout create failed:', error?.code || error?.message || 'error');
+        return res.status(400).json({ error: 'No se pudo abrir el pago seguro con PayPal.' });
+      }
+    }
+
     const makeDraft = async (reason: string, trackingCode?: string, providerResult?: any) => {
       const internalTracking = trackingCode || `S24G-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
       const draftShipment = {
@@ -9506,7 +9682,6 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
       });
     };
 
-    const requestedManifest = Number(manifest ?? 1) === 1;
     const hasEnoughBalance = userBalance >= cost;
     const providerManifest = requestedManifest && hasEnoughBalance ? 1 : 0;
     const canChargeWalletNow = requestedManifest && hasEnoughBalance;
@@ -10390,16 +10565,18 @@ app.post('/api/webhooks/genei', async (req: any, res) => {
 // PayPal: Get Config
 app.get('/api/payments/paypal/config', authMiddleware, async (req, res) => {
   const keys = await ApiKeysRepo.get();
+  const configured = ship24goPayPalCredentialsReady(keys);
   res.json({
-    configured: !!keys?.paypalClientId,
+    configured,
+    enabled: ship24goPayPalIntegrationEnabled(keys),
     clientId: keys?.paypalClientId || ''
   });
 });
 
 // Helper de PayPal Access Token
-async function getPayPalAccessToken(clientId: string, clientSecret: string) {
+async function getPayPalAccessToken(clientId: string, clientSecret: string, environment = '') {
   const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-  const response = await fetch('https://api-m.sandbox.paypal.com/v1/oauth2/token', {
+  const response = await fetch(`${ship24goPayPalApiBase(environment)}/v1/oauth2/token`, {
     method: 'POST',
     headers: {
       'Authorization': `Basic ${auth}`,
@@ -10420,12 +10597,12 @@ app.post('/api/payments/paypal/create-order', authMiddleware, async (req: any, r
     const { amount } = req.body;
     const keys = await ApiKeysRepo.get();
     
-    if (!keys?.paypalClientId || !keys?.paypalClientSecret) {
-      return res.status(400).json({ error: 'Configuración de PayPal incompleta en el panel de administrador.' });
+    if (!ship24goPayPalIntegrationEnabled(keys)) {
+      return res.status(400).json({ error: ship24goPayPalUnavailableMessage(keys) });
     }
 
-    const accessToken = await getPayPalAccessToken(keys.paypalClientId, keys.paypalClientSecret);
-    const response = await fetch('https://api-m.sandbox.paypal.com/v2/checkout/orders', {
+    const accessToken = await getPayPalAccessToken(keys.paypalClientId, keys.paypalClientSecret, keys.paypalEnvironment);
+    const response = await fetch(`${ship24goPayPalApiBase(keys.paypalEnvironment)}/v2/checkout/orders`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -10461,12 +10638,12 @@ app.post('/api/payments/paypal/capture-order', authMiddleware, async (req: any, 
     const { orderId } = req.body;
     const keys = await ApiKeysRepo.get();
 
-    if (!keys?.paypalClientId || !keys?.paypalClientSecret) {
-      return res.status(400).json({ error: 'Configuración de PayPal incompleta.' });
+    if (!ship24goPayPalIntegrationEnabled(keys)) {
+      return res.status(400).json({ error: ship24goPayPalUnavailableMessage(keys) });
     }
 
-    const accessToken = await getPayPalAccessToken(keys.paypalClientId, keys.paypalClientSecret);
-    const response = await fetch(`https://api-m.sandbox.paypal.com/v2/checkout/orders/${orderId}/capture`, {
+    const accessToken = await getPayPalAccessToken(keys.paypalClientId, keys.paypalClientSecret, keys.paypalEnvironment);
+    const response = await fetch(`${ship24goPayPalApiBase(keys.paypalEnvironment)}/v2/checkout/orders/${encodeURIComponent(String(orderId || ''))}/capture`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -10490,8 +10667,7 @@ app.post('/api/payments/paypal/capture-order', authMiddleware, async (req: any, 
 app.post('/api/subscriptions/polar/create-checkout', authMiddleware, async (req: any, res) => {
   try {
     const keys = await ApiKeysRepo.get();
-    
-    if (!keys?.polarApiToken || !keys?.polarProductId) {
+    if (!ship24goPolarIntegrationEnabled(keys) || !keys?.polarProductId) {
       return res.status(400).json({ error: 'Configuración de Polar incompleta. Por favor, configura Polar API Token y Product ID en el panel de administrador.' });
     }
 
@@ -12902,6 +13078,29 @@ function ship24goPayPalApiBase(environment: string = '') {
   return env === 'production' || env === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
 }
 
+function ship24goPayPalCredentialsReady(keys: any) {
+  const clientId = String(keys?.paypalClientId || process.env.PAYPAL_CLIENT_ID || '').trim();
+  const clientSecret = String(keys?.paypalClientSecret || process.env.PAYPAL_CLIENT_SECRET || '').trim();
+  return Boolean(clientId && clientSecret);
+}
+
+function ship24goPayPalIntegrationEnabled(keys: any) {
+  return keys?.paymentPaypalEnabled !== 0 && ship24goPayPalCredentialsReady(keys);
+}
+
+function ship24goPayPalUnavailableMessage(keys: any) {
+  if (keys?.paymentPaypalEnabled === 0) return 'Este método de pago no está disponible.';
+  return 'PayPal pendiente de configuración.';
+}
+
+function ship24goPolarCredentialsReady(keys: any) {
+  return Boolean(keys?.polarApiToken || process.env.POLAR_ACCESS_TOKEN);
+}
+
+function ship24goPolarIntegrationEnabled(keys: any) {
+  return keys?.paymentPolarEnabled !== 0 && ship24goPolarCredentialsReady(keys);
+}
+
 async function ship24goGetPayPalAccessToken(keys: any) {
   const clientId = String(keys?.paypalClientId || process.env.PAYPAL_CLIENT_ID || '').trim();
   const clientSecret = String(keys?.paypalClientSecret || process.env.PAYPAL_CLIENT_SECRET || '').trim();
@@ -12915,6 +13114,64 @@ async function ship24goGetPayPalAccessToken(keys: any) {
   const data: any = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data?.error_description || 'No se pudo autenticar PayPal.');
   return data.access_token;
+}
+
+async function ship24goCreatePayPalCheckoutOrder(options: {
+  referenceId: string;
+  amount: number;
+  currency: string;
+  purpose: 'marketplace_order' | 'shipment_payment';
+  description: string;
+  returnUrl: string;
+  cancelUrl: string;
+}) {
+  const keys = await ApiKeysRepo.get();
+  if (!ship24goPayPalIntegrationEnabled(keys)) {
+    const error: any = new Error(ship24goPayPalUnavailableMessage(keys));
+    error.code = 'PAYPAL_UNAVAILABLE';
+    throw error;
+  }
+  const sourceCurrency = normalizeCurrencyCode(options.currency || 'EUR');
+  const sourceAmount = roundMoney(Number(options.amount || 0));
+  const rates = sourceCurrency === 'EUR' ? { EUR: 1 } : await getFreshRatesInternal();
+  const chargeAmount = convertMoneyAmountStrict(sourceAmount, sourceCurrency, 'EUR', rates);
+  if (!chargeAmount || chargeAmount <= 0) throw new Error('El importe del pago no es válido.');
+
+  const token = await ship24goGetPayPalAccessToken(keys);
+  const base = ship24goPayPalApiBase(keys?.paypalEnvironment);
+  const orderResponse = await fetch(`${base}/v2/checkout/orders`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'PayPal-Request-Id': options.referenceId
+    },
+    body: JSON.stringify({
+      intent: 'CAPTURE',
+      purchase_units: [{
+        custom_id: `doordrop:${options.purpose}:${options.referenceId}`,
+        description: options.description,
+        amount: { currency_code: 'EUR', value: chargeAmount.toFixed(2) }
+      }],
+      application_context: {
+        brand_name: 'DoorDrop',
+        user_action: 'PAY_NOW',
+        return_url: options.returnUrl,
+        cancel_url: options.cancelUrl
+      }
+    })
+  });
+  const order: any = await orderResponse.json().catch(() => ({}));
+  await writeProviderLog(
+    'paypal',
+    `${options.purpose}_checkout_create`,
+    { referenceId: options.referenceId, amount: sourceAmount, currency: sourceCurrency, chargeAmount, chargeCurrency: 'EUR' },
+    { httpStatus: orderResponse.status, id: order?.id, hasApprovalUrl: Boolean((order?.links || []).find((link: any) => link.rel === 'approve')) },
+    orderResponse.status
+  );
+  const checkoutUrl = (order.links || []).find((link: any) => link.rel === 'approve')?.href || '';
+  if (!orderResponse.ok || !order.id || !checkoutUrl) throw new Error('No se pudo crear el checkout de PayPal.');
+  return { orderId: String(order.id), checkoutUrl, chargeAmount, chargeCurrency: 'EUR' };
 }
 
 function ship24goPublicPlan(plan: any) {
@@ -12949,8 +13206,8 @@ app.get('/api/subscription-plans', authMiddleware, async (_req: any, res) => {
       plans,
       methods: {
         wallet: keys?.paymentWalletEnabled !== 0,
-        polar: keys?.paymentPolarEnabled !== 0,
-        paypal: keys?.paymentPaypalEnabled !== 0
+        polar: ship24goPolarIntegrationEnabled(keys),
+        paypal: ship24goPayPalIntegrationEnabled(keys)
       }
     });
   } catch {
@@ -13002,8 +13259,7 @@ app.post('/api/subscriptions/paypal/create-checkout', authMiddleware, async (req
   try {
     const planId = String(req.body?.planId || '').trim();
     const keys = await ApiKeysRepo.get();
-    if (keys?.paymentPaypalEnabled === 0) return res.status(400).json({ error: 'Este método de pago no está disponible.' });
-    if (!keys?.paypalClientId || !keys?.paypalClientSecret) return res.status(400).json({ error: 'PayPal pendiente de configuración.' });
+    if (!ship24goPayPalIntegrationEnabled(keys)) return res.status(400).json({ error: ship24goPayPalUnavailableMessage(keys) });
     const [rows]: any = await pool.query('SELECT * FROM plans WHERE id = ? AND is_active = 1 LIMIT 1', [planId]);
     const plan = rows?.[0];
     if (!plan || plan.paypal_enabled === 0) return res.status(400).json({ error: 'Este plan no está disponible en PayPal.' });
@@ -13087,14 +13343,36 @@ app.post('/api/subscriptions/polar/plan-checkout', authMiddleware, async (req: a
 app.post('/api/admin/paypal/webhook/create', authMiddleware, requireSuperAdmin, async (_req: any, res) => {
   try {
     const keys = await ApiKeysRepo.get();
-    if (!keys?.paypalClientId || !keys?.paypalClientSecret) return res.status(400).json({ error: 'PayPal pendiente de configuración.' });
+    if (!ship24goPayPalIntegrationEnabled(keys)) return res.status(400).json({ error: ship24goPayPalUnavailableMessage(keys) });
     const token = await ship24goGetPayPalAccessToken(keys);
     const base = ship24goPayPalApiBase(keys?.paypalEnvironment);
     const webhookUrl = `${appBaseUrl()}/api/webhooks/paypal`;
     const payload = { url: webhookUrl, event_types: [
-      { name: 'CHECKOUT.ORDER.APPROVED' }, { name: 'PAYMENT.CAPTURE.COMPLETED' }, { name: 'PAYMENT.CAPTURE.DENIED' },
-      { name: 'BILLING.SUBSCRIPTION.ACTIVATED' }, { name: 'BILLING.SUBSCRIPTION.CANCELLED' }, { name: 'BILLING.SUBSCRIPTION.SUSPENDED' }, { name: 'BILLING.SUBSCRIPTION.PAYMENT.FAILED' }
+      { name: 'CHECKOUT.ORDER.APPROVED' }, { name: 'PAYMENT.CAPTURE.COMPLETED' }, { name: 'PAYMENT.CAPTURE.DENIED' }, { name: 'PAYMENT.CAPTURE.REFUNDED' },
+      { name: 'BILLING.SUBSCRIPTION.CREATED' }, { name: 'BILLING.SUBSCRIPTION.ACTIVATED' }, { name: 'BILLING.SUBSCRIPTION.UPDATED' },
+      { name: 'BILLING.SUBSCRIPTION.CANCELLED' }, { name: 'BILLING.SUBSCRIPTION.SUSPENDED' }, { name: 'BILLING.SUBSCRIPTION.PAYMENT.FAILED' }, { name: 'BILLING.SUBSCRIPTION.EXPIRED' }
     ] };
+
+    let existing: any = null;
+    const listResponse = await fetch(`${base}/v1/notifications/webhooks`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+    });
+    const listData: any = await listResponse.json().catch(() => ({}));
+    if (listResponse.ok && Array.isArray(listData.webhooks)) {
+      existing = listData.webhooks.find((webhook: any) => String(webhook.url || '').replace(/\/$/, '') === webhookUrl.replace(/\/$/, '')) || null;
+    }
+    if (!existing && keys?.paypalWebhookId) {
+      const existingResponse = await fetch(`${base}/v1/notifications/webhooks/${encodeURIComponent(String(keys.paypalWebhookId))}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+      });
+      const existingData: any = await existingResponse.json().catch(() => ({}));
+      if (existingResponse.ok && String(existingData.url || '').replace(/\/$/, '') === webhookUrl.replace(/\/$/, '')) existing = existingData;
+    }
+    if (existing?.id) {
+      await pool.query('UPDATE api_keys SET paypalWebhookId = ?, paypalWebhookUrl = ? WHERE id = 1', [existing.id, webhookUrl]);
+      return res.json({ success: true, created: false, message: 'El webhook de PayPal ya estaba configurado.', webhook: { id: existing.id, url: webhookUrl }, webhookUrl });
+    }
+
     const response = await fetch(`${base}/v1/notifications/webhooks`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data: any = await response.json().catch(() => ({}));
     if (!response.ok) return res.status(400).json({ error: 'No se pudo crear el webhook en PayPal.' });
@@ -13108,21 +13386,25 @@ app.post('/api/admin/paypal/webhook/create', authMiddleware, requireSuperAdmin, 
 app.post('/api/admin/paypal/products/sync', authMiddleware, requireSuperAdmin, async (_req: any, res) => {
   try {
     const keys = await ApiKeysRepo.get();
-    if (!keys?.paypalClientId || !keys?.paypalClientSecret) return res.status(400).json({ error: 'PayPal pendiente de configuración.' });
+    if (!ship24goPayPalIntegrationEnabled(keys)) return res.status(400).json({ error: ship24goPayPalUnavailableMessage(keys) });
     const token = await ship24goGetPayPalAccessToken(keys);
     const base = ship24goPayPalApiBase(keys?.paypalEnvironment);
     const plans = await PlanRepo.getAll();
     const synced: any[] = [];
+    const syncErrors: any[] = [];
     for (const plan of plans) {
       if (plan.is_active === 0 || plan.paypal_enabled === 0) continue;
       let productId = plan.paypal_product_id || '';
       if (!productId) {
         const productResponse = await fetch(`${base}/v1/catalogs/products`, {
           method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'PayPal-Request-Id': `${plan.id}-product` },
-          body: JSON.stringify({ name: `DoorDrop ${plan.name}`, type: 'SERVICE', category: 'SHIPPING_AND_DELIVERY', description: `Plan ${plan.name} de DoorDrop` })
+          body: JSON.stringify({ name: `DoorDrop ${plan.name}`, type: 'SERVICE', category: 'SERVICES', description: `Plan ${plan.name} de DoorDrop` })
         });
         const product: any = await productResponse.json().catch(() => ({}));
-        if (!productResponse.ok) { synced.push({ plan: plan.name, status: 'error' }); continue; }
+        if (!productResponse.ok) {
+          syncErrors.push({ plan: plan.name, stage: 'product', status: productResponse.status, error: product?.name || product?.details?.[0]?.issue || 'PayPal rechazó el producto.' });
+          continue;
+        }
         productId = product.id;
       }
       let paypalPlanId = plan.paypal_plan_id || '';
@@ -13139,46 +13421,343 @@ app.post('/api/admin/paypal/products/sync', authMiddleware, requireSuperAdmin, a
           })
         });
         const pp: any = await planResponse.json().catch(() => ({}));
-        if (!planResponse.ok) { synced.push({ plan: plan.name, status: 'error' }); continue; }
+        if (!planResponse.ok) {
+          syncErrors.push({ plan: plan.name, stage: 'billing_plan', status: planResponse.status, error: pp?.name || pp?.details?.[0]?.issue || 'PayPal rechazó el plan.' });
+          continue;
+        }
         paypalPlanId = pp.id;
       }
       await pool.query('UPDATE plans SET paypal_product_id = ?, paypal_plan_id = ?, paypal_sync_status = ?, paypal_last_synced_at = NOW() WHERE id = ?', [productId, paypalPlanId, 'synced', plan.id]);
       synced.push({ plan: plan.name, productId, paypalPlanId, status: 'synced' });
     }
     const fresh = (await PlanRepo.getAll()).map(ship24goPublicPlan);
-    res.json({ success: true, message: 'Planes sincronizados con PayPal.', synced, plans: fresh });
+    res.status(syncErrors.length ? 400 : 200).json({
+      success: syncErrors.length === 0,
+      message: syncErrors.length
+        ? `${synced.length} plan(es) sincronizado(s); ${syncErrors.length} no se pudo(ieron) sincronizar.`
+        : 'Planes sincronizados con PayPal.',
+      synced,
+      errors: syncErrors,
+      plans: fresh
+    });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || 'No se pudieron sincronizar los planes con PayPal.' });
   }
 });
 
+function ship24goPayPalHeader(req: any, name: string) {
+  const value = req?.headers?.[name] ?? req?.headers?.[name.toLowerCase()];
+  return Array.isArray(value) ? String(value[0] || '').trim() : String(value || '').trim();
+}
+
+function ship24goParsePayPalMetadata(value: any) {
+  if (value && typeof value === 'object') return value;
+  const raw = String(value || '').trim();
+  if (raw.startsWith('doordrop:wallet:')) {
+    return { purpose: 'wallet_topup', topupId: raw.slice('doordrop:wallet:'.length) };
+  }
+  if (raw.startsWith('doordrop:marketplace_order:')) {
+    return { purpose: 'marketplace_order', marketplaceOrderId: raw.slice('doordrop:marketplace_order:'.length) };
+  }
+  if (raw.startsWith('doordrop:shipment_payment:')) {
+    return { purpose: 'shipment_payment', shipmentId: raw.slice('doordrop:shipment_payment:'.length) };
+  }
+  try {
+    const parsed = JSON.parse(raw || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function ship24goVerifyPayPalWebhook(req: any, keys: any) {
+  const webhookId = String(keys?.paypalWebhookId || '').trim();
+  const authAlgo = ship24goPayPalHeader(req, 'paypal-auth-algo');
+  const certUrl = ship24goPayPalHeader(req, 'paypal-cert-url');
+  const transmissionId = ship24goPayPalHeader(req, 'paypal-transmission-id');
+  const transmissionSig = ship24goPayPalHeader(req, 'paypal-transmission-sig');
+  const transmissionTime = ship24goPayPalHeader(req, 'paypal-transmission-time');
+  if (!webhookId || !authAlgo || !certUrl || !transmissionId || !transmissionSig || !transmissionTime) {
+    return { ok: false, status: 503, token: '' };
+  }
+
+  try {
+    const token = await ship24goGetPayPalAccessToken(keys);
+    const response = await fetch(`${ship24goPayPalApiBase(keys?.paypalEnvironment)}/v1/notifications/verify-webhook-signature`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        auth_algo: authAlgo,
+        cert_url: certUrl,
+        transmission_id: transmissionId,
+        transmission_sig: transmissionSig,
+        transmission_time: transmissionTime,
+        webhook_id: webhookId,
+        webhook_event: req.body || {}
+      })
+    });
+    const data: any = await response.json().catch(() => ({}));
+    return { ok: response.ok && data?.verification_status === 'SUCCESS', status: response.ok ? 403 : 503, token };
+  } catch {
+    return { ok: false, status: 503, token: '' };
+  }
+}
+
+async function ship24goPayPalOrderMetadata(orderId: string, keys: any, accessToken = '') {
+  if (!orderId || !ship24goPayPalCredentialsReady(keys)) return { metadata: {}, order: null };
+  try {
+    const token = accessToken || await ship24goGetPayPalAccessToken(keys);
+    const response = await fetch(`${ship24goPayPalApiBase(keys?.paypalEnvironment)}/v2/checkout/orders/${encodeURIComponent(orderId)}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+    });
+    const order: any = await response.json().catch(() => ({}));
+    if (!response.ok) return { metadata: {}, order: null };
+    const purchaseUnit = Array.isArray(order.purchase_units) ? order.purchase_units[0] : null;
+    return { metadata: ship24goParsePayPalMetadata(purchaseUnit?.custom_id || purchaseUnit?.custom), order };
+  } catch {
+    return { metadata: {}, order: null };
+  }
+}
+
 app.post('/api/webhooks/paypal', async (req: any, res) => {
   try {
+    const keys = await ApiKeysRepo.get();
+    const verification = await ship24goVerifyPayPalWebhook(req, keys);
+    if (!verification.ok) return res.status(verification.status || 403).json({ received: false });
+
     const payload = req.body || {};
     const eventType = payload.event_type || payload.event || '';
     const resource = payload.resource || {};
-    const reference = resource.id || payload.id || '';
-    await pool.query(`INSERT INTO webhook_events (id, provider_code, external_id, event_type, payload_json, processed_status, provider_reference) VALUES (?, 'paypal', ?, ?, ?, 'received', ?) ON DUPLICATE KEY UPDATE payload_json = VALUES(payload_json), processed_status = 'received'`, [generateId('wh_'), reference || generateId('pp_'), eventType, JSON.stringify(payload), reference]);
+    const reference = String(resource.id || payload.id || '').trim();
+    if (!reference) return res.status(400).json({ received: false });
+
+    const [existingRows]: any = await pool.query(
+      `SELECT id, processed_status FROM webhook_events WHERE provider_code = 'paypal' AND external_id = ? LIMIT 1`,
+      [reference]
+    );
+    if (existingRows?.[0]?.processed_status === 'processed') return res.status(202).json({ received: true, duplicate: true });
+    if (!existingRows?.length) {
+      await pool.query(
+        `INSERT INTO webhook_events (id, provider_code, external_id, event_type, payload_json, processed_status, provider_reference)
+         VALUES (?, 'paypal', ?, ?, ?, 'received', ?)`,
+        [generateId('wh_'), reference, eventType, JSON.stringify(payload), reference]
+      );
+    }
+
+    let metadata = ship24goParsePayPalMetadata(resource.custom_id || resource.custom);
+    const orderId = String(resource?.supplementary_data?.related_ids?.order_id || resource?.order_id || '').trim();
+    if (eventType === 'PAYMENT.CAPTURE.COMPLETED' && (!metadata.userId || (!metadata.planId && !metadata.topupId && !metadata.topup_id)) && orderId) {
+      const orderInfo = await ship24goPayPalOrderMetadata(orderId, keys, verification.token);
+      metadata = { ...orderInfo.metadata, ...metadata };
+    }
+
+    if (eventType === 'PAYMENT.CAPTURE.COMPLETED' && (metadata.purpose || '') === 'marketplace_order') {
+      const marketplaceOrderId = metadata.marketplaceOrderId || metadata.marketplace_order_id;
+      if (marketplaceOrderId) {
+        const paymentReference = String(resource.id || reference).trim();
+        const paidOrder = await MarketplaceRepo.markOrderPaid(String(marketplaceOrderId), paymentReference);
+        if (paidOrder.activated) {
+          const [orderRows]: any = await pool.query(
+            `SELECT o.*, l.title AS listing_title, ub.name AS buyer_name, ub.email AS buyer_email,
+                    us.name AS seller_name, us.email AS seller_email
+               FROM marketplace_orders o
+               JOIN marketplace_listings l ON l.id = o.listing_id
+               JOIN users ub ON ub.id = o.buyer_id
+               JOIN users us ON us.id = o.seller_id
+              WHERE o.id = ? LIMIT 1`,
+            [marketplaceOrderId]
+          );
+          const paid = orderRows?.[0];
+          if (paid) {
+            const appUrl = appBaseUrl().replace(/\/+$/, '');
+            const orderUrl = `${appUrl}/panel/marketplace?tab=orders`;
+            const total = (Number(paid.total_amount_minor || 0) / 100).toFixed(2);
+            await Promise.all([
+              sendNotificationEvent({
+                eventCode: 'marketplace_order_paid_buyer',
+                entityType: 'marketplace_order',
+                entityId: String(paid.id),
+                userId: paid.buyer_id,
+                audience: 'buyer',
+                toEmail: paid.buyer_email || '',
+                recipientName: paid.buyer_name || paid.buyer_email || '',
+                language: 'es',
+                variables: { userName: paid.buyer_name || paid.buyer_email || '', orderNumber: paid.order_number, listingTitle: paid.listing_title, totalAmount: total, currency: paid.currency, orderStatus: 'Pagado', orderUrl, sellerName: paid.seller_name || '' }
+              }).catch(() => null),
+              sendNotificationEvent({
+                eventCode: 'marketplace_sale_received',
+                entityType: 'marketplace_order',
+                entityId: String(paid.id),
+                userId: paid.seller_id,
+                audience: 'seller',
+                toEmail: paid.seller_email || '',
+                recipientName: paid.seller_name || paid.seller_email || '',
+                language: 'es',
+                variables: { sellerName: paid.seller_name || paid.seller_email || '', orderNumber: paid.order_number, listingTitle: paid.listing_title, totalAmount: total, currency: paid.currency, buyerName: paid.buyer_name || '', orderUrl, shippingAddressUrl: orderUrl }
+              }).catch(() => null)
+            ]);
+          }
+        }
+      }
+    }
+
+    if (eventType === 'PAYMENT.CAPTURE.COMPLETED' && (metadata.purpose || '') === 'shipment_payment') {
+      const shipmentId = String(metadata.shipmentId || metadata.shipment_id || '').trim();
+      if (shipmentId) {
+        const paymentReference = String(resource.id || reference).trim();
+        const conn = await pool.getConnection();
+        let shouldPrepare = false;
+        let shipmentUserId = '';
+        try {
+          await conn.beginTransaction();
+          const [paymentRows]: any = await conn.query(
+            `SELECT id, status FROM payments WHERE shipment_id = ? AND provider = 'paypal' AND purpose = 'shipment_payment' LIMIT 1 FOR UPDATE`,
+            [shipmentId]
+          );
+          const payment = paymentRows?.[0];
+          if (!payment) throw new Error('Pago PayPal de envío no encontrado.');
+          if (String(payment.status) !== 'paid') {
+            await conn.query(
+              `UPDATE payments SET status = 'paid', external_payment_id = ?, provider_payment_id = ?, raw_payload_json = ?, updated_at = NOW() WHERE id = ?`,
+              [paymentReference, paymentReference, JSON.stringify(payload), payment.id]
+            );
+            const [shipmentRows]: any = await conn.query(`SELECT user_id, status FROM shipments WHERE id = ? FOR UPDATE`, [shipmentId]);
+            const shipment = shipmentRows?.[0];
+            if (!shipment) throw new Error('Envío asociado al pago no encontrado.');
+            shipmentUserId = String(shipment.user_id || '');
+            shouldPrepare = String(shipment.status) === 'pending_payment';
+            if (shouldPrepare) {
+              await conn.query(
+                `UPDATE shipments SET status = 'pending_provider', status_label = 'Preparando etiqueta', payment_url = NULL, updated_at = NOW() WHERE id = ? AND status = 'pending_payment'`,
+                [shipmentId]
+              );
+            }
+          }
+          await conn.commit();
+        } catch (error) {
+          await conn.rollback();
+          throw error;
+        } finally {
+          conn.release();
+        }
+        if (shouldPrepare) {
+          await TrackingEventRepo.create({ shipment_id: shipmentId, tracking_code: '', status: 'payment_confirmed', status_label: 'Pago PayPal confirmado', description: 'El pago PayPal fue confirmado y la etiqueta está en preparación.' }).catch(() => null);
+          try {
+            await processShipmentPreparation(shipmentId);
+          } catch (error: any) {
+            await ensureShipmentJob(shipmentId, shipmentUserId, 'provider_create', 'pending', 'Pago confirmado; etiqueta en preparación.').catch(() => null);
+            console.error('[PayPal shipment] preparation deferred:', error?.message || 'error');
+          }
+        }
+      }
+    }
 
     if (eventType === 'PAYMENT.CAPTURE.COMPLETED' || eventType === 'BILLING.SUBSCRIPTION.ACTIVATED') {
-      let metadata: any = {};
-      try { metadata = JSON.parse(resource.custom_id || resource.custom || '{}'); } catch { metadata = {}; }
-      const userId = metadata.userId;
-      const planId = metadata.planId;
+      const userId = metadata.userId || metadata.user_id;
+      const planId = metadata.planId || metadata.plan_id;
+
+      const topupId = metadata.topupId || metadata.topup_id;
+      if (eventType === 'PAYMENT.CAPTURE.COMPLETED' && topupId && (metadata.purpose || '') === 'wallet_topup') {
+        const conn = await pool.getConnection();
+        let walletNotification: any = null;
+        try {
+          await conn.beginTransaction();
+          const [topupRows]: any = await conn.query(`SELECT * FROM wallet_topups WHERE id = ? FOR UPDATE`, [topupId]);
+          const topup = topupRows?.[0];
+          if (!topup) throw new Error('Recarga PayPal no encontrada.');
+          if (!['paid', 'completed', 'success'].includes(String(topup.status || '').toLowerCase())) {
+            const amount = roundMoney(Number(topup.amount || metadata.requestedAmount || metadata.requested_amount || 0));
+            const currency = normalizeCurrencyCode(topup.currency || metadata.walletCurrency || metadata.currency || 'EUR');
+            if (!amount || amount <= 0) throw new Error('Monto de recarga PayPal no válido.');
+            await conn.query(`UPDATE wallet_topups SET status = 'completed', provider_reference = ? WHERE id = ?`, [resource.id || reference, topupId]);
+            const rates = await getFreshRatesInternal();
+            const mutation = await applyWalletMutation(conn, {
+              userId: topup.user_id,
+              type: 'credit',
+              amount,
+              currency,
+              description: 'Recarga confirmada por PayPal — saldo exacto',
+              referenceType: 'wallet_topup',
+              referenceId: topupId,
+              rates
+            });
+            walletNotification = {
+              userId: topup.user_id,
+              email: mutation.user?.email || '',
+              name: mutation.user?.name || '',
+              language: mutation.user?.country || 'es',
+              amount: mutation.walletAmount,
+              currency: mutation.walletCurrency,
+              newBalance: mutation.newBalance,
+              paymentMethod: 'PayPal'
+            };
+          }
+          await conn.commit();
+        } catch (error) {
+          await conn.rollback();
+          throw error;
+        } finally {
+          conn.release();
+        }
+        if (walletNotification?.email) {
+          await sendNotificationEvent({
+            eventCode: 'wallet_topup_success',
+            entityType: 'wallet_topup',
+            entityId: String(topupId),
+            userId: walletNotification.userId,
+            audience: 'customer',
+            toEmail: walletNotification.email,
+            recipientName: walletNotification.name,
+            language: walletNotification.language,
+            variables: {
+              userName: walletNotification.name,
+              amount: Number(walletNotification.amount).toFixed(2),
+              currency: walletNotification.currency,
+              newBalance: Number(walletNotification.newBalance).toFixed(2),
+              paymentMethod: walletNotification.paymentMethod,
+              panelUrl: `${appBaseUrl()}/panel/settings/wallet`
+            }
+          }).catch(() => null);
+        }
+      }
+
       if (userId && planId) {
         const [plans]: any = await pool.query('SELECT * FROM plans WHERE id = ? LIMIT 1', [planId]);
         const plan = plans?.[0];
         if (plan) {
-          const subId = generateId('sub_');
-          await pool.query(`INSERT INTO subscriptions (id, user_id, plan_id, provider, external_subscription_id, status, current_period_start, current_period_end, metadata_json) VALUES (?, ?, ?, 'paypal', ?, 'active', NOW(), DATE_ADD(NOW(), INTERVAL 1 MONTH), ?)`, [subId, userId, planId, resource.id || reference, JSON.stringify({ eventType })]);
-          await pool.query(`INSERT INTO payments (id, user_id, provider, external_payment_id, amount, currency, status, plan_id, subscription_id, purpose, raw_payload_json, metadata_json) VALUES (?, ?, 'paypal', ?, ?, ?, 'paid', ?, ?, 'subscription', ?, ?)`, [generateId('pay_'), userId, resource.id || reference, Number(plan.price || 0), String(plan.currency || 'EUR').toUpperCase(), planId, subId, JSON.stringify(payload), JSON.stringify({ eventType })]);
+          const externalId = resource.id || reference;
+          const [existingSubscriptions]: any = await pool.query(`SELECT id FROM subscriptions WHERE provider = 'paypal' AND external_subscription_id = ? LIMIT 1`, [externalId]);
+          const subId = existingSubscriptions?.[0]?.id || generateId('sub_');
+          if (!existingSubscriptions?.length) {
+            await pool.query(`INSERT INTO subscriptions (id, user_id, plan_id, provider, external_subscription_id, status, current_period_start, current_period_end, metadata_json) VALUES (?, ?, ?, 'paypal', ?, 'active', NOW(), DATE_ADD(NOW(), INTERVAL 1 MONTH), ?)`, [subId, userId, planId, externalId, JSON.stringify({ eventType })]);
+            await pool.query(`INSERT INTO payments (id, user_id, provider, external_payment_id, amount, currency, status, plan_id, subscription_id, purpose, raw_payload_json, metadata_json) VALUES (?, ?, 'paypal', ?, ?, ?, 'paid', ?, ?, 'subscription', ?, ?)`, [generateId('pay_'), userId, externalId, Number(plan.price || 0), String(plan.currency || 'EUR').toUpperCase(), planId, subId, JSON.stringify(payload), JSON.stringify({ eventType })]);
+          }
         }
       }
     }
+
+    if (eventType.startsWith('BILLING.SUBSCRIPTION.') && resource.id) {
+      const statusMap: Record<string, string> = {
+        'BILLING.SUBSCRIPTION.CREATED': 'pending',
+        'BILLING.SUBSCRIPTION.UPDATED': 'active',
+        'BILLING.SUBSCRIPTION.CANCELLED': 'canceled',
+        'BILLING.SUBSCRIPTION.SUSPENDED': 'suspended',
+        'BILLING.SUBSCRIPTION.PAYMENT.FAILED': 'past_due',
+        'BILLING.SUBSCRIPTION.EXPIRED': 'expired'
+      };
+      const nextStatus = statusMap[eventType];
+      if (nextStatus) await pool.query(`UPDATE subscriptions SET status = ? WHERE provider = 'paypal' AND external_subscription_id = ?`, [nextStatus, resource.id]);
+    }
+
+    await pool.query(`UPDATE webhook_events SET processed_status = 'processed' WHERE provider_code = 'paypal' AND external_id = ?`, [reference]);
     res.status(202).json({ received: true });
   } catch (error: any) {
     console.error('[PayPal webhook] error:', error?.message || error);
-    res.status(202).json({ received: true });
+    try {
+      const reference = String(req.body?.resource?.id || req.body?.id || '').trim();
+      if (reference) await pool.query(`UPDATE webhook_events SET processed_status = 'failed' WHERE provider_code = 'paypal' AND external_id = ?`, [reference]);
+    } catch {}
+    res.status(500).json({ received: false });
   }
 });
 
@@ -14484,13 +15063,15 @@ function publicPaymentSettingsFromKeys(provider: 'polar' | 'paypal', keys: any) 
 }
 function publicPaymentStatusFromKeys(provider: 'polar' | 'paypal', keys: any) {
   if (provider === 'polar') {
-    const configured = Boolean(keys?.polarApiToken || process.env.POLAR_ACCESS_TOKEN);
+    const configured = ship24goPolarCredentialsReady(keys);
     const webhookReady = Boolean(keys?.polarWebhookId || keys?.polarWebhookSecret || keys?.polarWebhookUrl);
-    return { configured, credentialsReady: configured, webhookReady, message: configured ? 'Conexión preparada.' : 'Agrega el access token para activar Polar.' };
+    const enabled = ship24goPolarIntegrationEnabled(keys);
+    return { configured, credentialsReady: configured, enabled, webhookReady, message: configured ? (enabled ? 'Conexión preparada.' : 'Polar está desactivado para clientes.') : 'Agrega el access token para activar Polar.' };
   }
-  const configured = Boolean(keys?.paypalClientId && keys?.paypalClientSecret);
-  const webhookReady = Boolean(keys?.paypalWebhookId || keys?.paypalWebhookUrl);
-  return { configured, credentialsReady: configured, webhookReady, message: configured ? 'Conexión preparada.' : 'Agrega Client ID y Secret para activar PayPal.' };
+  const configured = ship24goPayPalCredentialsReady(keys);
+  const enabled = ship24goPayPalIntegrationEnabled(keys);
+  const webhookReady = Boolean(keys?.paypalWebhookId);
+  return { configured, credentialsReady: configured, enabled, webhookReady, message: configured ? (enabled ? 'Conexión preparada.' : 'PayPal está desactivado para clientes.') : 'Agrega Client ID y Secret para activar PayPal.' };
 }
 function publicPlansForPayment(rows: any[]) {
   return rows.map((p: any) => ({
@@ -14607,6 +15188,7 @@ app.get('/api/currencies', async (req, res) => {
 
 // --- MARKETPLACE INTEGRATION ---
 import { setupMarketplaceRoutes } from './server/marketplace/routes';
+import { MarketplaceRepo } from './server/marketplace/repo';
 import podRoutes from './server/marketplace/podRoutes';
 setupMarketplaceRoutes(app, {
   pool,
@@ -14614,7 +15196,10 @@ setupMarketplaceRoutes(app, {
   requireSuperAdmin,
   UserRepo,
   generateId,
-  walletMutation: applyWalletMutationCommitted
+  walletMutation: applyWalletMutationCommitted,
+  paypalCreateOrder: async (options) => {
+    return ship24goCreatePayPalCheckoutOrder({ ...options, purpose: 'marketplace_order' });
+  }
 });
 app.use('/api/pod', podRoutes);
 app.use(podRoutes);

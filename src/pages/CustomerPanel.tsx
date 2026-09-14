@@ -1038,6 +1038,8 @@ const Quote = () => {
   const [activeStep, setActiveStep] = useState<'quote' | 'complete'>('quote');
   const [selectedQuote, setSelectedQuote] = useState<any>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [shipmentPaymentMethod, setShipmentPaymentMethod] = useState<'wallet' | 'paypal'>('wallet');
+  const [paypalAvailable, setPaypalAvailable] = useState(false);
   const [profile, setProfile] = useState<any>(null);
   const [addressBook, setAddressBook] = useState<any[]>([]);
   const quoteRequestSequence = useRef(0);
@@ -1063,6 +1065,9 @@ const Quote = () => {
       setProfile(pRes.user);
       setCurrency(accountCurrency);
       setForm(prev => ({ ...prev, currency: accountCurrency }));
+      api.paypalGetConfig()
+        .then((paypalConfig: any) => setPaypalAvailable(Boolean(paypalConfig?.enabled && paypalConfig?.configured)))
+        .catch(() => setPaypalAvailable(false));
       const abRes = await api.getAddressBook();
       setAddressBook(abRes.addresses || []);
     } catch (e) {}
@@ -1378,10 +1383,15 @@ const Quote = () => {
         exportReason: extraDetails.exportReason,
         termsOfTrade: extraDetails.termsOfTrade,
         manifest: isBorradorMode ? 0 : extraDetails.manifest,
+        paymentMethod: shipmentPaymentMethod,
         services: quoteNeedsAnyPoint(selectedQuote) ? { drops: { ...(selectedDrops.sender ? { sender: selectedDrops.sender } : {}), ...(selectedDrops.receiver ? { receiver: selectedDrops.receiver } : {}) } } : undefined
       };
 
       const res = await api.createShipment(payload);
+      if (res?.checkoutUrl) {
+        window.location.assign(res.checkoutUrl);
+        return;
+      }
       if (storeOrderContext?.id && res?.shipment?.id) {
         await api.linkStoreOrderShipment(storeOrderContext.id, res.shipment.id).catch(() => null);
       }
@@ -1790,7 +1800,42 @@ const Quote = () => {
                 <span className="text-md font-black text-gray-900 dark:text-white">{format(Number(profile?.balance || 0), walletCurrency)}</span>
               </div>
 
-              {isBalanceEnough ? (
+              {paypalAvailable && (
+                <div className="space-y-2">
+                  <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Método de pago</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShipmentPaymentMethod('wallet')}
+                      className={`py-2.5 rounded-xl border text-xs font-black transition-colors ${shipmentPaymentMethod === 'wallet' ? 'border-blue-600 bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-neon-cyan' : 'border-gray-200 text-gray-500 dark:border-gray-800'}`}
+                    >
+                      Wallet DoorDrop
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShipmentPaymentMethod('paypal')}
+                      className={`py-2.5 rounded-xl border text-xs font-black transition-colors ${shipmentPaymentMethod === 'paypal' ? 'border-blue-600 bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-neon-cyan' : 'border-gray-200 text-gray-500 dark:border-gray-800'}`}
+                    >
+                      PayPal / tarjeta
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {shipmentPaymentMethod === 'paypal' ? (
+                <div className="space-y-4">
+                  <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-2xl text-xs text-blue-700 dark:text-blue-300 font-bold">
+                    PayPal cobrará el equivalente en EUR. El wallet no se utilizará.
+                  </div>
+                  <button
+                    onClick={() => executeShipmentSubmit(false)}
+                    disabled={paymentLoading || !pointSelectionReady || !senderDetails.name || !recipientDetails.name || !senderDetails.addressLine1 || !recipientDetails.addressLine1 || !senderDetails.civicNumber || !recipientDetails.civicNumber}
+                    className="w-full py-4 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600 text-white font-black rounded-2xl shadow-lg transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {paymentLoading ? 'Abriendo PayPal...' : 'Pagar envío con PayPal'}
+                  </button>
+                </div>
+              ) : isBalanceEnough ? (
                 <div className="space-y-4">
                   <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400 font-bold">
                     <CheckCircle className="w-4 h-4 shrink-0" /> Saldo disponible suficiente.
@@ -3251,7 +3296,8 @@ const CustomerSettings = () => {
   const [actionSuccess, setActionSuccess] = useState('');
   const [actionError, setActionError] = useState('');
   const [subscriptionPlans, setSubscriptionPlans] = useState<any[]>([]);
-  const [subscriptionMethods, setSubscriptionMethods] = useState<any>({ wallet: true, polar: true, paypal: true });
+  const [subscriptionMethods, setSubscriptionMethods] = useState<any>({ wallet: true, polar: false, paypal: false });
+  const [rechargeProvider, setRechargeProvider] = useState<'polar' | 'paypal'>('polar');
   const [selectedSubscriptionMethod, setSelectedSubscriptionMethod] = useState<'wallet' | 'polar' | 'paypal'>('wallet');
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [bankPreview, setBankPreview] = useState<any>(null);
@@ -3292,7 +3338,9 @@ const CustomerSettings = () => {
       const plansRes = await api.getSubscriptionPlans();
       const list = (plansRes.plans || []).filter((plan: any) => plan.id !== 'plan_basic' && Number(plan.price || 0) > 0);
       setSubscriptionPlans(list);
-      setSubscriptionMethods(plansRes.methods || { wallet: true, polar: true, paypal: true });
+      const methods = plansRes.methods || { wallet: true, polar: false, paypal: false };
+      setSubscriptionMethods(methods);
+      setRechargeProvider(prev => prev === 'polar' && methods.polar ? 'polar' : methods.paypal ? 'paypal' : 'polar');
       if (!selectedPlanId && list.length) setSelectedPlanId(list[0].id);
     } catch {
       setSubscriptionPlans([]);
@@ -3367,12 +3415,12 @@ const CustomerSettings = () => {
     }
   };
 
-  const handleRecharge = async (amount: number) => {
+  const handleRecharge = async (amount: number, paymentProvider: 'polar' | 'paypal' = rechargeProvider) => {
     setRechargeLoading(true);
     setActionError('');
     setActionSuccess('');
     try {
-      const res = await api.rechargeWallet(amount);
+      const res = await api.rechargeWallet(amount, paymentProvider);
       if (res.checkoutUrl) {
         window.location.href = res.checkoutUrl;
         return;
@@ -3543,13 +3591,21 @@ const CustomerSettings = () => {
                   </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <button 
-                  onClick={() => handleRecharge(150)}
+                {subscriptionMethods.polar && <button
+                  onClick={() => handleRecharge(150, 'polar')}
                   disabled={rechargeLoading}
                   className="w-full bg-gradient-to-r from-pink-500 to-orange-400 hover:from-pink-600 hover:to-orange-500 dark:from-neon-pink dark:to-[#9D00FF] text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 cursor-pointer"
                 >
                   {rechargeLoading ? 'Abriendo pago seguro...' : 'Recargar con tarjeta (Polar)'}
-                </button>
+                </button>}
+                {subscriptionMethods.paypal && <button
+                  onClick={() => handleRecharge(150, 'paypal')}
+                  disabled={rechargeLoading}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 cursor-pointer"
+                >
+                  {rechargeLoading ? 'Abriendo pago seguro...' : 'Recargar con PayPal (EUR)'}
+                </button>}
+                {!subscriptionMethods.polar && !subscriptionMethods.paypal && <p className="sm:col-span-2 text-sm text-gray-500 dark:text-gray-400 rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-950/20 p-3">Los pagos con tarjeta están temporalmente desactivados.</p>}
                 <Link to="/panel/settings/wallet" className="w-full text-center bg-white dark:bg-dark-800 border border-blue-200 dark:border-neon-cyan/30 text-blue-700 dark:text-neon-cyan font-bold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-transform hover:-translate-y-0.5">
                   {t('bank_open_wallet')}
                 </Link>
