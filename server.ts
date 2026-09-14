@@ -13982,7 +13982,10 @@ app.get('/api/currencies', async (req, res) => {
 
 // --- MARKETPLACE INTEGRATION ---
 import { setupMarketplaceRoutes } from './server/marketplace/routes';
+import podRoutes from './server/marketplace/podRoutes';
 setupMarketplaceRoutes(app, { pool, authMiddleware, requireSuperAdmin, UserRepo, generateId });
+app.use('/api/pod', podRoutes);
+app.use(podRoutes);
 
 // --- OMNICHANNEL INTEGRATION ---
 import { setupOmnichannelRoutes } from './server/omnichannel/routes';

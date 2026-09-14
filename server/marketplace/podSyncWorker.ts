@@ -24,6 +24,10 @@ export class PodSyncWorker {
     throw new Error("Perfil de vendedor 'zubuy-print' no encontrado.");
   }
 
+  /**
+   * Sincronización de catálogo:
+   * Por defecto solicita hasta 100 productos de Contrado
+   */
   public static async syncCatalog(options: { batchSize?: number; pageNumber?: number } = {}) {
     if (this.isSyncing) {
       console.log('[Zubuy Print Sync] Sincronización en curso, omitiendo ejecución redundante.');
@@ -31,13 +35,13 @@ export class PodSyncWorker {
     }
 
     this.isSyncing = true;
-    const batchSize = options.batchSize || 20;
+    const batchSize = options.batchSize || 100; // Sincroniza 100
     const pageNumber = options.pageNumber || 1;
     let syncedCount = 0;
     let failedCount = 0;
 
     try {
-      console.log(`[Zubuy Print Sync] Consultando productos Contrado Helix (Lote ${batchSize}, Página ${pageNumber})...`);
+      console.log(`[Zubuy Print Sync] Consultando productos Contrado Helix (Lote de ${batchSize}, Página ${pageNumber})...`);
 
       const [settingsRows]: any = await pool.query(
         "SELECT * FROM contrado_settings WHERE store_id = 61803 LIMIT 1"
@@ -47,7 +51,6 @@ export class PodSyncWorker {
 
       const prodRes = await ContradoService.getProducts(pageNumber, batchSize);
 
-      // Si Contrado responde con "No Store Products Found", es un estado vacío legítimo
       const isNotFoundMsg = prodRes.message && prodRes.message.includes('No Store Products Found');
       if (!prodRes.success && !isNotFoundMsg) {
         throw new Error(prodRes.message || 'Error al conectar con Contrado Helix API');
@@ -66,7 +69,8 @@ export class PodSyncWorker {
           const detailRes = await ContradoService.getProductDetail(contradoProdId);
           const detail = detailRes.data || p;
 
-          const title = String(detail.storeProductName || detail.name || 'Producto Personalizado Zubuy').trim();
+          // Idioma italiano por defecto con soporte multi-idioma
+          const title = String(detail.storeProductName || detail.name || 'Prodotto Personalizzato Zubuy').trim();
           const description = String(detail.storeProductDescription || detail.description || '').trim();
           const thumbUrl = detail.productThumb || detail.productImages?.[0]?.storeThumb800Quality || '';
 
@@ -171,7 +175,7 @@ export class PodSyncWorker {
               JSON.stringify(detail.careInstruction || null),
               JSON.stringify(detail.productSpecification || []),
               JSON.stringify(detail.sizeChart || null),
-              detail.productionTime || '3-5 días hábiles',
+              detail.productionTime || '3-5 giorni lavorativi',
               detail.isOutOfStock ? 1 : 0,
               detail.shippingPriceGroupId || null,
               minCostMinor,
@@ -187,7 +191,8 @@ export class PodSyncWorker {
         }
       }
 
-      const nextSync = new Date(Date.now() + 12 * 3600 * 1000);
+      // Siguiente sincronización programada en 10 horas
+      const nextSync = new Date(Date.now() + 10 * 3600 * 1000);
       const statusMsg = productsList.length === 0
         ? 'No hay productos para mostrar en la tienda Contrado'
         : `Catálogo actualizado. ${syncedCount} importados.`;
@@ -259,15 +264,19 @@ export class PodSyncWorker {
     }
   }
 
+  /**
+   * Cron configurado para ejecutarse cada 10 horas
+   */
   public static initCron() {
-    console.log('[Zubuy Print Cron] Iniciando programador cada 12 horas (Lotes de 20 productos nocturnos)...');
+    console.log('[Zubuy Print Cron] Iniciando programador de catálogo Contrado cada 10 horas...');
     this.syncShippingRates('it-IT');
     this.syncShippingRates('es-ES');
 
-    const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+    // Intervalo exacto de 10 horas: 10 * 60 * 60 * 1000 ms
+    const TEN_HOURS_MS = 10 * 60 * 60 * 1000;
     setInterval(() => {
-      console.log('[Zubuy Print Cron] Ejecutando sincronización programada cada 12 horas...');
-      this.syncCatalog({ batchSize: 20 });
-    }, TWELVE_HOURS_MS);
+      console.log('[Zubuy Print Cron] Ejecutando sincronización automática programada cada 10 horas...');
+      this.syncCatalog({ batchSize: 100 });
+    }, TEN_HOURS_MS);
   }
 }
