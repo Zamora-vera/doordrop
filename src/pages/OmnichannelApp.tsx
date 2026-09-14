@@ -552,8 +552,9 @@ export function OmnichannelApp({ profile }: { profile: any }) {
     if (!selectedConv) return;
     const isCurrentlyAi = selectedConv.ai_active === 1 || selectedConv.assigned_agent_type === 'ai';
     const target = isCurrentlyAi
-      ? (teamMembers.find(m => m.type === 'human') || { member_id: 'agent-hum-gabriel', name: 'Gabriel Castro', type: 'human' })
-      : (teamMembers.find(m => m.type === 'ai') || { member_id: 'agent-ai-sofia', name: 'Sofia AI Concierge', type: 'ai' });
+      ? teamMembers.find(m => m.type === 'human')
+      : teamMembers.find(m => m.type === 'ai');
+    if (!target) { alert('No hay miembros del equipo configurados. Ve a "Equipo" para agregar agentes.'); return; }
     
     await handleTransfer(target);
   };
@@ -2427,6 +2428,48 @@ export function OmnichannelApp({ profile }: { profile: any }) {
           </div>
 
           {/* Team Members Grid */}
+          {teamMembers.length === 0 && !loadingTeam ? (
+            <div className="flex flex-col items-center justify-center py-20 px-6 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-sm text-center">
+              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-100 to-indigo-100 dark:from-blue-950 dark:to-indigo-950 flex items-center justify-center mb-6 shadow-lg">
+                <Users className="w-10 h-10 text-blue-600 dark:text-blue-400" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Tu equipo está vacío</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md mb-6 leading-relaxed">
+                Aún no has registrado agentes ni operadores. Agrega miembros para asignar conversaciones, transferir chats y escalar tu atención al cliente.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={() => { setNewMemberType('human'); setShowAddMemberModal(true); }}
+                  className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition flex items-center gap-2 shadow-lg shadow-blue-600/20"
+                >
+                  <Plus className="w-4 h-4" /> Agregar Operador Humano
+                </button>
+                <button
+                  onClick={() => { setNewMemberType('ai'); setShowAddMemberModal(true); }}
+                  className="px-5 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-sm font-bold transition flex items-center gap-2 shadow-lg shadow-purple-600/20"
+                >
+                  <Bot className="w-4 h-4" /> Crear Agente Virtual AI
+                </button>
+              </div>
+              <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-2xl">
+                <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/50">
+                  <div className="text-2xl mb-1">👤</div>
+                  <h4 className="text-xs font-bold text-gray-900 dark:text-white">Operador</h4>
+                  <p className="text-[11px] text-gray-500">Atiende chats en vivo, cierra ventas, da soporte</p>
+                </div>
+                <div className="p-4 rounded-xl bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/50">
+                  <div className="text-2xl mb-1">🤖</div>
+                  <h4 className="text-xs font-bold text-gray-900 dark:text-white">Agente AI</h4>
+                  <p className="text-[11px] text-gray-500">Responde 24/7, vende catálogo, gestiona consultas</p>
+                </div>
+                <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50">
+                  <div className="text-2xl mb-1">🔄</div>
+                  <h4 className="text-xs font-bold text-gray-900 dark:text-white">Transferir</h4>
+                  <p className="text-[11px] text-gray-500">Pasa conversaciones entre humanos y AI</p>
+                </div>
+              </div>
+            </div>
+          ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {teamMembers.map(member => (
               <div
@@ -2492,6 +2535,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
               </div>
             ))}
           </div>
+          )}
 
           {/* Add Member Modal */}
           {showAddMemberModal && (
