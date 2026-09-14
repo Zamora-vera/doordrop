@@ -1142,7 +1142,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                     .map(contact => {
                       const isSelected = selectedConv?.id === contact.id;
                       const isAi = contact.assigned_agent_type === 'ai' || contact.ai_active === 1;
-                      const agentName = contact.assigned_agent_name || (isAi ? 'Sofia AI' : 'Gabriel C.');
+                      const agentName = contact.assigned_agent_name || (isAi ? 'Agente AI' : 'Sin asignar');
                       const initials = (contact.contact_name || 'CL').slice(0, 2).toUpperCase();
 
                       return (
@@ -1324,7 +1324,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                               : 'text-amber-800 dark:text-amber-300'
                           }`}
                         >
-                          {selectedConv.assigned_agent_name || (selectedConv.ai_active === 1 ? 'Sofia AI' : 'Gabriel Castro')}
+                          {selectedConv.assigned_agent_name || (selectedConv.ai_active === 1 ? 'Agente AI' : 'Sin asignar')}
                         </p>
                       </div>
 
@@ -1390,7 +1390,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                             {message.sender_type === 'ai' || (selectedConv.ai_active === 1 && message.sender_name?.includes('AI')) ? (
                               <>
                                 <Bot className="w-3 h-3 text-purple-500" />
-                                <span>Sofia (AI Concierge)</span>
+                                <span>Agente AI</span>
                               </>
                             ) : (
                               <>
@@ -1588,7 +1588,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                   <div>
                     <h3 className="text-base font-bold text-slate-900 dark:text-white">Centro de Mensajería Omnicanal</h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                      Atiende a tus clientes de WhatsApp, Instagram, Facebook y Telegram en un solo lugar con asistencia autónoma de Sofia AI o tus operadores humanos.
+                      Atiende a tus clientes de WhatsApp, Instagram, Facebook y Telegram en un solo lugar con asistencia autónoma de un agente AI o tus operadores humanos.
                     </p>
                   </div>
                   <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-2">
@@ -1653,7 +1653,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                         </div>
                         <div>
                           <h5 className="font-bold text-slate-900 dark:text-white text-xs">
-                            {selectedConv.assigned_agent_name || (selectedConv.ai_active === 1 ? 'Sofia AI' : 'Gabriel Castro')}
+                            {selectedConv.assigned_agent_name || (selectedConv.ai_active === 1 ? 'Agente AI' : 'Sin asignar')}
                           </h5>
                           <p className="text-[11px] text-slate-500 dark:text-slate-400">
                             {selectedConv.assigned_agent_type === 'ai' || selectedConv.ai_active === 1 ? 'Inteligencia Artificial Ventas' : 'Operador Humano'}
@@ -2941,7 +2941,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                       🧠 Apprendimento e Memoria Conversazionale Attiva
                     </span>
                     <span className="text-[11px] text-gray-400 block mt-0.5">
-                      L'AI analizza gli ultimi 14 messaggi cronologici della chat per mantenere il contesto (es. ricorda referenze, taglie e dettagli citati prima).
+                      L'AI analizza fino a 24 messaggi recenti e, quando disponibile, recupera la memoria dello stesso cliente nello stesso canale per mantenere il contesto senza ripetere domande.
                     </span>
                   </label>
                 </div>
