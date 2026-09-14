@@ -1,5 +1,6 @@
 import { pool } from '../db/connection.js';
 import crypto from 'crypto';
+import { sendNotificationEvent } from '../services/emailService';
 
 /**
  * Autonomous Sales Tools for DoorDrop AI Employee:
@@ -7,7 +8,7 @@ import crypto from 'crypto';
  * 2. send_product_photos: Return direct product image URLs and media details to render in chat
  * 3. quote_shipping: Real DoorDrop shipping calculation by country, city and ZIP code
  * 4. create_order_checkout: Conclude transactions, create row in marketplace_orders, generate secure payment link
- * 5. lookup_or_generate_tracking: Retrieve live tracking info or generate DoorDrop shipment reference
+ * 5. lookup_or_generate_tracking: Retrieve live tracking info from an actual order
  * 6. verify_business_rules: Validate minimum order amount, free shipping, and seller return/exchange terms
  * 7. handoff_to_human: Alert human team for complex inquiries
  */
@@ -156,12 +157,17 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
       case 'create_order_checkout': {
         const productName = String(args.product_name || args.product_title || '').trim();
         const quantity = Math.max(1, Number(args.quantity) || 1);
-        const buyerName = String(args.buyer_name || args.customer_name || 'Cliente').trim();
+        const buyerName = String(args.buyer_name || args.customer_name || '').trim();
+        const buyerEmail = String(args.buyer_email || args.customer_email || args.email || '').trim().toLowerCase();
         const buyerPhone = String(args.buyer_phone || args.phone || '').trim();
         const buyerAddress = String(args.buyer_address || args.address || '').trim();
         const buyerZip = String(args.buyer_zip || args.zip_code || args.cap || '').trim();
-        const buyerCity = String(args.buyer_city || args.city || 'Roma').trim();
-        const buyerCountry = String(args.buyer_country || args.country || 'IT').toUpperCase().trim();
+        const buyerCity = String(args.buyer_city || args.city || '').trim();
+        const buyerCountry = String(args.buyer_country || args.country || '').toUpperCase().trim();
+
+        if (!buyerName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(buyerEmail) || !buyerAddress || !buyerCity || !/^[A-Z]{2}$/.test(buyerCountry)) {
+          return { success: false, error: 'Para crear el checkout necesito nombre, correo, dirección, ciudad y país del comprador.' };
+        }
 
         // 1. Find listing with flexible multi-word matching
         const searchWords = productName.split(/\s+/).filter((w: string) => w.length >= 2);
@@ -230,6 +236,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
         const orderNumber = `DD-${Date.now().toString().slice(-6)}`;
         const buyerAddressJson = JSON.stringify({
           name: buyerName,
+          email: buyerEmail,
           phone: buyerPhone,
           address: buyerAddress,
           zip_code: buyerZip,
@@ -288,10 +295,16 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
         }
 
         const o = orders[0];
-        let tracking = o.tracking_code;
+        const tracking = String(o.tracking_code || '').trim();
         if (!tracking) {
-          tracking = `DDIT${Date.now().toString().slice(-8)}`;
-          await pool.query("UPDATE marketplace_orders SET tracking_code = ?, status = 'in_transit' WHERE id = ?", [tracking, o.id]);
+          return {
+            found: true,
+            tracking_pending: true,
+            order_number: o.order_number,
+            status: o.status || 'pending_payment',
+            service: o.shipping_service_name || 'DoorDrop Express',
+            message: 'El pedido existe, pero todavía no tiene una guía real asignada por el transportista.'
+          };
         }
 
         return {
@@ -318,10 +331,102 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
       }
 
       case 'handoff_to_human': {
+        const requestedConversationId = Number(args.conversation_id || args.conversationId || args.local_conversation_id || 0);
+        if (!requestedConversationId) {
+          return {
+            handoff: true,
+            status: 'human_assignment_pending',
+            message: 'La solicitud fue marcada para atención humana. Falta asociarla a una conversación activa.'
+          };
+        }
+
+        const [conversationRows]: any = await pool.query(
+          'SELECT * FROM omnichannel_conversations WHERE id = ? AND user_id = ? LIMIT 1',
+          [requestedConversationId, sellerUserId]
+        );
+        if (!conversationRows.length) {
+          return { handoff: false, status: 'conversation_not_found', message: 'No se encontró la conversación activa para transferir.' };
+        }
+
+        const conversation = conversationRows[0];
+        const reason = String(args.reason || 'needs_human_support').trim().slice(0, 160);
+        const summary = String(args.summary || conversation.last_message || conversation.contact_name || '').trim().slice(0, 1200);
+        const [agentRows]: any = await pool.query(
+          "SELECT member_id, name, email FROM omnichannel_team WHERE user_id = ? AND type = 'human' AND is_active = 1 ORDER BY created_at ASC LIMIT 1",
+          [sellerUserId]
+        );
+        const agent = agentRows[0] || null;
+        const assignedAgentId = agent?.member_id || 'team-human-pending';
+        const assignedAgentName = agent?.name || 'Equipo Humano';
+
+        await pool.query(
+          `UPDATE omnichannel_conversations
+           SET assigned_agent_id = ?, assigned_agent_name = ?, assigned_agent_type = 'human', ai_active = 0, status = 'open'
+           WHERE id = ? AND user_id = ?`,
+          [assignedAgentId, assignedAgentName, requestedConversationId, sellerUserId]
+        );
+        const [messageResult]: any = await pool.query(
+          `INSERT INTO omnichannel_messages
+            (conversation_id, direction, sender_type, sender_name, text_content, status)
+           VALUES (?, 'outbound', 'system', 'Sistema DoorDrop', ?, 'read')`,
+          [requestedConversationId, `🔔 Conversación transferida a ${assignedAgentName}. Motivo: ${reason}.`]
+        );
+
+        const [ownerRows]: any = await pool.query('SELECT id, name, email, country FROM users WHERE id = ? LIMIT 1', [sellerUserId]);
+        const owner = ownerRows[0] || {};
+        const customerEmail = String(owner.email || '').trim().toLowerCase();
+        const ticketUrl = `${process.env.APP_URL || 'https://doordrop.lat'}/panel/omnichannel`;
+        const handoffEntityId = `ai-${requestedConversationId}-${messageResult.insertId}`;
+        if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
+          await sendNotificationEvent({
+            eventCode: 'omnichannel_handoff_customer',
+            entityType: 'omnichannel_handoff',
+            entityId: handoffEntityId,
+            audience: 'customer',
+            userId: sellerUserId,
+            toEmail: customerEmail,
+            recipientName: owner.name || conversation.contact_name,
+            language: owner.country || 'es',
+            variables: {
+              userName: owner.name || customerEmail,
+              ticketId: `CONV-${requestedConversationId}`,
+              ticketUrl,
+              summary,
+              statusLabel: `Asignada a ${assignedAgentName}`
+            }
+          }).catch(() => undefined);
+        }
+
+        const internalEmail = String(agent?.email || process.env.CANCELLATION_REVIEW_EMAIL || process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+        if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(internalEmail)) {
+          await sendNotificationEvent({
+            eventCode: 'omnichannel_handoff_internal',
+            entityType: 'omnichannel_handoff',
+            entityId: handoffEntityId,
+            audience: 'internal',
+            toEmail: internalEmail,
+            recipientName: assignedAgentName,
+            language: 'es',
+            variables: {
+              customerName: owner.name || conversation.contact_name || 'Cliente',
+              customerEmail: customerEmail || 'No disponible',
+              ticketId: `CONV-${requestedConversationId}`,
+              ticketUrl,
+              channel: conversation.platform || 'omnichannel',
+              reason,
+              summary
+            }
+          }).catch(() => undefined);
+        }
+
         return {
           handoff: true,
-          status: 'human_operator_alerted',
-          message: 'Ho avvisato il responsabile del negozio. Un nostro operatore ti risponderà qui a breve!'
+          status: internalEmail ? 'human_operator_alerted' : 'human_assignment_pending',
+          conversation_id: requestedConversationId,
+          assigned_agent: assignedAgentName,
+          message: internalEmail
+            ? 'La conversación fue transferida y el operador recibió el aviso.'
+            : 'La conversación fue transferida al equipo humano; queda pendiente un correo de atención configurado.'
         };
       }
 

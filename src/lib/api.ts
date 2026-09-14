@@ -31,19 +31,14 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
 }
 
 export const api = {
-  // Contrado Helix POD - Zubuy Print
-  getAdminPodStatus: () => fetchAPI('/pod/admin/status'),
-  triggerAdminPodSync: (data?: any) => fetchAPI('/pod/admin/sync', { method: 'POST', body: JSON.stringify(data || {}) }),
-  updateAdminPodSettings: (data: any) => fetchAPI('/pod/admin/settings', { method: 'PUT', body: JSON.stringify(data) }),
-  getPodProductDetail: (idOrSlug: string) => fetchAPI(`/pod/products/${encodeURIComponent(idOrSlug)}`),
-  getPodShippingQuote: (data: { listingId?: string; countryCode: string; cultureCode?: string; quantity?: number }) => fetchAPI('/pod/shipping/quote', { method: 'POST', body: JSON.stringify(data) }),
-
   getAdminSmtpConfig: () => fetchAPI('/admin/smtp/config'),
   testAdminSmtp: (data: any) => fetchAPI('/admin/smtp/test', { method: 'POST', body: JSON.stringify(data) }),
   getAdminEmailTemplates: () => fetchAPI('/admin/smtp/templates'),
   getAdminEmailTemplate: (id: string) => fetchAPI(`/admin/smtp/templates/${id}`),
   updateAdminEmailTemplate: (id: string, data: any) => fetchAPI(`/admin/smtp/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   sendAdminTemplateTest: (id: string, data: any) => fetchAPI(`/admin/smtp/templates/${id}/send-test`, { method: 'POST', body: JSON.stringify(data) }),
+  getAdminEmailNotificationEvents: () => fetchAPI('/admin/smtp/events'),
+  updateAdminEmailNotificationEvent: (eventCode: string, data: any) => fetchAPI(`/admin/smtp/events/${encodeURIComponent(eventCode)}`, { method: 'PUT', body: JSON.stringify(data) }),
   login: (data: any) => fetchAPI('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
   forgotPassword: (data: { email: string }) => fetchAPI('/auth/forgot-password', { method: 'POST', body: JSON.stringify(data) }),
   resetPassword: (data: { token: string; newPassword: string }) => fetchAPI('/auth/reset-password', { method: 'POST', body: JSON.stringify(data) }),

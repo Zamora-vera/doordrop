@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 import { pool } from '../db/connection';
 
 // Asegurar carga de .env con override prioritario
@@ -18,6 +19,29 @@ interface SendTemplatedEmailParams {
   toEmail: string;
   recipientName?: string;
   variables?: Record<string, any>;
+}
+
+export interface SendNotificationEventParams {
+  eventCode: string;
+  entityType: string;
+  entityId: string;
+  toEmail: string;
+  recipientName?: string;
+  language?: string;
+  audience?: string;
+  userId?: string | null;
+  shipmentId?: string | null;
+  providerCode?: string | null;
+  variables?: Record<string, any>;
+}
+
+export interface SendNotificationEventResult {
+  success: boolean;
+  skipped?: boolean;
+  reason?: string;
+  messageId?: string;
+  templateId?: string;
+  subject?: string;
 }
 
 let transporter: nodemailer.Transporter | null = null;
@@ -76,6 +100,49 @@ export function renderTemplateText(templateText: string, variables: Record<strin
     result = result.replace(regex, safeVal);
   }
   return result;
+}
+
+function normalizeNotificationEmail(value: any): string {
+  const email = String(value || '').trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+}
+
+function normalizeNotificationLanguage(value: any): string {
+  const raw = String(value || '').trim().toLowerCase().slice(0, 2);
+  return ['es', 'it', 'en', 'de', 'fr'].includes(raw) ? raw : 'es';
+}
+
+async function loadTemplateTranslation(templateId: string, language: string): Promise<any> {
+  const requestedLanguage = normalizeNotificationLanguage(language);
+  const [rows]: any = await pool.query(
+    `SELECT subject, preheader, body_html, body_text
+     FROM email_template_translations
+     WHERE template_id = ? AND language = ? AND is_active = 1
+     UNION
+     SELECT subject, preheader, body_html, body_text
+     FROM email_template_translations
+     WHERE template_id = ? AND language = 'es' AND is_active = 1
+     LIMIT 1`,
+    [templateId, requestedLanguage, templateId]
+  );
+
+  if (!rows || rows.length === 0) {
+    throw new Error(`Plantilla de correo '${templateId}' no encontrada.`);
+  }
+  return rows[0];
+}
+
+function templateVariables(toEmail: string, recipientName: string | undefined, variables: Record<string, any>) {
+  const appUrl = (process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '');
+  return {
+    appUrl,
+    loginUrl: `${appUrl}/auth/login`,
+    siteName: 'DoorDrop',
+    recipientName: recipientName || toEmail,
+    userName: recipientName || toEmail.split('@')[0],
+    userEmail: toEmail,
+    ...variables
+  };
 }
 
 /**
@@ -181,36 +248,10 @@ export async function sendTemplatedEmail({
   recipientName,
   variables = {}
 }: SendTemplatedEmailParams): Promise<{ success: boolean; messageId?: string }> {
-  // 1. Buscar la traducción para el idioma solicitado (o fallback a 'es')
-  const [rows]: any = await pool.query(
-    `SELECT subject, preheader, body_html, body_text 
-     FROM email_template_translations 
-     WHERE template_id = ? AND language = ? AND is_active = 1
-     UNION
-     SELECT subject, preheader, body_html, body_text 
-     FROM email_template_translations 
-     WHERE template_id = ? AND language = 'es' AND is_active = 1
-     LIMIT 1`,
-    [templateId, language, templateId]
-  );
-
-  if (!rows || rows.length === 0) {
-    throw new Error(`Plantilla de correo '${templateId}' no encontrada.`);
-  }
-
-  const tmpl = rows[0];
-
-  // Variables base obligatorias
-  const appUrl = (process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '');
-  const allVars = {
-    appUrl,
-    loginUrl: `${appUrl}/auth/login`,
-    siteName: 'DoorDrop',
-    recipientName: recipientName || toEmail,
-    userName: recipientName || toEmail.split('@')[0],
-    userEmail: toEmail,
-    ...variables
-  };
+  const safeToEmail = normalizeNotificationEmail(toEmail);
+  if (!safeToEmail) throw new Error('El destinatario del correo no es válido.');
+  const tmpl = await loadTemplateTranslation(templateId, language || 'es');
+  const allVars = templateVariables(safeToEmail, recipientName, variables);
 
   const subject = renderTemplateText(tmpl.subject, allVars, false);
   const htmlBody = renderTemplateText(tmpl.body_html, allVars, true);
@@ -225,9 +266,9 @@ export async function sendTemplatedEmail({
     sender: fromEmail,
     envelope: {
       from: fromEmail,
-      to: [toEmail]
+      to: [safeToEmail]
     },
-    to: toEmail,
+    to: safeToEmail,
     subject,
     text: textBody,
     html: htmlBody
@@ -237,6 +278,125 @@ export async function sendTemplatedEmail({
     success: true,
     messageId: info.messageId
   };
+}
+
+/**
+ * Resuelve un evento administrable, aplica su plantilla y registra el resultado.
+ * La clave entityType/entityId/audience evita duplicados fuera del módulo de envíos.
+ */
+export async function sendNotificationEvent(params: SendNotificationEventParams): Promise<SendNotificationEventResult> {
+  const eventCode = String(params.eventCode || '').trim();
+  const entityType = String(params.entityType || '').trim();
+  const entityId = String(params.entityId || '').trim();
+  const safeToEmail = normalizeNotificationEmail(params.toEmail);
+  if (!eventCode || !entityType || !entityId) {
+    return { success: false, skipped: true, reason: 'invalid_event_identity' };
+  }
+  if (!safeToEmail) {
+    return { success: false, skipped: true, reason: 'no_recipient' };
+  }
+
+  const [eventRows]: any = await pool.query(
+    `SELECT event_code, template_id, audience, is_enabled
+     FROM email_notification_events
+     WHERE event_code = ?
+     LIMIT 1`,
+    [eventCode]
+  );
+  const event = eventRows?.[0];
+  if (!event) return { success: false, skipped: true, reason: 'event_not_configured' };
+  if (!event.is_enabled) return { success: false, skipped: true, reason: 'event_disabled', templateId: event.template_id };
+
+  const audience = String(params.audience || event.audience || 'customer');
+  const [existingRows]: any = await pool.query(
+    `SELECT id, status, message_id, subject, template_id
+     FROM email_logs
+     WHERE entity_type = ? AND entity_id = ? AND event_code = ?
+       AND audience = ? AND to_email = ?
+     LIMIT 1`,
+    [entityType, entityId, eventCode, audience, safeToEmail]
+  );
+  const existingLog = existingRows?.[0];
+  if (existingLog?.status === 'sent') {
+    return {
+      success: false,
+      skipped: true,
+      reason: 'already_sent',
+      messageId: existingLog.message_id || undefined,
+      templateId: existingLog.template_id || event.template_id,
+      subject: existingLog.subject || undefined
+    };
+  }
+  if (existingLog?.status === 'pending') {
+    return { success: false, skipped: true, reason: 'send_in_progress', templateId: existingLog.template_id || event.template_id, subject: existingLog.subject || undefined };
+  }
+
+  const language = normalizeNotificationLanguage(params.language || 'es');
+  const tmpl = await loadTemplateTranslation(event.template_id, language);
+  const allVars = templateVariables(safeToEmail, params.recipientName, params.variables || {});
+  const subject = renderTemplateText(tmpl.subject, allVars, false);
+  // email_logs.id es CHAR(36): conserva el UUID completo para no truncar la inserción.
+  const logId = existingLog?.id || crypto.randomUUID();
+  const logPayload = JSON.stringify({ eventCode, entityType, entityId, audience });
+
+  if (existingLog) {
+    await pool.query(
+      `UPDATE email_logs
+       SET shipment_id = ?, user_id = ?, subject = ?, language = ?, status = 'pending',
+           provider_code = ?, message_id = NULL, error_message = NULL, payload_json = ?, sent_at = NULL,
+           template_id = ?
+       WHERE id = ?`,
+      [params.shipmentId || null, params.userId || null, subject, language, params.providerCode || null, logPayload, event.template_id, logId]
+    );
+  } else {
+    await pool.query(
+      `INSERT INTO email_logs
+        (id, shipment_id, user_id, to_email, subject, language, event_code, status,
+         provider_code, message_id, error_message, payload_json, sent_at,
+         entity_type, entity_id, audience, template_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, ?, NULL, ?, ?, ?, ?)`,
+      [
+        logId,
+        params.shipmentId || null,
+        params.userId || null,
+        safeToEmail,
+        subject,
+        language,
+        eventCode,
+        params.providerCode || null,
+        logPayload,
+        entityType,
+        entityId,
+        audience,
+        event.template_id
+      ]
+    );
+  }
+
+  try {
+    const sent = await sendTemplatedEmail({
+      templateId: event.template_id,
+      language,
+      toEmail: safeToEmail,
+      recipientName: params.recipientName,
+      variables: params.variables || {}
+    });
+    await pool.query(
+      `UPDATE email_logs
+       SET status = 'sent', message_id = ?, error_message = NULL, sent_at = NOW()
+       WHERE id = ?`,
+      [sent.messageId || null, logId]
+    );
+    return { success: true, messageId: sent.messageId, templateId: event.template_id, subject };
+  } catch (error: any) {
+    await pool.query(
+      `UPDATE email_logs
+       SET status = 'failed', error_message = ?
+       WHERE id = ?`,
+      [String(error?.message || 'No se pudo enviar la notificación.').slice(0, 900), logId]
+    ).catch(() => null);
+    return { success: false, reason: 'send_failed', templateId: event.template_id, subject };
+  }
 }
 
 /**

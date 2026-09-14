@@ -9,6 +9,7 @@ const CATEGORIES = [
   { id: 'shipments', label: 'Envíos & Logística', icon: Mail },
   { id: 'billing', label: 'Billetera & Facturación', icon: Mail },
   { id: 'omnichannel', label: 'Omnicanal & Soporte', icon: Mail },
+  { id: 'marketplace', label: 'Marketplace & Ventas', icon: Mail },
 ];
 
 const LANGUAGES = [
@@ -21,6 +22,9 @@ const LANGUAGES = [
 
 export default function EmailTemplates() {
   const [templates, setTemplates] = useState<any[]>([]);
+  const [events, setEvents] = useState<any[]>([]);
+  const [eventsError, setEventsError] = useState('');
+  const [savingEvent, setSavingEvent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedTemplate, setSelectedTemplate] = useState<any>(null);
@@ -47,7 +51,10 @@ export default function EmailTemplates() {
   const fetchTemplates = async () => {
     setLoading(true);
     try {
-      const res = await api.getAdminEmailTemplates();
+      const [res, eventRes] = await Promise.all([
+        api.getAdminEmailTemplates(),
+        api.getAdminEmailNotificationEvents()
+      ]);
       if (res && res.success) {
         setTemplates(res.templates || []);
         if (res.templates && res.templates.length > 0) {
@@ -55,8 +62,13 @@ export default function EmailTemplates() {
           loadTemplateDetail(firstId);
         }
       }
+      if (eventRes && eventRes.success) {
+        setEvents(eventRes.events || []);
+        setEventsError('');
+      }
     } catch (err) {
       console.error('Error fetching email templates:', err);
+      setEventsError('No se pudieron cargar las decisiones de entrega. Verifica que la migración V30 esté aplicada.');
     } finally {
       setLoading(false);
     }
@@ -168,6 +180,24 @@ export default function EmailTemplates() {
     }
   };
 
+  const handleEventFieldChange = (eventCode: string, field: string, value: any) => {
+    setEvents((current) => current.map((event) => event.eventCode === eventCode ? { ...event, [field]: value } : event));
+  };
+
+  const handleSaveEvent = async (event: any) => {
+    setSavingEvent(event.eventCode);
+    try {
+      await api.updateAdminEmailNotificationEvent(event.eventCode, {
+        templateId: event.templateId,
+        isEnabled: Boolean(event.isEnabled)
+      });
+    } catch (err: any) {
+      alert(err.message || 'No se pudo guardar la automatización.');
+    } finally {
+      setSavingEvent(null);
+    }
+  };
+
   const copyVariable = (varName: string) => {
     navigator.clipboard.writeText(`{{${varName}}}`);
     setCopiedVar(varName);
@@ -225,6 +255,75 @@ export default function EmailTemplates() {
           </button>
         ))}
       </div>
+
+      {/* Control de automatizaciones reales */}
+      <section className="mb-8 rounded-3xl bg-slate-900 text-white p-5 sm:p-7 shadow-xl border border-slate-800">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3 mb-5">
+          <div>
+            <div className="flex items-center gap-2 text-blue-300 text-xs font-black uppercase tracking-wider mb-2">
+              <Layers className="w-4 h-4" /> Control de eventos del backend
+            </div>
+            <h2 className="text-xl sm:text-2xl font-black">Decide qué se envía y con qué plantilla</h2>
+            <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-3xl">
+              Estos eventos se activan únicamente cuando ocurre una operación real. Puedes desactivar un aviso o cambiar su plantilla sin tocar el código.
+            </p>
+          </div>
+          <div className="text-xs text-slate-400">{events.length} eventos configurados</div>
+        </div>
+        {eventsError ? (
+          <div className="rounded-2xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-xs text-amber-200">{eventsError}</div>
+        ) : events.length === 0 ? (
+          <div className="rounded-2xl border border-slate-700 bg-slate-800/70 px-4 py-6 text-center text-sm text-slate-400">No hay eventos configurados.</div>
+        ) : (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            {events.map((event) => (
+              <div key={event.eventCode} className="rounded-2xl bg-slate-800/90 border border-slate-700 p-4">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <span className="font-black text-sm truncate">{event.label}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${event.isEnabled ? 'bg-emerald-400/15 text-emerald-300' : 'bg-slate-700 text-slate-400'}`}>
+                        {event.isEnabled ? 'Activo' : 'Pausado'}
+                      </span>
+                    </div>
+                    <code className="text-[10px] text-blue-300 break-all">{event.eventCode}</code>
+                  </div>
+                  <span className="shrink-0 text-[10px] uppercase font-black tracking-wide text-slate-400">{event.audience}</span>
+                </div>
+                <p className="text-xs text-slate-400 min-h-8 mb-3">{event.description}</p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <select
+                    value={event.templateId}
+                    onChange={(e) => handleEventFieldChange(event.eventCode, 'templateId', e.target.value)}
+                    className="min-w-0 flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-600 text-xs text-white outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {templates.filter((template) => template.category === event.category).map((template) => <option key={template.id} value={template.id}>{template.name} · {template.category}</option>)}
+                  </select>
+                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-600 text-xs font-bold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(event.isEnabled)}
+                      onChange={(e) => handleEventFieldChange(event.eventCode, 'isEnabled', e.target.checked)}
+                      className="accent-blue-500"
+                    />
+                    Enviar
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveEvent(event)}
+                    disabled={savingEvent === event.eventCode}
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-500 hover:bg-blue-400 text-white text-xs font-black disabled:opacity-60"
+                  >
+                    {savingEvent === event.eventCode ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    Guardar
+                  </button>
+                </div>
+                <div className="mt-2 text-[10px] text-slate-500">Enviados: {event.sentCount} · Fallidos: {event.failedCount}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Main Layout: Master - Detail */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -432,22 +531,15 @@ export default function EmailTemplates() {
                 {previewMode === 'preview' ? (
                   <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden bg-white">
                     <div className="p-3 bg-slate-100 border-b border-slate-200 text-xs text-slate-500 flex items-center justify-between">
-                      <span>Simulación de Cliente de Correo</span>
+                      <span>Vista estructural de la plantilla</span>
                       <span className="font-mono text-[11px] text-slate-400">info@doordrop.lat</span>
                     </div>
+                    <div className="px-6 pt-4 text-[11px] text-slate-400">Las variables se completan con datos de la operación real al momento del envío.</div>
                     <div
                       className="p-6 max-h-[450px] overflow-y-auto text-slate-900"
                       dangerouslySetInnerHTML={{
                         __html: bodyHtml
-                          ? bodyHtml
-                              .replace(/{{customerName}}/g, 'Juan Pérez')
-                              .replace(/{{loginUrl}}/g, 'https://doordrop.lat/login')
-                              .replace(/{{senderName}}/g, 'DoorDrop')
-                              .replace(/{{trackingCode}}/g, 'DD-2026-IT8892')
-                              .replace(/{{carrierName}}/g, 'Poste Italiane')
-                              .replace(/{{destination}}/g, 'Milano, Italia')
-                              .replace(/{{amount}}/g, '50.00 €')
-                              .replace(/{{newBalance}}/g, '125.50 €')
+                          ? bodyHtml.replace(/href=(['"])\{\{[^}]+\}\}\1/gi, 'href="#"')
                           : '<div class="text-center text-slate-400 py-12">Plantilla vacía para este idioma</div>'
                       }}
                     />
@@ -483,7 +575,7 @@ export default function EmailTemplates() {
                   <Send className="w-4 h-4 text-blue-600" /> Probar plantilla con datos reales
                 </h3>
                 <p className="text-xs text-slate-500 mb-4">
-                  Envía esta plantilla ({activeLang.toUpperCase()}) con variables simuladas al correo indicado usando el relay de DoorDrop.
+                  Envía esta plantilla ({activeLang.toUpperCase()}) al correo indicado usando el relay de DoorDrop. Los campos no indicados permanecerán como variables.
                 </p>
                 <form onSubmit={handleSendTest} className="flex flex-col sm:flex-row gap-3">
                   <input

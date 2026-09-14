@@ -3,6 +3,7 @@ import { Router, Request, Response } from 'express';
 import https from 'https';
 import crypto from 'crypto';
 import { handleAIToolCall } from './ai_sales_tools';
+import { sendNotificationEvent } from '../services/emailService';
 
 export function setupOmnichannelRoutes(app: any, options: {
   pool: any;
@@ -12,7 +13,7 @@ export function setupOmnichannelRoutes(app: any, options: {
 }) {
   const router = Router();
   const adminRouter = Router();
-  const { pool, authMiddleware, requireSuperAdmin } = options;
+  const { pool, authMiddleware, requireSuperAdmin, UserRepo } = options;
 
   let cachedApiKey = 'sk_895a0c3cf6da498f854c000ef72860d0ca5f5c313464055e44e07454a50cfa7a';
   let cachedWebhookSecret = 'whsec_dd_omni_895a0c3cf6da498f854c000ef72860d0';
@@ -723,6 +724,28 @@ export function setupOmnichannelRoutes(app: any, options: {
         [text || '[Archivo adjunto]', convId]
       );
 
+      const customer = UserRepo ? await UserRepo.getById(userId).catch(() => null) : null;
+      const customerEmail = String(customer?.email || '').trim().toLowerCase();
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
+        await sendNotificationEvent({
+          eventCode: 'ticket_reply_customer',
+          entityType: 'omnichannel_message',
+          entityId: String(insertRes.insertId),
+          audience: 'customer',
+          userId,
+          toEmail: customerEmail,
+          recipientName: customer?.name || conv.contact_name,
+          language: customer?.language || 'es',
+          variables: {
+            userName: customer?.name || customerEmail,
+            ticketId: `CONV-${convId}`,
+            ticketUrl: `${process.env.APP_URL || 'https://doordrop.lat'}/panel/omnichannel`,
+            agentName: 'Agente Humano',
+            replyPreview: String(text || '[Archivo adjunto]').replace(/\s+/g, ' ').trim().slice(0, 1200)
+          }
+        }).catch(() => undefined);
+      }
+
       res.json({
         success: true,
         message_id: insertRes.insertId,
@@ -854,6 +877,13 @@ export function setupOmnichannelRoutes(app: any, options: {
       const isAi = target_agent_type === 'ai' || target_agent_id.includes('-ai-');
       const agentName = target_agent_name || (isAi ? 'Sofia AI' : 'Agente Humano');
 
+      const [conversationRows]: any = await pool.query(
+        "SELECT * FROM omnichannel_conversations WHERE id = ? AND user_id = ? LIMIT 1",
+        [convId, userId]
+      );
+      if (!conversationRows.length) return res.status(404).json({ error: 'Conversación no encontrada.' });
+      const conversation = conversationRows[0];
+
       await pool.query(
         `UPDATE omnichannel_conversations 
          SET assigned_agent_id = ?,
@@ -875,6 +905,58 @@ export function setupOmnichannelRoutes(app: any, options: {
          VALUES (?, 'outbound', 'system', 'Sistema DoorDrop', ?, 'read')`,
         [convId, alertText]
       );
+
+      const customer = UserRepo ? await UserRepo.getById(userId).catch(() => null) : null;
+      const customerEmail = String(customer?.email || '').trim().toLowerCase();
+      const ticketUrl = `${process.env.APP_URL || 'https://doordrop.lat'}/panel/omnichannel`;
+      const eventId = `conversation-${convId}-${isAi ? 'ai' : 'human'}-${Date.now()}`;
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
+        await sendNotificationEvent({
+          eventCode: isAi ? 'omnichannel_handoff_customer' : 'omnichannel_handoff_customer',
+          entityType: 'omnichannel_conversation',
+          entityId: eventId,
+          audience: 'customer',
+          userId,
+          toEmail: customerEmail,
+          recipientName: customer?.name || conversation.contact_name,
+          language: customer?.language || 'es',
+          variables: {
+            userName: customer?.name || customerEmail,
+            ticketId: `CONV-${convId}`,
+            ticketUrl,
+            summary: String(conversation.last_message || conversation.contact_name || '').slice(0, 1200),
+            statusLabel: isAi ? 'Asistencia AI activa' : `Asignada a ${agentName}`
+          }
+        }).catch(() => undefined);
+      }
+
+      if (!isAi) {
+        const [agentRows]: any = await pool.query(
+          "SELECT email FROM omnichannel_team WHERE user_id = ? AND is_active = 1 AND (member_id = ? OR id = ?) LIMIT 1",
+          [userId, target_agent_id, target_agent_id]
+        );
+        const internalEmail = String(agentRows[0]?.email || '').trim().toLowerCase();
+        if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(internalEmail)) {
+          await sendNotificationEvent({
+            eventCode: 'omnichannel_handoff_internal',
+            entityType: 'omnichannel_conversation',
+            entityId: eventId,
+            audience: 'internal',
+            toEmail: internalEmail,
+            recipientName: agentName,
+            language: 'es',
+            variables: {
+              customerName: customer?.name || conversation.contact_name || 'Cliente',
+              customerEmail: customerEmail || 'No disponible',
+              ticketId: `CONV-${convId}`,
+              ticketUrl,
+              channel: conversation.platform || 'omnichannel',
+              reason: 'Transferencia solicitada desde el panel',
+              summary: String(conversation.last_message || conversation.contact_name || '').slice(0, 1200)
+            }
+          }).catch(() => undefined);
+        }
+      }
 
       res.json({
         success: true,

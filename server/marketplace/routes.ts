@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { MarketplaceRepo } from './repo';
+import { sendNotificationEvent } from '../services/emailService';
 
 export function setupMarketplaceRoutes(app: any, options: {
   pool: any;
@@ -599,6 +600,30 @@ export function setupMarketplaceRoutes(app: any, options: {
         message
       });
 
+      const listing = await MarketplaceRepo.getListingById(listingId);
+      const sellerUser = listing ? await UserRepo.getById(listing.seller_id).catch(() => null) : null;
+      const buyerUser = await UserRepo.getById(req.user.id).catch(() => req.user);
+      const offerUrl = `${(process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '')}/panel/marketplace?tab=offers`;
+      await sendNotificationEvent({
+        eventCode: 'marketplace_offer_received',
+        entityType: 'marketplace_offer',
+        entityId: String(offer.id),
+        userId: listing?.seller_id || null,
+        audience: 'seller',
+        toEmail: sellerUser?.email || '',
+        recipientName: sellerUser?.name || '',
+        language: sellerUser?.language || sellerUser?.country || 'es',
+        variables: {
+          userName: sellerUser?.name || sellerUser?.email || '',
+          listingTitle: listing?.title || '',
+          offerAmount: (Number(offer.amount_minor || amountMinor) / 100).toFixed(2),
+          currency: offer.currency || listing?.currency || 'EUR',
+          offerStatus: 'Pendiente',
+          offerUrl,
+          buyerName: buyerUser?.name || buyerUser?.email || ''
+        }
+      }).catch(() => null);
+
       res.json({ success: true, offer });
     } catch (error: any) {
       res.status(500).json({ error: error.message || 'No se pudo enviar la oferta.' });
@@ -609,7 +634,29 @@ export function setupMarketplaceRoutes(app: any, options: {
     try {
       const { status, counterAmount } = req.body;
       const counterMinor = counterAmount ? Math.round(Number(counterAmount) * 100) : undefined;
+      const previousOffer = (await MarketplaceRepo.listOffers(req.user.id)).find((item: any) => String(item.id) === String(req.params.id));
       await MarketplaceRepo.respondOffer(req.params.id, req.user.id, status, counterMinor);
+      const buyerUser = previousOffer ? await UserRepo.getById(previousOffer.buyer_id).catch(() => null) : null;
+      const offerUrl = `${(process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '')}/panel/marketplace?tab=offers`;
+      await sendNotificationEvent({
+        eventCode: 'marketplace_offer_updated',
+        entityType: 'marketplace_offer',
+        entityId: String(req.params.id),
+        userId: previousOffer?.buyer_id || null,
+        audience: 'buyer',
+        toEmail: buyerUser?.email || '',
+        recipientName: buyerUser?.name || '',
+        language: buyerUser?.language || buyerUser?.country || 'es',
+        variables: {
+          userName: buyerUser?.name || buyerUser?.email || '',
+          listingTitle: previousOffer?.listing_title || '',
+          offerAmount: (Number(counterMinor || previousOffer?.amount_minor || 0) / 100).toFixed(2),
+          currency: previousOffer?.currency || 'EUR',
+          offerStatus: status === 'accepted' ? 'Aceptada' : status === 'rejected' ? 'Rechazada' : 'Con contraoferta',
+          offerUrl,
+          buyerName: buyerUser?.name || buyerUser?.email || ''
+        }
+      }).catch(() => null);
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message || 'No se pudo procesar la respuesta a la oferta.' });
@@ -707,6 +754,57 @@ export function setupMarketplaceRoutes(app: any, options: {
           'system'
         );
       } catch {}
+
+      const buyerUser = await UserRepo.getById(req.user.id).catch(() => req.user);
+      const sellerUser = await UserRepo.getById(listing.seller_id).catch(() => null);
+      const appUrl = (process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '');
+      const orderUrl = `${appUrl}/panel/marketplace?tab=orders`;
+      const orderTotal = (Number(order.total_amount_minor || totalAmountMinor) / 100).toFixed(2);
+      const buyerName = buyerUser?.name || buyerAddress?.fullName || buyerUser?.email || '';
+      const sellerName = sellerProfile?.display_name || sellerUser?.name || sellerUser?.email || '';
+
+      await Promise.all([
+        sendNotificationEvent({
+          eventCode: 'marketplace_order_paid_buyer',
+          entityType: 'marketplace_order',
+          entityId: String(order.id),
+          userId: req.user.id,
+          audience: 'buyer',
+          toEmail: buyerUser?.email || req.user.email || '',
+          recipientName: buyerName,
+          language: buyerUser?.language || buyerUser?.country || 'es',
+          variables: {
+            userName: buyerName,
+            orderNumber: order.order_number,
+            listingTitle: listing.title,
+            totalAmount: orderTotal,
+            currency: listing.currency,
+            orderStatus: 'Pagado',
+            orderUrl,
+            sellerName
+          }
+        }).catch(() => null),
+        sendNotificationEvent({
+          eventCode: 'marketplace_sale_received',
+          entityType: 'marketplace_order',
+          entityId: String(order.id),
+          userId: listing.seller_id,
+          audience: 'seller',
+          toEmail: sellerUser?.email || '',
+          recipientName: sellerName,
+          language: sellerUser?.language || sellerUser?.country || 'es',
+          variables: {
+            sellerName,
+            orderNumber: order.order_number,
+            listingTitle: listing.title,
+            totalAmount: orderTotal,
+            currency: listing.currency,
+            buyerName,
+            orderUrl,
+            shippingAddressUrl: orderUrl
+          }
+        }).catch(() => null)
+      ]);
 
       res.json({ success: true, order });
     } catch (error: any) {

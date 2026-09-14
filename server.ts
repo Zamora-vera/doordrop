@@ -1,5 +1,3 @@
-import { podRouter, handleContradoWebhook } from './server/marketplace/podRoutes';
-import { PodSyncWorker } from './server/marketplace/podSyncWorker';
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
@@ -43,7 +41,7 @@ import {
 } from './server/db/repos';
 import { getDocBundle, docsToMarkdown, docsToPdfBuffer, getOpenApiSpec, getOpenAiToolSchemas } from './server/docs/apiDocs';
 import { swaggerUiHtml } from './server/docs/swaggerUi';
-import { sendPasswordResetEmail, sendTemplatedEmail, testSmtpConnection, renderTemplateText } from './server/services/emailService';
+import { sendPasswordResetEmail, sendTemplatedEmail, sendNotificationEvent, testSmtpConnection, renderTemplateText } from './server/services/emailService';
 
 
 const app = express();
@@ -2890,6 +2888,35 @@ function shipmentRecipientEmail(shipment: any, user: any) {
   return isValidEmailForProvider(recipient?.email) || isValidEmailForProvider(user?.email) || '';
 }
 
+function shipmentNotificationPart(shipment: any, key: 'sender_json' | 'recipient_json') {
+  const raw = shipment?.[key];
+  return typeof raw === 'string' ? parseJsonSafe(raw) : (raw || {});
+}
+
+function shipmentNotificationVariables(shipment: any, user: any, language: string, statusCode: string, statusLabel: string, description = '') {
+  const sender = shipmentNotificationPart(shipment, 'sender_json');
+  const recipient = shipmentNotificationPart(shipment, 'recipient_json');
+  const trackingCode = shipment?.tracking_code || shipment?.provider_tracking_code || shipment?.provider_shipment_code || shipment?.id || '';
+  const baseUrl = (process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '');
+  return {
+    customerName: user?.name || user?.email || 'Cliente',
+    trackingCode,
+    statusTitle: publicStatusTitle(statusCode, language) || statusLabel || 'Actualización de envío',
+    statusLabel: statusLabel || statusCode,
+    trackingUrl: makeTrackingUrl(trackingCode, language),
+    carrierName: shipment?.provider_code || 'DoorDrop',
+    originCity: sender?.city || sender?.town || '',
+    destinationCity: recipient?.city || recipient?.town || '',
+    issueTitle: statusLabel || 'Incidencia de envío',
+    issueDescription: description || statusLabel || 'El envío necesita atención.',
+    supportUrl: `${baseUrl}/panel/tickets`,
+    ticketUrl: `${baseUrl}/panel/tickets`,
+    walletUrl: `${baseUrl}/panel/billing`,
+    userName: user?.name || user?.email || '',
+    userEmail: user?.email || ''
+  };
+}
+
 async function logEmail(params: any) {
   try {
     const id = params.id || generateId('eml_');
@@ -2910,6 +2937,36 @@ function brevoApiKey() {
 }
 
 async function sendShipmentStatusEmail(shipment: any, statusCode: string, statusLabel: string, description?: string) {
+  const templateUser = await getShipmentCustomer(shipment);
+  const templateRecipient = shipmentRecipientEmail(shipment, templateUser);
+  const templateLanguage = detectCustomerEmailLanguage(templateUser);
+  const statusEventMap: Record<string, string> = {
+    pending_provider: 'shipment_pending_provider',
+    pending_label: 'shipment_pending_label',
+    label_ready: 'shipment_label_ready',
+    tramitado: 'shipment_tramitado',
+    en_transito: 'shipment_en_transito',
+    en_reparto: 'shipment_en_reparto',
+    entregado: 'shipment_entregado',
+    incidencia: 'shipment_incidencia',
+    devuelto: 'shipment_devuelto',
+    cancelado: 'shipment_cancelado'
+  };
+  const templatedStatusResult = await sendNotificationEvent({
+    eventCode: statusEventMap[statusCode] || 'shipment_status_updated',
+    entityType: 'shipment',
+    entityId: String(shipment?.id || ''),
+    shipmentId: shipment?.id || null,
+    userId: shipment?.user_id || null,
+    providerCode: shipment?.provider_code || null,
+    audience: 'customer',
+    toEmail: templateRecipient,
+    recipientName: templateUser?.name,
+    language: templateLanguage,
+    variables: shipmentNotificationVariables(shipment, templateUser, templateLanguage, statusCode, statusLabel, description)
+  });
+  return { sent: templatedStatusResult.success, messageId: templatedStatusResult.messageId, reason: templatedStatusResult.reason, templateId: templatedStatusResult.templateId };
+
   const apiKey = brevoApiKey();
   if (!apiKey) return { sent: false, reason: 'email_not_configured' };
   const user = await getShipmentCustomer(shipment);
@@ -2997,6 +3054,25 @@ function detectCustomerEmailLanguage(user: any) {
 }
 
 async function sendShipmentCreatedEmail(shipment: any) {
+  const templateUser = await getShipmentCustomer(shipment);
+  const templateRecipient = shipmentRecipientEmail(shipment, templateUser);
+  const templateLanguage = detectCustomerEmailLanguage(templateUser);
+  const hasLabel = Boolean(shipment?.label_url || shipment?.label_base64);
+  const templatedCreatedResult = await sendNotificationEvent({
+    eventCode: hasLabel ? 'shipment_label_ready' : 'shipment_received',
+    entityType: 'shipment',
+    entityId: String(shipment?.id || ''),
+    shipmentId: shipment?.id || null,
+    userId: shipment?.user_id || null,
+    providerCode: shipment?.provider_code || null,
+    audience: 'customer',
+    toEmail: templateRecipient,
+    recipientName: templateUser?.name,
+    language: templateLanguage,
+    variables: shipmentNotificationVariables(shipment, templateUser, templateLanguage, hasLabel ? 'label_ready' : 'shipment_created', hasLabel ? 'Etiqueta lista' : 'Envío recibido')
+  });
+  return { sent: templatedCreatedResult.success, messageId: templatedCreatedResult.messageId, reason: templatedCreatedResult.reason, templateId: templatedCreatedResult.templateId };
+
   const apiKey = brevoApiKey();
   if (!apiKey) return { sent: false, reason: 'email_not_configured' };
   const user = await getShipmentCustomer(shipment);
@@ -3143,6 +3219,49 @@ const CANCELLATION_EMAIL_COPY: any = {
 };
 
 async function sendCancellationEmail(shipment: any, cancellation: any, eventCode: string, options: any = {}) {
+  const cancellationUser = await getShipmentCustomer(shipment);
+  const cancellationLanguage = normalizeMailLanguage(options.lang || detectCustomerEmailLanguage(cancellationUser));
+  const isInternalNotification = eventCode === 'cancellation_request_internal';
+  const internalRecipient = isInternalNotification
+    ? isValidEmailForProvider(process.env.CANCELLATION_REVIEW_EMAIL) || isValidEmailForProvider(process.env.ADMIN_EMAIL) || ''
+    : '';
+  const cancellationRecipient = isInternalNotification ? internalRecipient : isValidEmailForProvider(cancellationUser?.email);
+  const cancellationTracking = shipment?.tracking_code || shipment?.provider_tracking_code || shipment?.provider_shipment_code || shipment?.id || '';
+  const baseUrl = (process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '');
+  const cancellationTitle = eventCode === 'cancellation_approved_refunded'
+    ? 'Reembolso aprobado'
+    : eventCode === 'cancellation_rejected'
+      ? 'Solicitud revisada'
+      : eventCode === 'cancellation_request_internal'
+        ? 'Nueva solicitud de cancelación'
+        : 'Solicitud de cancelación recibida';
+  const templatedCancellationResult = await sendNotificationEvent({
+    eventCode,
+    entityType: 'shipment_cancellation',
+    entityId: String(cancellation?.id || shipment?.id || ''),
+    shipmentId: shipment?.id || null,
+    userId: cancellation?.user_id || shipment?.user_id || null,
+    providerCode: shipment?.provider_code || null,
+    audience: isInternalNotification ? 'internal' : 'customer',
+    toEmail: cancellationRecipient,
+    recipientName: isInternalNotification ? 'Operaciones DoorDrop' : cancellationUser?.name,
+    language: cancellationLanguage,
+    variables: {
+      userName: cancellationUser?.name || cancellationUser?.email || '',
+      customerName: cancellationUser?.name || cancellationUser?.email || '',
+      customerEmail: cancellationUser?.email || '',
+      trackingCode: cancellationTracking,
+      statusTitle: cancellationTitle,
+      statusLabel: eventCode === 'cancellation_approved_refunded' ? 'Reembolso acreditado' : eventCode === 'cancellation_rejected' ? 'Rechazada' : 'Pendiente de revisión',
+      amount: Number(cancellation?.amount || 0).toFixed(2),
+      currency: String(cancellation?.currency || 'EUR').toUpperCase(),
+      reason: String(cancellation?.reason || options.adminNote || 'Solicitud del cliente').slice(0, 900),
+      ticketUrl: `${baseUrl}/panel/tickets`,
+      walletUrl: `${baseUrl}/panel/billing`
+    }
+  });
+  return { sent: templatedCancellationResult.success, messageId: templatedCancellationResult.messageId, reason: templatedCancellationResult.reason, templateId: templatedCancellationResult.templateId };
+
   const apiKey = brevoApiKey();
   if (!apiKey) return { sent: false, reason: 'email_not_configured' };
 
@@ -5724,6 +5843,32 @@ app.post('/api/auth/register', async (req, res) => {
 
     await UserRepo.create(newUser);
 
+    const registrationLanguage = String(country || '').toUpperCase() === 'IT'
+      ? 'it'
+      : String(country || '').toUpperCase() === 'DE'
+        ? 'de'
+        : String(country || '').toUpperCase() === 'FR'
+          ? 'fr'
+          : String(country || '').toUpperCase() === 'US' || String(country || '').toUpperCase() === 'GB'
+            ? 'en'
+            : 'es';
+    await sendNotificationEvent({
+      eventCode: 'user_registered',
+      entityType: 'user',
+      entityId: userId,
+      userId,
+      audience: 'customer',
+      toEmail: newUser.email,
+      recipientName: newUser.name,
+      language: registrationLanguage,
+      variables: {
+        userName: newUser.name,
+        userEmail: newUser.email
+      }
+    }).catch((mailError: any) => {
+      console.warn('[auth/register] La cuenta se creó, pero el correo de bienvenida no se pudo enviar:', mailError?.message || 'error de correo');
+    });
+
     if (storeType && storeType !== 'none' && storeType !== 'skip') {
       await StoreRepo.create({
         id: generateId('store_'),
@@ -6083,6 +6228,65 @@ app.get('/api/admin/smtp/templates', authMiddleware, requireSuperAdmin, async (r
     res.json({ success: true, templates: result });
   } catch (err: any) {
     res.status(500).json({ error: 'Error al listar plantillas de correo.' });
+  }
+});
+
+// 3.1. Catálogo de eventos reales y decisiones de entrega (solo super_admin)
+app.get('/api/admin/smtp/events', authMiddleware, requireSuperAdmin, async (_req: any, res: any) => {
+  try {
+    const [rows]: any = await pool.query(
+      `SELECT
+         e.event_code AS eventCode,
+         e.template_id AS templateId,
+         e.category,
+         e.label,
+         e.description,
+         e.audience,
+         e.is_enabled AS isEnabled,
+         t.name AS templateName,
+         COALESCE(SUM(CASE WHEN l.status = 'sent' THEN 1 ELSE 0 END), 0) AS sentCount,
+         COALESCE(SUM(CASE WHEN l.status = 'failed' THEN 1 ELSE 0 END), 0) AS failedCount
+       FROM email_notification_events e
+       INNER JOIN email_templates t ON t.id = e.template_id
+       LEFT JOIN email_logs l ON l.event_code = e.event_code
+       GROUP BY e.event_code, e.template_id, e.category, e.label, e.description, e.audience, e.is_enabled, t.name
+       ORDER BY e.category, e.label`
+    );
+    res.json({ success: true, events: rows.map((row: any) => ({
+      ...row,
+      isEnabled: Boolean(row.isEnabled),
+      sentCount: Number(row.sentCount || 0),
+      failedCount: Number(row.failedCount || 0)
+    })) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Error al listar las automatizaciones de correo.' });
+  }
+});
+
+app.put('/api/admin/smtp/events/:eventCode', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    const eventCode = String(req.params.eventCode || '').trim();
+    const templateId = String(req.body?.templateId || '').trim();
+    const hasEnabled = Object.prototype.hasOwnProperty.call(req.body || {}, 'isEnabled');
+    if (!eventCode || !templateId || (hasEnabled && typeof req.body.isEnabled !== 'boolean')) {
+      return res.status(400).json({ error: 'Evento, plantilla y estado válido son obligatorios.' });
+    }
+
+    const [templateRows]: any = await pool.query('SELECT id FROM email_templates WHERE id = ?', [templateId]);
+    if (!templateRows.length) return res.status(404).json({ error: 'La plantilla seleccionada no existe.' });
+
+    const [eventRows]: any = await pool.query('SELECT event_code FROM email_notification_events WHERE event_code = ?', [eventCode]);
+    if (!eventRows.length) return res.status(404).json({ error: 'El evento no existe.' });
+
+    if (hasEnabled) {
+      await pool.query('UPDATE email_notification_events SET template_id = ?, is_enabled = ?, updated_at = NOW() WHERE event_code = ?', [templateId, req.body.isEnabled ? 1 : 0, eventCode]);
+    } else {
+      await pool.query('UPDATE email_notification_events SET template_id = ?, updated_at = NOW() WHERE event_code = ?', [templateId, eventCode]);
+    }
+    const [updated]: any = await pool.query('SELECT event_code AS eventCode, template_id AS templateId, is_enabled AS isEnabled FROM email_notification_events WHERE event_code = ?', [eventCode]);
+    res.json({ success: true, event: { ...updated[0], isEnabled: Boolean(updated[0]?.isEnabled) } });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Error al guardar la automatización de correo.' });
   }
 });
 
@@ -10996,6 +11200,7 @@ app.post('/api/webhooks/polar', async (req: any, res) => {
       eventType === 'order.paid' ||
       (eventType === 'checkout.updated' && String(data.status || '').toLowerCase() === 'succeeded');
 
+    let walletNotification: any = null;
     if (isPaidEvent && purpose === 'wallet_topup' && topupId) {
       const conn = await pool.getConnection();
       try {
@@ -11024,12 +11229,25 @@ app.post('/api/webhooks/polar', async (req: any, res) => {
             [amount, topup.user_id]
           );
 
+          const [balanceRows]: any = await conn.query('SELECT balance, name, email, country FROM users WHERE id = ? LIMIT 1', [topup.user_id]);
+
           await conn.query(
             `INSERT INTO wallet_transactions
               (id, user_id, type, amount, currency, description, reference_type, reference_id, status)
              VALUES (?, ?, 'credit', ?, ?, 'Recarga confirmada por Polar — saldo exacto', 'wallet_topup', ?, 'completed')`,
             [generateId('wtx_'), topup.user_id, amount, currency, topupId]
           );
+
+          walletNotification = {
+            userId: topup.user_id,
+            email: balanceRows?.[0]?.email || '',
+            name: balanceRows?.[0]?.name || '',
+            language: balanceRows?.[0]?.country || 'es',
+            amount,
+            currency,
+            newBalance: Number(balanceRows?.[0]?.balance || 0),
+            paymentMethod: topup.payment_provider || 'Polar'
+          };
         }
 
         await conn.commit();
@@ -11038,6 +11256,64 @@ app.post('/api/webhooks/polar', async (req: any, res) => {
         throw error;
       } finally {
         conn.release();
+      }
+
+    if (walletNotification?.email) {
+      await sendNotificationEvent({
+          eventCode: 'wallet_topup_success',
+          entityType: 'wallet_topup',
+          entityId: String(topupId),
+          userId: walletNotification.userId,
+          audience: 'customer',
+          toEmail: walletNotification.email,
+          recipientName: walletNotification.name,
+          language: walletNotification.language,
+          variables: {
+            userName: walletNotification.name,
+            amount: Number(walletNotification.amount).toFixed(2),
+            currency: walletNotification.currency,
+            newBalance: Number(walletNotification.newBalance).toFixed(2),
+            paymentMethod: walletNotification.paymentMethod,
+            panelUrl: `${(process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '')}/panel/billing`
+          }
+        }).catch(() => null);
+      }
+    }
+
+    const failedPaymentStatus = String(data.status || '').toLowerCase();
+    const isFailedWalletEvent =
+      ['order.failed', 'order.canceled', 'order.cancelled', 'checkout.failed', 'payment.failed'].includes(String(eventType).toLowerCase())
+      || (eventType === 'checkout.updated' && ['failed', 'canceled', 'cancelled', 'expired'].includes(failedPaymentStatus));
+    if (isFailedWalletEvent && purpose === 'wallet_topup' && topupId) {
+      const [topupRows]: any = await pool.query(
+        `SELECT t.id, t.user_id, t.amount, t.currency, t.payment_provider, u.name, u.email, u.country
+         FROM wallet_topups t LEFT JOIN users u ON u.id = t.user_id
+         WHERE t.id = ? AND t.status NOT IN ('completed','paid','success') LIMIT 1`,
+        [topupId]
+      );
+      const topup = topupRows?.[0];
+      if (topup) {
+        await pool.query('UPDATE wallet_topups SET status = \'failed\', provider_reference = COALESCE(provider_reference, ?) WHERE id = ?', [data.id || data.order_id || topupId, topupId]);
+        if (isValidEmailForProvider(topup.email)) {
+          await sendNotificationEvent({
+            eventCode: 'wallet_topup_failed',
+            entityType: 'wallet_topup',
+            entityId: String(topup.id),
+            userId: topup.user_id,
+            audience: 'customer',
+            toEmail: topup.email,
+            recipientName: topup.name || '',
+            language: topup.country || 'es',
+            variables: {
+              userName: topup.name || topup.email,
+              amount: Number(topup.amount || 0).toFixed(2),
+              currency: String(topup.currency || 'EUR').toUpperCase(),
+              paymentMethod: topup.payment_provider || 'Polar',
+              billingUrl: `${(process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '')}/panel/billing`,
+              errorMessage: 'El proveedor de pago no confirmó la recarga. No se acreditó saldo.'
+            }
+          }).catch(() => null);
+        }
       }
     }
 
@@ -11611,6 +11887,7 @@ app.get('/api/admin/payment-receipts', authMiddleware, requireSuperAdmin, async 
 
 app.post('/api/admin/payment-receipts/:id/approve', authMiddleware, requireSuperAdmin, async (req: any, res) => {
   const conn = await pool.getConnection();
+  let walletNotification: any = null;
   try {
     await ensureBankTransferWalletTables();
     const note = String(req.body?.adminNote || '').trim().slice(0, 1000);
@@ -11625,12 +11902,44 @@ app.post('/api/admin/payment-receipts/:id/approve', authMiddleware, requireSuper
     const amount = Number(receipt.amount || 0);
     const currency = normalizeCurrencyCode(receipt.currency || 'USD');
     const txId = generateId('wtx_');
+    const [topupRows]: any = await conn.query('SELECT id FROM wallet_topups WHERE receipt_id = ? ORDER BY created_at DESC LIMIT 1', [receipt.id]);
     await conn.query(`UPDATE users SET balance = balance + ?, currency = COALESCE(currency, ?) WHERE id = ?`, [amount, currency, receipt.user_id]);
+    const [userRows]: any = await conn.query('SELECT name, email, country, balance FROM users WHERE id = ? LIMIT 1', [receipt.user_id]);
     await conn.query(`INSERT INTO wallet_transactions (id, user_id, type, amount, currency, description, reference_type, reference_id, status, admin_note)
       VALUES (?, ?, 'credit', ?, ?, ?, 'payment_receipt', ?, 'completed', ?)`, [txId, receipt.user_id, amount, currency, 'Recarga por transferencia aprobada', receipt.id, note]);
     await conn.query(`UPDATE payment_receipts SET status='approved', admin_note=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?`, [note, req.user.id, receipt.id]);
     try { await conn.query(`UPDATE wallet_topups SET status='completed', updated_at=NOW() WHERE receipt_id=?`, [receipt.id]); } catch {}
     await conn.commit();
+    walletNotification = {
+      userId: receipt.user_id,
+      topupId: topupRows?.[0]?.id || receipt.id,
+      name: userRows?.[0]?.name || '',
+      email: userRows?.[0]?.email || '',
+      language: userRows?.[0]?.country || 'es',
+      amount,
+      currency,
+      newBalance: Number(userRows?.[0]?.balance || 0)
+    };
+    if (isValidEmailForProvider(walletNotification.email)) {
+      await sendNotificationEvent({
+        eventCode: 'wallet_topup_success',
+        entityType: 'wallet_topup',
+        entityId: String(walletNotification.topupId),
+        userId: walletNotification.userId,
+        audience: 'customer',
+        toEmail: walletNotification.email,
+        recipientName: walletNotification.name,
+        language: walletNotification.language,
+        variables: {
+          userName: walletNotification.name,
+          amount: Number(walletNotification.amount).toFixed(2),
+          currency: walletNotification.currency,
+          newBalance: Number(walletNotification.newBalance).toFixed(2),
+          paymentMethod: 'Transferencia bancaria',
+          panelUrl: `${(process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '')}/panel/billing`
+        }
+      }).catch(() => undefined);
+    }
     res.json({ success: true, message: 'Comprobante aprobado y saldo acreditado.' });
   } catch (error) {
     try { await conn.rollback(); } catch {}
@@ -11644,8 +11953,41 @@ app.post('/api/admin/payment-receipts/:id/reject', authMiddleware, requireSuperA
   try {
     await ensureBankTransferWalletTables();
     const note = String(req.body?.adminNote || '').trim().slice(0, 1000);
+    const [receiptRows]: any = await pool.query(
+      `SELECT r.*, u.name, u.email, u.country
+       FROM payment_receipts r LEFT JOIN users u ON u.id = r.user_id
+       WHERE r.id = ? AND r.status = 'pending' LIMIT 1`,
+      [req.params.id]
+    );
+    const receipt = receiptRows?.[0];
+    if (!receipt) return res.json({ success: true, message: 'Este comprobante ya fue revisado.' });
     await pool.query(`UPDATE payment_receipts SET status='rejected', admin_note=?, reviewed_by=?, reviewed_at=NOW() WHERE id=? AND status='pending'`, [note, req.user.id, req.params.id]);
-    try { await pool.query(`UPDATE wallet_topups SET status='failed', updated_at=NOW() WHERE receipt_id=?`, [req.params.id]); } catch {}
+    let topupId = req.params.id;
+    try {
+      const [topupRows]: any = await pool.query(`SELECT id FROM wallet_topups WHERE receipt_id=? ORDER BY created_at DESC LIMIT 1`, [req.params.id]);
+      topupId = topupRows?.[0]?.id || topupId;
+      await pool.query(`UPDATE wallet_topups SET status='failed', updated_at=NOW() WHERE receipt_id=?`, [req.params.id]);
+    } catch {}
+    if (isValidEmailForProvider(receipt.email)) {
+      await sendNotificationEvent({
+        eventCode: 'wallet_topup_failed',
+        entityType: 'wallet_topup',
+        entityId: String(topupId),
+        userId: receipt.user_id,
+        audience: 'customer',
+        toEmail: receipt.email,
+        recipientName: receipt.name || '',
+        language: receipt.country || 'es',
+        variables: {
+          userName: receipt.name || receipt.email,
+          amount: Number(receipt.amount || 0).toFixed(2),
+          currency: normalizeCurrencyCode(receipt.currency || 'USD'),
+          paymentMethod: 'Transferencia bancaria',
+          billingUrl: `${(process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '')}/panel/billing`,
+          errorMessage: note || 'El comprobante no fue aprobado por el equipo de operaciones.'
+        }
+      }).catch(() => undefined);
+    }
     res.json({ success: true, message: 'Comprobante marcado para revisión.' });
   } catch {
     res.status(500).json({ error: 'No se pudo completar la operación.' });
@@ -13050,7 +13392,54 @@ async function createCopilotHumanTicket(req: any, conversationId: string, lang: 
     message: copilotText(language, 'handoffReply')
   });
   await pool.query('UPDATE ai_conversations SET status = ?, ticket_id = ? WHERE id = ?', ['human_handoff', ticketId, conversationId]);
-  await pool.query('INSERT INTO ai_handoffs (id, conversation_id, ticket_id, user_id, language, reason, summary) VALUES (?, ?, ?, ?, ?, ?, ?)', [generateId('aih_'), conversationId, ticketId, req.user.id, language, reason, description.slice(0, 4000)]);
+  const handoffId = generateId('aih_');
+  await pool.query('INSERT INTO ai_handoffs (id, conversation_id, ticket_id, user_id, language, reason, summary) VALUES (?, ?, ?, ?, ?, ?, ?)', [handoffId, conversationId, ticketId, req.user.id, language, reason, description.slice(0, 4000)]);
+
+  const ticketUrl = `${appBaseUrl()}/panel/tickets/${encodeURIComponent(ticketId)}`;
+  const customerEmail = isValidEmailForProvider(req.user.email);
+  if (customerEmail) {
+    await sendNotificationEvent({
+      eventCode: 'ai_handoff_customer',
+      entityType: 'ai_handoff',
+      entityId: handoffId,
+      audience: 'customer',
+      userId: req.user.id,
+      toEmail: customerEmail,
+      recipientName: req.user.name,
+      language,
+      variables: {
+        userName: req.user.name || customerEmail,
+        ticketId,
+        ticketUrl,
+        summary: String(message || '').trim().slice(0, 1200),
+        statusLabel: 'En revisión por un agente'
+      }
+    }).catch(() => undefined);
+  }
+
+  const internalEmail = isValidEmailForProvider(process.env.CANCELLATION_REVIEW_EMAIL)
+    || isValidEmailForProvider(process.env.ADMIN_EMAIL)
+    || '';
+  if (internalEmail) {
+    await sendNotificationEvent({
+      eventCode: 'ai_handoff_internal',
+      entityType: 'ai_handoff',
+      entityId: handoffId,
+      audience: 'internal',
+      toEmail: internalEmail,
+      recipientName: 'Equipo DoorDrop',
+      language: 'es',
+      variables: {
+        customerName: req.user.name || customerEmail || 'Cliente DoorDrop',
+        customerEmail: customerEmail || 'No disponible',
+        ticketId,
+        ticketUrl,
+        channel: 'AI Copilot',
+        reason,
+        summary: String(message || '').trim().slice(0, 1200)
+      }
+    }).catch(() => undefined);
+  }
   return await TicketRepo.getById(ticketId);
 }
 
@@ -13344,6 +13733,30 @@ app.post('/api/tickets/:id/reply', authMiddleware, async (req: any, res) => {
     const updatedTicket = await TicketRepo.getById(ticket.id);
     const reply = updatedTicket.replies[updatedTicket.replies.length - 1];
 
+    if (roleMapped === 'super_admin') {
+      const customer = await UserRepo.getById(ticket.user_id);
+      const customerEmail = isValidEmailForProvider(customer?.email);
+      if (customerEmail) {
+        await sendNotificationEvent({
+          eventCode: 'ticket_reply_customer',
+          entityType: 'ticket_reply',
+          entityId: reply.id,
+          audience: 'customer',
+          userId: ticket.user_id,
+          toEmail: customerEmail,
+          recipientName: customer?.name,
+          language: customer?.language || 'es',
+          variables: {
+            userName: customer?.name || customerEmail,
+            ticketId: ticket.id,
+            ticketUrl: `${appBaseUrl()}/panel/tickets/${encodeURIComponent(ticket.id)}`,
+            agentName: req.user.name || 'Equipo DoorDrop',
+            replyPreview: String(message).replace(/\s+/g, ' ').trim().slice(0, 1200)
+          }
+        }).catch(() => undefined);
+      }
+    }
+
     res.json({ success: true, reply, ticket: updatedTicket });
   } catch (error) {
     res.status(500).json({ error: 'No se pudo enviar la respuesta.' });
@@ -13384,6 +13797,27 @@ app.post('/api/tickets/:id/resolve', authMiddleware, async (req: any, res) => {
 
     await TicketRepo.resolve(ticket.id);
     const updated = await TicketRepo.getById(ticket.id);
+
+    const customer = await UserRepo.getById(ticket.user_id);
+    const customerEmail = isValidEmailForProvider(customer?.email);
+    if (customerEmail) {
+      await sendNotificationEvent({
+        eventCode: 'ticket_resolved_customer',
+        entityType: 'ticket',
+        entityId: ticket.id,
+        audience: 'customer',
+        userId: ticket.user_id,
+        toEmail: customerEmail,
+        recipientName: customer?.name,
+        language: customer?.language || 'es',
+        variables: {
+          userName: customer?.name || customerEmail,
+          ticketId: ticket.id,
+          ticketUrl: `${appBaseUrl()}/panel/tickets/${encodeURIComponent(ticket.id)}`,
+          resolvedAt: new Date().toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo' })
+        }
+      }).catch(() => undefined);
+    }
 
     res.json({ success: true, ticket: updated });
   } catch (error) {
@@ -13550,11 +13984,6 @@ app.get('/api/currencies', async (req, res) => {
 import { setupMarketplaceRoutes } from './server/marketplace/routes';
 setupMarketplaceRoutes(app, { pool, authMiddleware, requireSuperAdmin, UserRepo, generateId });
 
-// --- CONTRADO HELIX POD / ZUBUY PRINT INTEGRATION ---
-app.post('/api/webhooks/contrado', handleContradoWebhook);
-app.use('/api/pod', podRouter);
-
-
 // --- OMNICHANNEL INTEGRATION ---
 import { setupOmnichannelRoutes } from './server/omnichannel/routes';
 setupOmnichannelRoutes(app, { pool, authMiddleware, requireSuperAdmin, UserRepo });
@@ -13601,8 +14030,6 @@ app.get('*', (req, res) => {
     });
   }
 
-  // Iniciar programador nocturno de Zubuy Print POD (cada 12 horas)
-  try { PodSyncWorker.initCron(); } catch (e) { console.error('Error starting PodSyncWorker:', e); }
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Servidor ejecutándose en http://localhost:${PORT}`);
   });
