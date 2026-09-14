@@ -87,49 +87,6 @@ const AuthSidebar = () => {
           {t('left_panel_desc')}
         </p>
 
-        {/* Floating Tracking Card Mockup */}
-        <div className="bg-slate-900/85 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-2xl relative max-w-sm">
-          <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-800">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400">
-                <Truck className="w-4 h-4" />
-              </div>
-              <div>
-                <div className="text-xs text-slate-500 font-medium">{t('tracking_code_label')}</div>
-                <div className="text-sm font-bold font-mono text-slate-200">SP365-984021</div>
-              </div>
-            </div>
-            <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              {t('in_transit_status')}
-            </span>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex gap-3">
-              <div className="flex flex-col items-center">
-                <div className="w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center text-white ring-4 ring-blue-500/20">
-                  <Check className="w-2.5 h-2.5" />
-                </div>
-                <div className="w-0.5 h-8 bg-blue-500/30 my-0.5"></div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-400 font-semibold">{t('mock_event_1')}</div>
-                <div className="text-[11px] text-slate-500">{t('mock_time_1')}</div>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <div className="flex flex-col items-center">
-                <div className="w-4 h-4 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-500/20"></div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-200 font-bold">{t('mock_event_2')}</div>
-                <div className="text-[11px] text-slate-400">{t('mock_time_2')}</div>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* Footer info */}

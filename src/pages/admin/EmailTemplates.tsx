@@ -36,7 +36,7 @@ export default function EmailTemplates() {
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Test send state
-  const [testEmail, setTestEmail] = useState('grupoohla@gmail.com');
+  const [testEmail, setTestEmail] = useState('');
   const [sendingTest, setSendingTest] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
 
@@ -156,7 +156,6 @@ export default function EmailTemplates() {
       const res = await api.sendAdminTemplateTest(selectedTemplate.id, {
         language: activeLang,
         toEmail: testEmail,
-        recipientName: 'Usuario de Prueba DoorDrop'
       });
       setTestResult(res);
     } catch (err: any) {

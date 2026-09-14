@@ -8,7 +8,7 @@ export default function SmtpSettings() {
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
-  const [testEmail, setTestEmail] = useState('grupoohla@gmail.com');
+  const [testEmail, setTestEmail] = useState('');
   const [customHost, setCustomHost] = useState('');
   const [customPort, setCustomPort] = useState(465);
   const [customSecure, setCustomSecure] = useState(true);

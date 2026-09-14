@@ -89,7 +89,6 @@ export async function testSmtpConnection(options: {
   pass?: string;
   toEmail?: string;
   senderName?: string;
-  senderEmail?: string;
 }): Promise<{ success: boolean; message: string; details?: any }> {
   const host = options.host || process.env.SMTP_HOST || 'smtp.truobox.com';
   const port = Number(options.port || process.env.SMTP_PORT) || 465;
@@ -118,7 +117,7 @@ export async function testSmtpConnection(options: {
 
     // 2. Si se proporcionó destinatario, enviar correo de prueba
     if (options.toEmail) {
-      const fromEmail = options.senderEmail || process.env.MAIL_FROM_EMAIL || 'info@doordrop.lat';
+      const fromEmail = "info@doordrop.lat";
       const fromName = options.senderName || process.env.MAIL_FROM_NAME || 'DoorDrop';
 
       const info = await customTransporter.sendMail({
@@ -218,7 +217,7 @@ export async function sendTemplatedEmail({
   const textBody = renderTemplateText(tmpl.body_text, allVars, false);
 
   const mailer = getTransporter();
-  const fromEmail = process.env.MAIL_FROM_EMAIL || 'info@doordrop.lat';
+  const fromEmail = "info@doordrop.lat";
   const fromName = process.env.MAIL_FROM_NAME || 'DoorDrop';
 
   const info = await mailer.sendMail({

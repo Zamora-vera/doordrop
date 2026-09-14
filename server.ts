@@ -6002,7 +6002,7 @@ app.get('/api/admin/smtp/config', authMiddleware, requireSuperAdmin, async (req:
     const user = process.env.SMTP_USER || '';
     const pass = process.env.SMTP_PASS || '';
     const fromName = process.env.MAIL_FROM_NAME || 'DoorDrop';
-    const fromEmail = process.env.MAIL_FROM_EMAIL || 'info@doordrop.lat';
+    const fromEmail = 'info@doordrop.lat';
 
     res.json({
       success: true,
@@ -6024,8 +6024,8 @@ app.get('/api/admin/smtp/config', authMiddleware, requireSuperAdmin, async (req:
 // 2. Probar conexión SMTP y opcionalmente enviar correo de prueba
 app.post('/api/admin/smtp/test', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
   try {
-    const { toEmail, host, port, secure, user, pass, senderName, senderEmail } = req.body;
-    const targetEmail = toEmail ? String(toEmail).trim() : 'grupoohla@gmail.com';
+    const { toEmail, host, port, secure, user, pass, senderName } = req.body;
+    const targetEmail = toEmail ? String(toEmail).trim() : '';
 
     const testResult = await testSmtpConnection({
       host,
@@ -6035,7 +6035,6 @@ app.post('/api/admin/smtp/test', authMiddleware, requireSuperAdmin, async (req: 
       pass,
       toEmail: targetEmail,
       senderName,
-      senderEmail
     });
 
     if (!testResult.success) {
@@ -6156,32 +6155,21 @@ app.post('/api/admin/smtp/templates/:id/send-test', authMiddleware, requireSuper
   try {
     const { id } = req.params;
     const { language, toEmail, sampleVariables } = req.body;
-    const recipient = toEmail ? String(toEmail).trim() : 'grupoohla@gmail.com';
+    const recipient = toEmail ? String(toEmail).trim() : '';
     const lang = language || 'es';
+    if (!recipient) {
+      return res.status(400).json({ error: 'Indica un destinatario para la prueba.' });
+    }
 
-    // Mock data según variables de la plantilla
-    const defaultSampleVars: Record<string, any> = {
-      userName: 'Cliente VIP DoorDrop',
-      userEmail: recipient,
-      trackingCode: 'SHIP-9482-1',
-      carrierName: 'Poste Italiane / SpedirePRO',
-      trackingUrl: 'https://doordrop.lat/tracking/SHIP-9482-1',
-      originCity: 'Madrid',
-      destCity: 'Roma',
-      amount: '50.00',
-      currency: 'EUR',
-      newBalance: '150.00',
-      paymentMethod: 'Tarjeta / SafePay',
-      panelUrl: 'https://doordrop.lat/panel/wallet',
-      ...sampleVariables
-    };
+    const templateVariables = sampleVariables && typeof sampleVariables === 'object' && !Array.isArray(sampleVariables)
+      ? sampleVariables
+      : {};
 
     const sendRes = await sendTemplatedEmail({
       templateId: id,
       language: lang,
       toEmail: recipient,
-      recipientName: 'Equipo DoorDrop',
-      variables: defaultSampleVars
+      variables: templateVariables
     });
 
     res.json({
