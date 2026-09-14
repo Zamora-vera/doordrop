@@ -3251,7 +3251,8 @@ const CustomerSettings = () => {
   const [actionSuccess, setActionSuccess] = useState('');
   const [actionError, setActionError] = useState('');
   const [subscriptionPlans, setSubscriptionPlans] = useState<any[]>([]);
-  const [subscriptionMethods, setSubscriptionMethods] = useState<any>({ wallet: true, polar: true, paypal: true });
+  const [subscriptionMethods, setSubscriptionMethods] = useState<any>({ wallet: true, polar: false, paypal: false });
+  const [rechargeProvider, setRechargeProvider] = useState<'polar' | 'paypal'>('polar');
   const [selectedSubscriptionMethod, setSelectedSubscriptionMethod] = useState<'wallet' | 'polar' | 'paypal'>('wallet');
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [bankPreview, setBankPreview] = useState<any>(null);
@@ -3292,7 +3293,9 @@ const CustomerSettings = () => {
       const plansRes = await api.getSubscriptionPlans();
       const list = (plansRes.plans || []).filter((plan: any) => plan.id !== 'plan_basic' && Number(plan.price || 0) > 0);
       setSubscriptionPlans(list);
-      setSubscriptionMethods(plansRes.methods || { wallet: true, polar: true, paypal: true });
+      const methods = plansRes.methods || { wallet: true, polar: false, paypal: false };
+      setSubscriptionMethods(methods);
+      setRechargeProvider(prev => prev === 'polar' && methods.polar ? 'polar' : methods.paypal ? 'paypal' : 'polar');
       if (!selectedPlanId && list.length) setSelectedPlanId(list[0].id);
     } catch {
       setSubscriptionPlans([]);
@@ -3367,12 +3370,12 @@ const CustomerSettings = () => {
     }
   };
 
-  const handleRecharge = async (amount: number) => {
+  const handleRecharge = async (amount: number, paymentProvider: 'polar' | 'paypal' = rechargeProvider) => {
     setRechargeLoading(true);
     setActionError('');
     setActionSuccess('');
     try {
-      const res = await api.rechargeWallet(amount);
+      const res = await api.rechargeWallet(amount, paymentProvider);
       if (res.checkoutUrl) {
         window.location.href = res.checkoutUrl;
         return;
@@ -3543,13 +3546,21 @@ const CustomerSettings = () => {
                   </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <button 
-                  onClick={() => handleRecharge(150)}
+                {subscriptionMethods.polar && <button
+                  onClick={() => handleRecharge(150, 'polar')}
                   disabled={rechargeLoading}
                   className="w-full bg-gradient-to-r from-pink-500 to-orange-400 hover:from-pink-600 hover:to-orange-500 dark:from-neon-pink dark:to-[#9D00FF] text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 cursor-pointer"
                 >
                   {rechargeLoading ? 'Abriendo pago seguro...' : 'Recargar con tarjeta (Polar)'}
-                </button>
+                </button>}
+                {subscriptionMethods.paypal && <button
+                  onClick={() => handleRecharge(150, 'paypal')}
+                  disabled={rechargeLoading}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 cursor-pointer"
+                >
+                  {rechargeLoading ? 'Abriendo pago seguro...' : 'Recargar con PayPal (EUR)'}
+                </button>}
+                {!subscriptionMethods.polar && !subscriptionMethods.paypal && <p className="sm:col-span-2 text-sm text-gray-500 dark:text-gray-400 rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-950/20 p-3">Los pagos con tarjeta están temporalmente desactivados.</p>}
                 <Link to="/panel/settings/wallet" className="w-full text-center bg-white dark:bg-dark-800 border border-blue-200 dark:border-neon-cyan/30 text-blue-700 dark:text-neon-cyan font-bold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-transform hover:-translate-y-0.5">
                   {t('bank_open_wallet')}
                 </Link>

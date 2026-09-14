@@ -151,7 +151,7 @@ export const api = {
   getCurrencies: () => fetchAPI('/currencies'),
   connectCard: (data: any) => fetchAPI('/user/connect-card', { method: 'POST', body: JSON.stringify(data) }),
   connectPaypal: (data: any) => fetchAPI('/user/connect-paypal', { method: 'POST', body: JSON.stringify(data) }),
-  rechargeWallet: (amount: number) => fetchAPI('/user/recharge', { method: 'POST', body: JSON.stringify({ amount }) }),
+  rechargeWallet: (amount: number, paymentProvider: 'polar' | 'paypal' = 'polar') => fetchAPI('/user/recharge', { method: 'POST', body: JSON.stringify({ amount, paymentProvider }) }),
   getAddressBook: (type?: string) => fetchAPI('/address-book' + (type ? `?type=${type}` : '')),
   saveAddressBook: (data: any) => fetchAPI('/address-book', { method: 'POST', body: JSON.stringify(data) }),
   deleteAddressBook: (id: string) => fetchAPI(`/address-book/${id}`, { method: 'DELETE' }),
