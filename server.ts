@@ -11946,6 +11946,7 @@ app.post('/api/admin/polar/products/sync', authMiddleware, requireSuperAdmin, as
              polar_product_id, polar_price_id, polar_sync_status
       FROM plans
       WHERE is_active = 1
+        AND price > 0
         AND code NOT LIKE 'polar_%'
         AND name NOT LIKE 'Factura INV-%'
         AND name NOT LIKE 'VPS -%'
@@ -12111,10 +12112,110 @@ app.post('/api/admin/polar/products/sync', authMiddleware, requireSuperAdmin, as
       };
     }
 
+    const [omnichannelRows]: any = await pool.query(`
+      SELECT id, code, name, description, price, currency, features_json, is_active,
+             polar_product_id, polar_price_id, polar_enabled
+      FROM omnichannel_plan_catalog
+      WHERE is_active = 1
+        AND polar_enabled = 1
+        AND price > 0
+      ORDER BY price ASC, name ASC
+    `);
+
+    const [omnichannelAddonRows]: any = await pool.query(`
+      SELECT id, code, name, description, price, currency, is_active,
+             polar_product_id, polar_price_id, polar_enabled
+      FROM omnichannel_addon_catalog
+      WHERE is_active = 1
+        AND polar_enabled = 1
+        AND price > 0
+      ORDER BY price ASC, name ASC
+    `);
+
+    async function createOrLoadCatalogProduct(item: any, catalogType: 'omnichannel_plan' | 'omnichannel_addon') {
+      const existing = item.polar_product_id
+        ? existingProducts.find((product: any) => String(product.id) === String(item.polar_product_id))
+        : null;
+      const metadataMatch = existing || existingProducts.find((product: any) => {
+        const metadata = product.metadata || {};
+        return metadata.source === 'ship24go'
+          && metadata.catalog_type === catalogType
+          && String(metadata.local_catalog_id || '') === String(item.id);
+      });
+
+      let data = metadataMatch || null;
+      let status = metadataMatch ? 200 : null;
+      let action = metadataMatch ? 'existing' : 'created';
+
+      if (!data?.id) {
+        const payload = {
+          name: cleanName(item.name),
+          description: String(item.description || `DoorDrop ${item.name || 'Omnicanal'}`).slice(0, 500),
+          visibility: 'public',
+          recurring_interval: 'month',
+          recurring_interval_count: 1,
+          prices: planPrices(item),
+          metadata: {
+            source: 'ship24go',
+            catalog_type: catalogType,
+            local_catalog_id: String(item.id),
+            ship24go_catalog_code: String(item.code || ''),
+            ship24go_environment: environment
+          }
+        };
+
+        const response = await fetch(`${apiBase}/v1/products/`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${polarToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        data = await response.json().catch(() => ({}));
+        status = response.status;
+        await ship24goPolarLog('ship24go_catalog_product_create', { catalogType, catalogId: item.id, payload }, data, response.status);
+      }
+
+      const productId = String(data?.id || data?.product?.id || '');
+      const preferredCurrency = planCurrency(item);
+      const priceId = findPriceIdByCurrency(data, preferredCurrency) || findPriceIdByCurrency(data, 'eur') || findPriceIdByCurrency(data, 'usd') || findAnyPriceId(data);
+      const table = catalogType === 'omnichannel_plan' ? 'omnichannel_plan_catalog' : 'omnichannel_addon_catalog';
+
+      if (productId && priceId) {
+        await pool.query(
+          `UPDATE ${table}
+           SET polar_product_id = ?, polar_price_id = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [productId, priceId, item.id]
+        );
+      }
+
+      return {
+        ok: Boolean(productId && priceId),
+        catalog_type: catalogType,
+        catalog_id: item.id,
+        catalog_code: item.code,
+        catalog_name: item.name,
+        currency: item.currency,
+        product_id: productId || '',
+        price_id: priceId || '',
+        action,
+        status
+      };
+    }
+
     const results: any[] = [];
     for (const plan of plansRows) {
       const result = await createOrLoadPlanProduct(plan);
       results.push(result);
+    }
+
+    const omnichannelPlanResults: any[] = [];
+    for (const plan of omnichannelRows) {
+      omnichannelPlanResults.push(await createOrLoadCatalogProduct(plan, 'omnichannel_plan'));
+    }
+
+    const omnichannelAddonResults: any[] = [];
+    for (const addon of omnichannelAddonRows) {
+      omnichannelAddonResults.push(await createOrLoadCatalogProduct(addon, 'omnichannel_addon'));
     }
 
     const walletExisting = existingProducts.find((p: any) => p?.metadata?.source === 'ship24go' && p?.metadata?.purpose === 'wallet_topup');
@@ -12151,7 +12252,8 @@ app.post('/api/admin/polar/products/sync', authMiddleware, requireSuperAdmin, as
     }
 
     const success = results.filter(r => r.ok);
-    const failed = results.filter(r => !r.ok);
+    const allProductResults = [...results, ...omnichannelPlanResults, ...omnichannelAddonResults];
+    const failed = allProductResults.filter(r => !r.ok);
     const firstSubscription = success.find(r => r.plan_id !== 'plan_basic')?.polar_product_id || success[0]?.polar_product_id || '';
 
     await pool.query(
@@ -12194,6 +12296,8 @@ app.post('/api/admin/polar/products/sync', authMiddleware, requireSuperAdmin, as
       walletError,
       subscriptionProductId: firstSubscription,
       results,
+      omnichannelPlans: omnichannelPlanResults,
+      omnichannelAddons: omnichannelAddonResults,
       plans: freshPlans.map(ship24goPublicPlan)
     });
   } catch (error: any) {
