@@ -275,10 +275,10 @@ export function ProductPage() {
     );
   }
 
-  const images = listing.images && listing.images.length > 0
-    ? listing.images
-    : [{ url: 'https://images.unsplash.com/photo-1584438784894-089d6a62b8fa?w=800&q=80' }];
-  const currentImg = images[selectedImgIndex]?.url || images[0].url;
+  // A missing original image must remain visible as missing; a stock image
+  // would misrepresent the product and hide a provider/catalogue problem.
+  const images = listing.images && listing.images.length > 0 ? listing.images : [];
+  const currentImg = images[selectedImgIndex]?.url || null;
   const price = (listing.price_minor / 100).toFixed(2);
   const seller = listing.seller;
 
@@ -321,11 +321,18 @@ export function ProductPage() {
           <div className="lg:col-span-7 space-y-4">
             {/* Main Stage Image */}
             <div className="relative aspect-[4/3] rounded-3xl overflow-hidden bg-white dark:bg-dark-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-center">
-              <img
-                src={currentImg}
-                alt={listing.title}
-                className="w-full h-full object-contain max-h-[500px]"
-              />
+              {currentImg ? (
+                <img
+                  src={currentImg}
+                  alt={listing.title}
+                  className="w-full h-full object-contain max-h-[500px]"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-3 text-slate-400 dark:text-slate-500">
+                  <Package className="w-16 h-16" aria-hidden="true" />
+                  <span className="text-sm font-semibold">Imagen original no disponible</span>
+                </div>
+              )}
 
               {/* Prev / Next controls if multiple images */}
               {images.length > 1 && (
@@ -832,11 +839,17 @@ export function ProductPage() {
 
             {/* Product snippet */}
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-dark-800 border border-slate-200/60 dark:border-slate-700">
-              <img
-                src={listing.images?.[0]?.url || 'https://images.unsplash.com/photo-1584438784894-089d6a62b8fa?w=100&q=80'}
-                alt=""
-                className="w-12 h-12 rounded-xl object-cover border shrink-0"
-              />
+              {listing.images?.[0]?.url ? (
+                <img
+                  src={listing.images[0].url}
+                  alt=""
+                  className="w-12 h-12 rounded-xl object-cover border shrink-0"
+                />
+              ) : (
+                <div className="w-12 h-12 rounded-xl border shrink-0 flex items-center justify-center text-slate-400">
+                  <Package className="w-5 h-5" aria-hidden="true" />
+                </div>
+              )}
               <div className="flex-1 min-w-0 text-xs">
                 <h4 className="font-bold text-slate-900 dark:text-white truncate">{listing.title}</h4>
                 <p className="text-slate-400">

@@ -60,7 +60,7 @@ function buildSlug(title, externalId) {
 }
 
 function classifyProduct(item) {
-  const text = [item?.name_without_number, item?.name, item?.description, item?.category, item?.type].filter(Boolean).join(' ');
+  const text = [item?.name_without_number, item?.name, item?.description, item?.category, item?.category_name, item?.category_path, item?.type].filter(Boolean).join(' ');
   return CATEGORY_RULES.find(([, pattern]) => pattern.test(text))?.[0] || 'moda';
 }
 
@@ -101,9 +101,53 @@ async function syncImages(connection, listingId, item) {
   await connection.query('DELETE FROM marketplace_listing_images WHERE listing_id = ?', [listingId]);
   for (let index = 0; index < Math.min(item.images.length, 6); index++) {
     const url = String(item.images[index] || '').trim();
-    if (!/^https:\/\//i.test(url)) continue;
-    await connection.query('INSERT INTO marketplace_listing_images (id, listing_id, file_key, url, sort_order, is_cover, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())', [crypto.randomUUID(), listingId, `mh_${item.id}_${index}`, url, index, index === 0 ? 1 : 0]);
+    if (!/^https?:\/\//i.test(url)) continue;
+    const publicUrl = url.replace(/^http:\/\//i, 'https://');
+    await connection.query('INSERT INTO marketplace_listing_images (id, listing_id, file_key, url, sort_order, is_cover, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())', [crypto.randomUUID(), listingId, `mh_${item.id}_${index}`, publicUrl, index, index === 0 ? 1 : 0]);
   }
+}
+
+async function backfillMatterhornImages(options = {}) {
+  const connection = await mysql.createConnection(databaseConfig());
+  try {
+    const [users] = await connection.query('SELECT id FROM users WHERE email = ? AND status = ?', [CONFIG.storeEmail, 'active']);
+    if (!users.length) throw new Error('Account venditore Matterhorn attivo non trovato');
+    const [listings] = await connection.query("SELECT id, description FROM marketplace_listings WHERE seller_id = ? AND description LIKE '%MH-%'", [users[0].id]);
+    const byExternalId = new Map();
+    for (const listing of listings) {
+      const match = String(listing.description || '').match(/MH-([A-Za-z0-9_-]+)/i);
+      if (match) byExternalId.set(String(match[1]), listing.id);
+    }
+    const pageLimit = 10;
+    const maxPages = Math.max(1, Math.min(100, Number(options.maxPages || 50)));
+    let pages = 0; let matched = 0; let images = 0;
+    for (let page = 1; page <= maxPages && byExternalId.size; page++) {
+      let products;
+      let lastError;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          products = await fetchMatterhorn(`/ITEMS/?limit=${pageLimit}&page=${page}`);
+          break;
+        } catch (error) {
+          lastError = error;
+          if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 1200));
+        }
+      }
+      if (!Array.isArray(products)) throw lastError || new Error('No se pudo leer una página Matterhorn');
+      if (!Array.isArray(products) || !products.length) break;
+      pages++;
+      for (const item of products) {
+        const listingId = byExternalId.get(String(item?.id));
+        if (!listingId || !Array.isArray(item?.images) || !item.images.length) continue;
+        await syncImages(connection, listingId, item);
+        byExternalId.delete(String(item.id));
+        matched++;
+        images += Math.min(item.images.length, 6);
+      }
+      if (products.length < pageLimit) break;
+    }
+    return { pages, matched, images, remaining: byExternalId.size };
+  } finally { await connection.end(); }
 }
 
 async function reclassifyExisting(connection, sellerId, categoryMap) {
@@ -148,7 +192,7 @@ async function runMatterhornSync(options = {}) {
       const priceMinor = Math.round(wholesaleEur * 1.30 * 100);
       const weightValue = Number(item.weight);
       const weightGrams = Number.isFinite(weightValue) && weightValue > 0 ? Math.round(weightValue * 1000) : null;
-      const stockValue = Number(item.quantity ?? item.stock ?? 1);
+      const stockValue = Number(item.stock_total ?? item.quantity ?? item.stock ?? 1);
       const quantity = Number.isFinite(stockValue) && stockValue > 0 ? Math.max(1, Math.floor(stockValue)) : 1;
       const categorySlug = classifyProduct(item);
       const categoryId = categoryMap.get(categorySlug) || categoryMap.get('moda');
@@ -171,4 +215,4 @@ async function runMatterhornSync(options = {}) {
   } finally { await connection.end(); }
 }
 
-module.exports = { runMatterhornSync, classifyProduct };
+module.exports = { runMatterhornSync, backfillMatterhornImages, classifyProduct };

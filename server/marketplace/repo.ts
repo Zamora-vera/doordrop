@@ -15,6 +15,11 @@ function generateUuid(): string {
   return crypto.randomUUID();
 }
 
+function normalizeMarketplaceImageUrl(value: any): string {
+  const url = String(value || '').trim();
+  return url.replace(/^http:\/\/matterhorn-wholesale\.com\//i, 'https://matterhorn-wholesale.com/');
+}
+
 function buildSlug(title: string, city: string = ''): string {
   const base = `${title} ${city}`
     .toLowerCase()
@@ -414,7 +419,7 @@ export const MarketplaceRepo = {
 
     const listings = rows.map((r: any) => ({
       ...r,
-      images: r.cover_image_url ? [{ id: '', listing_id: r.id, url: r.cover_image_url, sort_order: 0, is_cover: 1, file_key: null, created_at: '' }] : [],
+      images: r.cover_image_url ? [{ id: '', listing_id: r.id, url: normalizeMarketplaceImageUrl(r.cover_image_url), sort_order: 0, is_cover: 1, file_key: null, created_at: '' }] : [],
       seller: {
         id: r.seller_id,
         display_name: r.seller_name || 'Vendedor DoorDrop',
@@ -453,7 +458,7 @@ export const MarketplaceRepo = {
 
     return rows.map((r: any) => ({
       ...r,
-      images: r.cover_image_url ? [{ id: '', listing_id: r.id, url: r.cover_image_url, sort_order: 0, is_cover: 1, file_key: null, created_at: '' }] : []
+      images: r.cover_image_url ? [{ id: '', listing_id: r.id, url: normalizeMarketplaceImageUrl(r.cover_image_url), sort_order: 0, is_cover: 1, file_key: null, created_at: '' }] : []
     }));
   },
 
@@ -532,7 +537,7 @@ export const MarketplaceRepo = {
 
     return rows.map((r: any) => ({
       ...r,
-      images: r.cover_image_url ? [{ id: '', listing_id: r.id, url: r.cover_image_url, sort_order: 0, is_cover: 1, file_key: null, created_at: '' }] : []
+      images: r.cover_image_url ? [{ id: '', listing_id: r.id, url: normalizeMarketplaceImageUrl(r.cover_image_url), sort_order: 0, is_cover: 1, file_key: null, created_at: '' }] : []
     }));
   },
 

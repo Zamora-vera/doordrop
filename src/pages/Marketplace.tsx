@@ -415,7 +415,9 @@ export function Marketplace() {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
             {listings.map(item => {
               const price = (item.price_minor / 100).toFixed(2);
-              const cover = item.images?.[0]?.url || 'https://images.unsplash.com/photo-1584438784894-089d6a62b8fa?w=600&q=80';
+              // Never substitute a stock photo for a real listing image. The API
+              // returns the provider's original URL when one is available.
+              const cover = item.images?.[0]?.url || null;
               const cond = CONDITIONS[item.condition] || CONDITIONS.good;
               const isFav = favorites[item.id];
 
@@ -427,12 +429,19 @@ export function Marketplace() {
                 >
                   {/* Image container */}
                   <div className="relative aspect-square overflow-hidden bg-slate-100 dark:bg-slate-800">
-                    <img
-                      src={cover}
-                      alt={item.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                      loading="lazy"
-                    />
+                    {cover ? (
+                      <img
+                        src={cover}
+                        alt={item.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-400 dark:text-slate-500">
+                        <Package className="w-10 h-10" aria-hidden="true" />
+                        <span className="text-[11px] font-semibold">Imagen no disponible</span>
+                      </div>
+                    )}
 
                     {/* Top Badges */}
                     <div className="absolute top-2.5 left-2.5 flex flex-col gap-1">
