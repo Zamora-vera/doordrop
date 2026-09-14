@@ -879,9 +879,9 @@ export const MarketplaceRepo = {
       }
       await conn.query(`UPDATE marketplace_orders SET status = 'cancelled', cancelled_at = NOW(), updated_at = NOW() WHERE id = ?`, [orderId]);
       await conn.query(
-        `UPDATE marketplace_listings
+        `UPDATE marketplace_listings AS l
             SET status = 'active', updated_at = NOW()
-          WHERE id = ? AND status = 'reserved'
+          WHERE l.id = ? AND l.status = 'reserved'
             AND NOT EXISTS (
               SELECT 1 FROM marketplace_orders other
                WHERE other.listing_id = l.id AND other.status = 'pending_payment' AND other.id <> ?
