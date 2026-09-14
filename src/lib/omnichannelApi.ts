@@ -46,6 +46,10 @@ export const omnichannelApi = {
     const q = sp.toString();
     return request(`/omnichannel/conversations${q ? '?' + q : ''}`);
   },
+  createConversation: (data: { contact_name: string; contact_phone?: string; platform?: string; initial_message?: string }) => request('/omnichannel/conversations', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }),
   getMessages: (conversationId: number) => request(`/omnichannel/conversations/${conversationId}/messages`),
   sendMessage: (conversationId: number, text: string, media_url?: string) => request(`/omnichannel/conversations/${conversationId}/messages`, {
     method: 'POST',

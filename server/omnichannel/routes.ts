@@ -581,6 +581,40 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
+  router.post('/conversations', authMiddleware, async (req: any, res: Response) => {
+    try {
+      const userId = String(req.user.id || req.user.userId);
+      const { contact_name, contact_phone, platform, initial_message } = req.body;
+      const cleanPlatform = ['whatsapp', 'instagram', 'messenger', 'telegram', 'web'].includes(platform) ? platform : 'whatsapp';
+      const cleanName = (contact_name || 'Cliente').trim();
+      const cleanPhone = (contact_phone || '').trim();
+
+      const [insertRes]: any = await pool.query(
+        `INSERT INTO omnichannel_conversations 
+         (user_id, platform, contact_id, contact_name, contact_phone, last_message, last_message_at, unread_count, ai_active, assigned_agent_id, assigned_agent_name, assigned_agent_type, status)
+         VALUES (?, ?, ?, ?, ?, ?, NOW(), 0, 1, 'agent-ai-sofia', 'Sofia AI Concierge', 'ai', 'open')`,
+        [userId, cleanPlatform, cleanPhone || ('contact_' + Date.now()), cleanName, cleanPhone, initial_message || 'Conversación iniciada']
+      );
+
+      const convId = insertRes.insertId;
+
+      if (initial_message && initial_message.trim()) {
+        await pool.query(
+          `INSERT INTO omnichannel_messages
+           (conversation_id, sender_type, sender_name, text_content, direction, status)
+           VALUES (?, 'customer', ?, ?, 'inbound', 'delivered')`,
+          [convId, cleanName, initial_message.trim()]
+        );
+      }
+
+      const [created]: any = await pool.query("SELECT * FROM omnichannel_conversations WHERE id = ?", [convId]);
+      res.json({ success: true, conversation: created[0] });
+    } catch (err: any) {
+      console.error('[Omnichannel] Create conversation error:', err);
+      res.status(500).json({ error: 'Error al crear la conversación.' });
+    }
+  });
+
   router.get('/conversations', authMiddleware, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
