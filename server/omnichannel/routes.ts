@@ -10,6 +10,246 @@ import {
   parseCatalogJson
 } from './entitlements';
 
+type NormalizedInboundMessage = {
+  conversationId: string | null;
+  messageId: string;
+  accountId: string | null;
+  profileId: string | null;
+  platform: string;
+  contactId: string | null;
+  contactName: string;
+  contactAvatar: string | null;
+  contactPhone: string | null;
+  text: string;
+  mediaType: string | null;
+  mediaUrl: string | null;
+};
+
+function firstWebhookString(values: unknown[], maxLength = 255): string | null {
+  for (const value of values) {
+    if (typeof value !== 'string' && typeof value !== 'number') continue;
+    const normalized = String(value).trim();
+    if (normalized) return normalized.slice(0, maxLength);
+  }
+  return null;
+}
+
+function normalizeInboundMessage(payload: any, eventId: string): NormalizedInboundMessage {
+  const data = payload && typeof payload.data === 'object' ? payload.data : null;
+  const message = data?.message || payload?.message || data || payload || {};
+  const conversation = payload?.conversation || data?.conversation || message?.conversation || {};
+  const account = payload?.account || data?.account || message?.account || {};
+  const sender = message?.sender || {};
+  const from = message?.from || {};
+  const attachment = Array.isArray(message?.attachments)
+    ? message.attachments.find((item: any) => item && typeof item === 'object')
+    : (message?.attachment || null);
+
+  const conversationId = firstWebhookString([
+    message?.conversationId,
+    message?.conversation_id,
+    message?.conversation?._id,
+    message?.conversation?.id,
+    conversation?._id,
+    conversation?.id,
+    conversation?.platformConversationId
+  ], 255);
+  const messageId = firstWebhookString([
+    message?._id,
+    message?.id,
+    message?.platformMessageId,
+    payload?.messageId,
+    eventId
+  ], 150) || eventId;
+  const accountId = firstWebhookString([
+    account?.id,
+    account?.accountId,
+    message?.accountId,
+    payload?.accountId
+  ], 100);
+  const profileId = firstWebhookString([
+    payload?.profileId,
+    data?.profileId,
+    message?.profileId,
+    account?.profileId,
+    conversation?.profileId
+  ], 150);
+  const contactId = firstWebhookString([
+    message?.senderId,
+    message?.contactId,
+    sender?.contactId,
+    conversation?.contactId,
+    conversation?.participantId,
+    from?.contactId,
+    from?.id,
+    sender?.id
+  ], 150);
+  const contactName = firstWebhookString([
+    message?.senderName,
+    sender?.name,
+    conversation?.participantName,
+    conversation?.contactName,
+    from?.name
+  ], 150) || 'Cliente';
+  const contactAvatar = firstWebhookString([
+    sender?.picture,
+    sender?.avatar,
+    sender?.profilePicture,
+    conversation?.participantPicture,
+    conversation?.contactAvatar
+  ], 2000);
+  const contactPhone = firstWebhookString([
+    sender?.phone,
+    sender?.phoneNumber,
+    message?.phone,
+    conversation?.phone,
+    conversation?.participantPhone
+  ], 50);
+  const text = firstWebhookString([
+    message?.text,
+    message?.body,
+    message?.content,
+    message?.message
+  ], 100000) || '';
+  const mediaUrl = firstWebhookString([
+    message?.mediaUrl,
+    message?.media_url,
+    attachment?.url,
+    attachment?.downloadUrl,
+    attachment?.mediaUrl
+  ], 4000);
+  const mediaType = firstWebhookString([
+    message?.mediaType,
+    message?.media_type,
+    attachment?.type,
+    attachment?.mimeType
+  ], 50);
+
+  return {
+    conversationId,
+    messageId,
+    accountId,
+    profileId,
+    platform: firstWebhookString([
+      message?.platform,
+      conversation?.platform,
+      payload?.platform,
+      account?.platform
+    ], 50) || 'whatsapp',
+    contactId,
+    contactName,
+    contactAvatar,
+    contactPhone,
+    text,
+    mediaType,
+    mediaUrl
+  };
+}
+
+async function persistInboundMessage(pool: any, userId: string, eventId: string, message: NormalizedInboundMessage) {
+  if (!message.conversationId) {
+    throw new Error('El webhook no contiene un identificador de conversación.');
+  }
+
+  const connection = await pool.getConnection();
+  const lastMessage = message.text || (message.mediaUrl ? '[Archivo adjunto]' : '');
+
+  try {
+    await connection.beginTransaction();
+
+    const [existingMessageRows]: any = await connection.query(
+      'SELECT id, conversation_id FROM omnichannel_messages WHERE zernio_message_id = ? LIMIT 1',
+      [message.messageId]
+    );
+    if (existingMessageRows.length > 0) {
+      await connection.commit();
+      return {
+        localConversationId: Number(existingMessageRows[0].conversation_id),
+        aiActive: true,
+        duplicate: true
+      };
+    }
+
+    const [conversationRows]: any = await connection.query(
+      'SELECT id, ai_active FROM omnichannel_conversations WHERE user_id = ? AND zernio_conversation_id = ? LIMIT 1 FOR UPDATE',
+      [userId, message.conversationId]
+    );
+
+    let localConversationId = conversationRows[0]?.id || null;
+    const aiActive = conversationRows.length > 0 ? Number(conversationRows[0].ai_active) === 1 : true;
+    const isNewConversation = !localConversationId;
+
+    if (isNewConversation) {
+      const [insertedConversation]: any = await connection.query(
+        `INSERT INTO omnichannel_conversations
+          (user_id, platform, account_id, zernio_conversation_id, contact_id, contact_name, contact_avatar, contact_phone, last_message, last_message_at, unread_count, ai_active, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1, 1, 'open')`,
+        [
+          userId,
+          message.platform,
+          message.accountId,
+          message.conversationId,
+          message.contactId,
+          message.contactName,
+          message.contactAvatar,
+          message.contactPhone,
+          lastMessage
+        ]
+      );
+      localConversationId = insertedConversation.insertId;
+    }
+
+    if (!isNewConversation) {
+      await connection.query(
+        `UPDATE omnichannel_conversations
+            SET platform = COALESCE(NULLIF(platform, ''), ?),
+                account_id = COALESCE(account_id, ?),
+                contact_id = COALESCE(contact_id, ?),
+                contact_name = COALESCE(NULLIF(contact_name, ''), ?),
+                contact_avatar = COALESCE(contact_avatar, ?),
+                contact_phone = COALESCE(contact_phone, ?),
+                last_message = ?,
+                last_message_at = NOW(),
+                unread_count = unread_count + 1
+          WHERE id = ? AND user_id = ?`,
+        [
+          message.platform,
+          message.accountId,
+          message.contactId,
+          message.contactName,
+          message.contactAvatar,
+          message.contactPhone,
+          lastMessage,
+          localConversationId,
+          userId
+        ]
+      );
+    }
+
+    await connection.query(
+      `INSERT INTO omnichannel_messages
+        (conversation_id, zernio_message_id, direction, sender_type, sender_name, text_content, media_type, media_url, status)
+       VALUES (?, ?, 'inbound', 'contact', ?, ?, ?, ?, 'delivered')`,
+      [
+        localConversationId,
+        message.messageId,
+        message.contactName,
+        message.text,
+        message.mediaType,
+        message.mediaUrl
+      ]
+    );
+
+    await connection.commit();
+    return { localConversationId: Number(localConversationId), aiActive, duplicate: false };
+  } catch (error) {
+    try { await connection.rollback(); } catch { /* The connection may already be closed. */ }
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
 export function setupOmnichannelRoutes(app: any, options: {
   pool: any;
   authMiddleware: any;
@@ -129,6 +369,15 @@ export function setupOmnichannelRoutes(app: any, options: {
     try {
       const userId = String(req.user?.id || req.user?.userId || '');
       const subscription = await getUserOmnichannelSubscription(userId);
+      // Super Admin client preview must be able to inspect the client's real
+      // inbox even when that client does not have a paid entitlement. This
+      // does not grant the customer access: the signed impersonation claims
+      // are only issued by the protected Super Admin impersonation flow.
+      if (req.user?.adminImpersonation && req.user?.adminUserId) {
+        req.omnichannelSubscription = subscription;
+        req.omnichannelAdminPreview = true;
+        return next();
+      }
       if (!hasActiveOmnichannelSubscription(subscription)) {
         return res.status(402).json({
           error: 'Necesitas una suscripción Omnicanal activa para usar esta función.',
@@ -148,43 +397,51 @@ export function setupOmnichannelRoutes(app: any, options: {
   // 1. Central Webhook (/api/webhooks/zernio)
   // ---------------------------------------------------------------------------
   app.post('/api/webhooks/zernio', async (req: Request, res: Response) => {
-    const eventId = String(req.headers['x-zernio-event-id'] || req.headers['x-webhook-id'] || `ev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
-    const sigHeader = req.headers['x-zernio-signature'] || req.headers['x-hub-signature-256'] || req.headers['x-signature'];
+    const payload = req.body || {};
+    const eventType = payload.event || payload.type;
+    const eventId = String(
+      req.headers['x-zernio-event-id']
+      || req.headers['x-webhook-id']
+      || payload.id
+      || payload.eventId
+      || payload.messageId
+      || `ev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    ).trim().slice(0, 150);
+    const suppressAutoReply = String(req.headers['x-zernio-replay'] || '') === '1';
 
     try {
       const [dup]: any = await pool.query(
-        "SELECT id FROM omnichannel_webhook_events WHERE event_id = ? LIMIT 1",
+        "SELECT id, processed FROM omnichannel_webhook_events WHERE event_id = ? LIMIT 1",
         [eventId]
       );
-      if (dup.length > 0) {
+      if (dup.length > 0 && Number(dup[0].processed) === 1) {
         return res.status(200).json({ status: 'duplicate_ignored' });
       }
 
-      await pool.query(
-        "INSERT INTO omnichannel_webhook_events (event_id, event_type, payload_json) VALUES (?, ?, ?)",
-        [eventId, req.body?.event || req.body?.type || 'unknown', JSON.stringify(req.body)]
-      );
+      if (dup.length > 0) {
+        await pool.query(
+          "UPDATE omnichannel_webhook_events SET event_type = ?, payload_json = ?, processed = 0, error_message = NULL WHERE event_id = ?",
+          [eventType || 'unknown', JSON.stringify(payload), eventId]
+        );
+      } else {
+        await pool.query(
+          "INSERT INTO omnichannel_webhook_events (event_id, event_type, payload_json, processed, error_message) VALUES (?, ?, ?, 0, NULL)",
+          [eventId, eventType || 'unknown', JSON.stringify(payload)]
+        );
+      }
     } catch (err: any) {
       console.warn('[Omnichannel Webhook] Log warning:', err.message);
     }
 
-    const payload = req.body || {};
-    const eventType = payload.event || payload.type;
     console.log(`[Omnichannel Webhook] Received ${eventType} event ID: ${eventId}`);
 
     try {
       switch (eventType) {
         case 'message.received': {
-          const msg = payload.data || payload.message || payload;
-          const convId = msg.conversationId || msg.conversation?._id || msg.conversation?.id;
-          const contactId = msg.senderId || msg.contactId || msg.from;
-          const contactName = msg.senderName || msg.sender?.name || 'Cliente';
-          const textContent = msg.text || msg.body || msg.content || '';
-          const platform = msg.platform || payload.platform || 'whatsapp';
-          const profileId = payload.profileId || msg.profileId;
+          const inbound = normalizeInboundMessage(payload, eventId);
 
           let userId = '';
-          const zAccountId = payload.account?.id || payload.account?.accountId || msg.accountId;
+          const zAccountId = inbound.accountId;
           
           if (zAccountId) {
             const [accs]: any = await pool.query(
@@ -192,53 +449,26 @@ export function setupOmnichannelRoutes(app: any, options: {
               [zAccountId]
             );
             if (accs.length > 0) userId = String(accs[0].user_id || '');
-          } else if (profileId) {
+          } else if (inbound.profileId) {
             const [prof]: any = await pool.query(
               "SELECT user_id FROM omnichannel_profiles WHERE zernio_profile_id = ? LIMIT 1",
-              [profileId]
+              [inbound.profileId]
             );
             if (prof.length > 0) userId = String(prof[0].user_id || '');
           }
 
-          if (!userId || !convId) {
+          if (!userId || !inbound.conversationId) {
             console.warn('[Omnichannel Webhook] Evento ignorado: cuenta/perfil o conversación no reconocidos.');
             return res.status(202).json({ status: 'unmatched_account_ignored' });
           }
 
-          const [existingConv]: any = await pool.query(
-            "SELECT id, ai_active FROM omnichannel_conversations WHERE user_id = ? AND zernio_conversation_id = ? LIMIT 1",
-            [userId, convId]
-          );
-
-          let localConvId = existingConv.length > 0 ? existingConv[0].id : null;
-          let aiActive = existingConv.length > 0 ? existingConv[0].ai_active : 1;
-
-          if (!localConvId) {
-            const [newConv]: any = await pool.query(
-              `INSERT INTO omnichannel_conversations 
-                (user_id, platform, account_id, zernio_conversation_id, contact_id, contact_name, last_message, last_message_at, unread_count, ai_active)
-               VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), 1, 1)`,
-              [userId, platform, zAccountId || null, convId, contactId, contactName, textContent]
-            );
-            localConvId = newConv.insertId;
-          } else {
-            await pool.query(
-              `UPDATE omnichannel_conversations 
-               SET last_message = ?, last_message_at = NOW(), unread_count = unread_count + 1 
-               WHERE id = ?`,
-              [textContent, localConvId]
-            );
-          }
-
-          await pool.query(
-            `INSERT INTO omnichannel_messages 
-              (conversation_id, zernio_message_id, direction, sender_type, sender_name, text_content, status)
-             VALUES (?, ?, 'inbound', 'contact', ?, ?, 'delivered')`,
-            [localConvId, msg._id || msg.id || eventId, contactName, textContent]
-          );
+          const persisted = await persistInboundMessage(pool, userId, eventId, inbound);
+          const localConvId = persisted.localConversationId;
+          const aiActive = persisted.aiActive;
+          if (persisted.duplicate) break;
 
           // DeepSeek AI Auto-Responder with custom response delay
-          if (aiActive && textContent) {
+          if (aiActive && inbound.text && !suppressAutoReply) {
             let delayMs = 3000;
             try {
               const [dRows]: any = await pool.query(
@@ -254,17 +484,17 @@ export function setupOmnichannelRoutes(app: any, options: {
 
             setTimeout(async () => {
               try {
-                const aiResult = await generateAIEmployeeReply(userId, textContent, contactName, localConvId);
+                const aiResult = await generateAIEmployeeReply(userId, inbound.text, inbound.contactName, localConvId);
                 if (aiResult) {
                   const replyText = typeof aiResult === 'object' ? aiResult.text : String(aiResult);
                   const photoUrl = typeof aiResult === 'object' ? aiResult.mediaUrl : null;
-                  console.log(`[AI Sales Auto-Responder] Replying to conversation #${localConvId} (${platform}): "${replyText}" | Photo: ${photoUrl || 'none'}`);
+                  console.log(`[AI Sales Auto-Responder] Replying to conversation #${localConvId} (${inbound.platform}) | Photo: ${photoUrl ? 'yes' : 'none'}`);
 
-                  let targetAccId = zAccountId;
+                  let targetAccId = inbound.accountId;
                   if (!targetAccId) {
                     const [accRows]: any = await pool.query(
                       "SELECT zernio_account_id FROM omnichannel_accounts WHERE user_id = ? AND platform = ? LIMIT 1",
-                      [userId, platform]
+                      [userId, inbound.platform]
                     );
                     if (accRows.length > 0) targetAccId = accRows[0].zernio_account_id;
                   }
@@ -274,7 +504,7 @@ export function setupOmnichannelRoutes(app: any, options: {
                   if (targetAccId) zPayload.accountId = targetAccId;
                   if (photoUrl) { zPayload.attachmentUrl = photoUrl; zPayload.attachmentType = "image"; }
                   
-                  const zRes = await callZernio(`/inbox/conversations/${encodeURIComponent(convId)}/messages`, {
+                  const zRes = await callZernio(`/inbox/conversations/${encodeURIComponent(inbound.conversationId as string)}/messages`, {
                     method: 'POST',
                     body: zPayload
                   });
@@ -296,7 +526,7 @@ export function setupOmnichannelRoutes(app: any, options: {
               } catch (aiErr) {
                 console.error('[AI Auto-Responder] Error:', aiErr);
               }
-            }, 1000);
+            }, delayMs);
           }
           break;
         }
@@ -387,13 +617,21 @@ export function setupOmnichannelRoutes(app: any, options: {
       }
 
       await pool.query(
-        "UPDATE omnichannel_webhook_events SET processed = 1 WHERE event_id = ?",
+        "UPDATE omnichannel_webhook_events SET processed = 1, error_message = NULL WHERE event_id = ?",
         [eventId]
       );
       return res.status(200).json({ status: 'ok', eventId });
     } catch (err: any) {
-      console.error('[Omnichannel Webhook] Processing error:', err);
-      return res.status(200).json({ status: 'error_recorded', error: err.message });
+      console.error('[Omnichannel Webhook] Processing error:', err?.message || err);
+      try {
+        await pool.query(
+          "UPDATE omnichannel_webhook_events SET processed = 0, error_message = ? WHERE event_id = ?",
+          [String(err?.message || 'Error interno de procesamiento').slice(0, 1000), eventId]
+        );
+      } catch (logErr: any) {
+        console.warn('[Omnichannel Webhook] Error status update warning:', logErr?.message || logErr);
+      }
+      return res.status(500).json({ status: 'retry', eventId });
     }
   });
 
