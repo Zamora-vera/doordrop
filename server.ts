@@ -9444,7 +9444,11 @@ app.post('/api/shipments/quote', async (req: any, res) => {
 // 8. Crear un Envío
 app.post('/api/shipments', authMiddleware, async (req: any, res) => {
   try {
-    const { quoteId, sender, recipient, packages, customs, content, reference, declaredValue, exportReason, termsOfTrade, manifest } = req.body;
+    const { quoteId, sender, recipient, packages, customs, content, reference, declaredValue, exportReason, termsOfTrade, manifest, paymentMethod = 'wallet' } = req.body;
+    const normalizedPaymentMethod = String(paymentMethod || 'wallet').trim().toLowerCase();
+    if (!['wallet', 'paypal'].includes(normalizedPaymentMethod)) {
+      return res.status(400).json({ error: 'Método de pago no válido.' });
+    }
     const normalizedPackages = Array.isArray(packages) && packages.length > 0 ? packages : [{ width: 10, height: 10, length: 10, weight: 1, qty: 1 }];
     const keys = await ApiKeysRepo.get();
 
@@ -9529,6 +9533,108 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
     if (senderForShipment?.saveToBook) await saveToAddressBook('sender', senderForShipment);
     if (recipientForShipment?.saveToBook) await saveToAddressBook('recipient', recipientForShipment);
 
+    const requestedManifest = Number(manifest ?? 1) === 1;
+    if (normalizedPaymentMethod === 'paypal') {
+      if (!requestedManifest) {
+        return res.status(400).json({ error: 'El pago PayPal solo está disponible para crear el envío ahora.' });
+      }
+      if (!ship24goPayPalIntegrationEnabled(keys)) {
+        return res.status(400).json({ error: ship24goPayPalUnavailableMessage(keys) });
+      }
+
+      const internalTracking = `S24G-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
+      const pendingShipment = {
+        id: shipmentId,
+        user_id: req.user.id,
+        quote_id: quoteId,
+        provider_id: quote.db_provider_id || quote.provider_id || null,
+        provider_code: providerCode,
+        provider_shipment_code: null,
+        provider_tracking_code: null,
+        tracking_code: internalTracking,
+        order_number: shipmentId,
+        reference: reference || '',
+        status: 'pending_payment',
+        status_label: 'Pendiente de pago',
+        sender: senderForShipment,
+        recipient: recipientForShipment,
+        packages: normalizedPackages.map((pkg: any) => ({ ...pkg, customs: Array.isArray(customs) ? customs : [] })),
+        label_url: null,
+        label_base64: null,
+        track_url: null,
+        payment_url: null,
+        provider_payload_json: {
+          quoteId,
+          providerCode,
+          paymentMethod: 'paypal',
+          content: compactText(content || 'General goods', 150),
+          declaredValue,
+          exportReason,
+          termsOfTrade,
+          services: req.body?.services || null
+        },
+        walletDeduction: 0,
+        currency: quoteCurrency
+      };
+      await ShipmentRepo.create(pendingShipment);
+      await TrackingEventRepo.create({
+        shipment_id: shipmentId,
+        tracking_code: internalTracking,
+        status: 'pending_payment',
+        status_label: 'Pendiente de pago',
+        description: 'El envío fue creado y está pendiente de confirmación del pago PayPal.'
+      });
+
+      try {
+        await ensureShip24GoBillingColumns();
+        const checkout = await ship24goCreatePayPalCheckoutOrder({
+          referenceId: shipmentId,
+          amount: Number(quote.total_amount || 0),
+          currency: quoteCurrency,
+          purpose: 'shipment_payment',
+          description: `Envío DoorDrop ${internalTracking}`,
+          returnUrl: `${appBaseUrl()}/panel/shipments?paypal_payment=success&shipment_id=${encodeURIComponent(shipmentId)}`,
+          cancelUrl: `${appBaseUrl()}/panel/shipments?paypal_payment=cancel&shipment_id=${encodeURIComponent(shipmentId)}`
+        });
+        await pool.query(
+          `INSERT INTO payments (id, user_id, shipment_id, provider, external_payment_id, amount, currency, status, purpose, provider_payment_id, metadata_json)
+           VALUES (?, ?, ?, 'paypal', ?, ?, ?, 'pending', 'shipment_payment', ?, ?)`,
+          [
+            generateId('pay_'),
+            req.user.id,
+            shipmentId,
+            checkout.orderId,
+            checkout.chargeAmount,
+            checkout.chargeCurrency,
+            checkout.orderId,
+            JSON.stringify({ shipmentId, quoteId, sourceAmount: Number(quote.total_amount || 0), sourceCurrency: quoteCurrency })
+          ]
+        );
+        await pool.query(
+          `UPDATE shipments SET payment_url = ?, provider_payload_json = ?, updated_at = NOW() WHERE id = ?`,
+          [checkout.checkoutUrl, JSON.stringify({ ...pendingShipment.provider_payload_json, paypalOrderId: checkout.orderId, chargeAmount: checkout.chargeAmount, chargeCurrency: checkout.chargeCurrency }), shipmentId]
+        );
+        return res.status(201).json({
+          success: true,
+          pendingPayment: true,
+          pendingLabel: true,
+          checkoutUrl: checkout.checkoutUrl,
+          paypalOrderId: checkout.orderId,
+          chargeAmount: checkout.chargeAmount,
+          chargeCurrency: checkout.chargeCurrency,
+          message: 'Envío creado. Completa el pago seguro con PayPal para preparar la etiqueta.',
+          shipment: { id: shipmentId, trackingCode: internalTracking, status: 'Pendiente de pago', paymentUrl: checkout.checkoutUrl }
+        });
+      } catch (error: any) {
+        await pool.query(
+          `UPDATE shipments SET status = 'payment_failed', status_label = 'Pago no iniciado', label_status = 'pending', label_error = ?, updated_at = NOW() WHERE id = ?`,
+          ['No se pudo abrir el pago seguro con PayPal.', shipmentId]
+        ).catch(() => null);
+        console.error('[PayPal shipment] checkout create failed:', error?.code || error?.message || 'error');
+        return res.status(400).json({ error: 'No se pudo abrir el pago seguro con PayPal.' });
+      }
+    }
+
     const makeDraft = async (reason: string, trackingCode?: string, providerResult?: any) => {
       const internalTracking = trackingCode || `S24G-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
       const draftShipment = {
@@ -9576,7 +9682,6 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
       });
     };
 
-    const requestedManifest = Number(manifest ?? 1) === 1;
     const hasEnoughBalance = userBalance >= cost;
     const providerManifest = requestedManifest && hasEnoughBalance ? 1 : 0;
     const canChargeWalletNow = requestedManifest && hasEnoughBalance;
@@ -13011,6 +13116,64 @@ async function ship24goGetPayPalAccessToken(keys: any) {
   return data.access_token;
 }
 
+async function ship24goCreatePayPalCheckoutOrder(options: {
+  referenceId: string;
+  amount: number;
+  currency: string;
+  purpose: 'marketplace_order' | 'shipment_payment';
+  description: string;
+  returnUrl: string;
+  cancelUrl: string;
+}) {
+  const keys = await ApiKeysRepo.get();
+  if (!ship24goPayPalIntegrationEnabled(keys)) {
+    const error: any = new Error(ship24goPayPalUnavailableMessage(keys));
+    error.code = 'PAYPAL_UNAVAILABLE';
+    throw error;
+  }
+  const sourceCurrency = normalizeCurrencyCode(options.currency || 'EUR');
+  const sourceAmount = roundMoney(Number(options.amount || 0));
+  const rates = sourceCurrency === 'EUR' ? { EUR: 1 } : await getFreshRatesInternal();
+  const chargeAmount = convertMoneyAmountStrict(sourceAmount, sourceCurrency, 'EUR', rates);
+  if (!chargeAmount || chargeAmount <= 0) throw new Error('El importe del pago no es válido.');
+
+  const token = await ship24goGetPayPalAccessToken(keys);
+  const base = ship24goPayPalApiBase(keys?.paypalEnvironment);
+  const orderResponse = await fetch(`${base}/v2/checkout/orders`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'PayPal-Request-Id': options.referenceId
+    },
+    body: JSON.stringify({
+      intent: 'CAPTURE',
+      purchase_units: [{
+        custom_id: `doordrop:${options.purpose}:${options.referenceId}`,
+        description: options.description,
+        amount: { currency_code: 'EUR', value: chargeAmount.toFixed(2) }
+      }],
+      application_context: {
+        brand_name: 'DoorDrop',
+        user_action: 'PAY_NOW',
+        return_url: options.returnUrl,
+        cancel_url: options.cancelUrl
+      }
+    })
+  });
+  const order: any = await orderResponse.json().catch(() => ({}));
+  await writeProviderLog(
+    'paypal',
+    `${options.purpose}_checkout_create`,
+    { referenceId: options.referenceId, amount: sourceAmount, currency: sourceCurrency, chargeAmount, chargeCurrency: 'EUR' },
+    { httpStatus: orderResponse.status, id: order?.id, hasApprovalUrl: Boolean((order?.links || []).find((link: any) => link.rel === 'approve')) },
+    orderResponse.status
+  );
+  const checkoutUrl = (order.links || []).find((link: any) => link.rel === 'approve')?.href || '';
+  if (!orderResponse.ok || !order.id || !checkoutUrl) throw new Error('No se pudo crear el checkout de PayPal.');
+  return { orderId: String(order.id), checkoutUrl, chargeAmount, chargeCurrency: 'EUR' };
+}
+
 function ship24goPublicPlan(plan: any) {
   return {
     id: plan.id,
@@ -13278,6 +13441,12 @@ function ship24goParsePayPalMetadata(value: any) {
   if (raw.startsWith('doordrop:wallet:')) {
     return { purpose: 'wallet_topup', topupId: raw.slice('doordrop:wallet:'.length) };
   }
+  if (raw.startsWith('doordrop:marketplace_order:')) {
+    return { purpose: 'marketplace_order', marketplaceOrderId: raw.slice('doordrop:marketplace_order:'.length) };
+  }
+  if (raw.startsWith('doordrop:shipment_payment:')) {
+    return { purpose: 'shipment_payment', shipmentId: raw.slice('doordrop:shipment_payment:'.length) };
+  }
   try {
     const parsed = JSON.parse(raw || '{}');
     return parsed && typeof parsed === 'object' ? parsed : {};
@@ -13365,6 +13534,107 @@ app.post('/api/webhooks/paypal', async (req: any, res) => {
     if (eventType === 'PAYMENT.CAPTURE.COMPLETED' && (!metadata.userId || (!metadata.planId && !metadata.topupId && !metadata.topup_id)) && orderId) {
       const orderInfo = await ship24goPayPalOrderMetadata(orderId, keys, verification.token);
       metadata = { ...orderInfo.metadata, ...metadata };
+    }
+
+    if (eventType === 'PAYMENT.CAPTURE.COMPLETED' && (metadata.purpose || '') === 'marketplace_order') {
+      const marketplaceOrderId = metadata.marketplaceOrderId || metadata.marketplace_order_id;
+      if (marketplaceOrderId) {
+        const paymentReference = String(resource.id || reference).trim();
+        const paidOrder = await MarketplaceRepo.markOrderPaid(String(marketplaceOrderId), paymentReference);
+        if (paidOrder.activated) {
+          const [orderRows]: any = await pool.query(
+            `SELECT o.*, l.title AS listing_title, ub.name AS buyer_name, ub.email AS buyer_email,
+                    us.name AS seller_name, us.email AS seller_email
+               FROM marketplace_orders o
+               JOIN marketplace_listings l ON l.id = o.listing_id
+               JOIN users ub ON ub.id = o.buyer_id
+               JOIN users us ON us.id = o.seller_id
+              WHERE o.id = ? LIMIT 1`,
+            [marketplaceOrderId]
+          );
+          const paid = orderRows?.[0];
+          if (paid) {
+            const appUrl = appBaseUrl().replace(/\/+$/, '');
+            const orderUrl = `${appUrl}/panel/marketplace?tab=orders`;
+            const total = (Number(paid.total_amount_minor || 0) / 100).toFixed(2);
+            await Promise.all([
+              sendNotificationEvent({
+                eventCode: 'marketplace_order_paid_buyer',
+                entityType: 'marketplace_order',
+                entityId: String(paid.id),
+                userId: paid.buyer_id,
+                audience: 'buyer',
+                toEmail: paid.buyer_email || '',
+                recipientName: paid.buyer_name || paid.buyer_email || '',
+                language: 'es',
+                variables: { userName: paid.buyer_name || paid.buyer_email || '', orderNumber: paid.order_number, listingTitle: paid.listing_title, totalAmount: total, currency: paid.currency, orderStatus: 'Pagado', orderUrl, sellerName: paid.seller_name || '' }
+              }).catch(() => null),
+              sendNotificationEvent({
+                eventCode: 'marketplace_sale_received',
+                entityType: 'marketplace_order',
+                entityId: String(paid.id),
+                userId: paid.seller_id,
+                audience: 'seller',
+                toEmail: paid.seller_email || '',
+                recipientName: paid.seller_name || paid.seller_email || '',
+                language: 'es',
+                variables: { sellerName: paid.seller_name || paid.seller_email || '', orderNumber: paid.order_number, listingTitle: paid.listing_title, totalAmount: total, currency: paid.currency, buyerName: paid.buyer_name || '', orderUrl, shippingAddressUrl: orderUrl }
+              }).catch(() => null)
+            ]);
+          }
+        }
+      }
+    }
+
+    if (eventType === 'PAYMENT.CAPTURE.COMPLETED' && (metadata.purpose || '') === 'shipment_payment') {
+      const shipmentId = String(metadata.shipmentId || metadata.shipment_id || '').trim();
+      if (shipmentId) {
+        const paymentReference = String(resource.id || reference).trim();
+        const conn = await pool.getConnection();
+        let shouldPrepare = false;
+        let shipmentUserId = '';
+        try {
+          await conn.beginTransaction();
+          const [paymentRows]: any = await conn.query(
+            `SELECT id, status FROM payments WHERE shipment_id = ? AND provider = 'paypal' AND purpose = 'shipment_payment' LIMIT 1 FOR UPDATE`,
+            [shipmentId]
+          );
+          const payment = paymentRows?.[0];
+          if (!payment) throw new Error('Pago PayPal de envío no encontrado.');
+          if (String(payment.status) !== 'paid') {
+            await conn.query(
+              `UPDATE payments SET status = 'paid', external_payment_id = ?, provider_payment_id = ?, raw_payload_json = ?, updated_at = NOW() WHERE id = ?`,
+              [paymentReference, paymentReference, JSON.stringify(payload), payment.id]
+            );
+            const [shipmentRows]: any = await conn.query(`SELECT user_id, status FROM shipments WHERE id = ? FOR UPDATE`, [shipmentId]);
+            const shipment = shipmentRows?.[0];
+            if (!shipment) throw new Error('Envío asociado al pago no encontrado.');
+            shipmentUserId = String(shipment.user_id || '');
+            shouldPrepare = String(shipment.status) === 'pending_payment';
+            if (shouldPrepare) {
+              await conn.query(
+                `UPDATE shipments SET status = 'pending_provider', status_label = 'Preparando etiqueta', payment_url = NULL, updated_at = NOW() WHERE id = ? AND status = 'pending_payment'`,
+                [shipmentId]
+              );
+            }
+          }
+          await conn.commit();
+        } catch (error) {
+          await conn.rollback();
+          throw error;
+        } finally {
+          conn.release();
+        }
+        if (shouldPrepare) {
+          await TrackingEventRepo.create({ shipment_id: shipmentId, tracking_code: '', status: 'payment_confirmed', status_label: 'Pago PayPal confirmado', description: 'El pago PayPal fue confirmado y la etiqueta está en preparación.' }).catch(() => null);
+          try {
+            await processShipmentPreparation(shipmentId);
+          } catch (error: any) {
+            await ensureShipmentJob(shipmentId, shipmentUserId, 'provider_create', 'pending', 'Pago confirmado; etiqueta en preparación.').catch(() => null);
+            console.error('[PayPal shipment] preparation deferred:', error?.message || 'error');
+          }
+        }
+      }
     }
 
     if (eventType === 'PAYMENT.CAPTURE.COMPLETED' || eventType === 'BILLING.SUBSCRIPTION.ACTIVATED') {
@@ -14903,6 +15173,7 @@ app.get('/api/currencies', async (req, res) => {
 
 // --- MARKETPLACE INTEGRATION ---
 import { setupMarketplaceRoutes } from './server/marketplace/routes';
+import { MarketplaceRepo } from './server/marketplace/repo';
 import podRoutes from './server/marketplace/podRoutes';
 setupMarketplaceRoutes(app, {
   pool,
@@ -14910,7 +15181,10 @@ setupMarketplaceRoutes(app, {
   requireSuperAdmin,
   UserRepo,
   generateId,
-  walletMutation: applyWalletMutationCommitted
+  walletMutation: applyWalletMutationCommitted,
+  paypalCreateOrder: async (options) => {
+    return ship24goCreatePayPalCheckoutOrder({ ...options, purpose: 'marketplace_order' });
+  }
 });
 app.use('/api/pod', podRoutes);
 app.use(podRoutes);

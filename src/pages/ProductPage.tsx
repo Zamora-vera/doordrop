@@ -64,6 +64,7 @@ export function ProductPage() {
   const [buyerPhone, setBuyerPhone] = useState('');
   const [buyerAddress, setBuyerAddress] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'wallet' | 'paypal'>('wallet');
+  const [paypalAvailable, setPaypalAvailable] = useState(false);
   const [purchasing, setPurchasing] = useState(false);
   const [purchaseError, setPurchaseError] = useState('');
   const [purchaseSuccess, setPurchaseSuccess] = useState<any>(null);
@@ -83,6 +84,16 @@ export function ProductPage() {
       .catch(() => setListing(null))
       .finally(() => setLoading(false));
   }, [slug]);
+
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setPaypalAvailable(false);
+      return;
+    }
+    api.paypalGetConfig()
+      .then((config: any) => setPaypalAvailable(Boolean(config?.enabled && config?.configured)))
+      .catch(() => setPaypalAvailable(false));
+  }, [isLoggedIn]);
 
   useEffect(() => {
     if (listing?.id && isLoggedIn) {
@@ -246,6 +257,10 @@ export function ProductPage() {
         paymentMethod
       });
 
+      if (res?.pending && res?.checkoutUrl) {
+        window.location.assign(res.checkoutUrl);
+        return;
+      }
       setPurchaseSuccess(res.order);
     } catch (err: any) {
       setPurchaseError(err.message || 'No se pudo procesar la compra.');
@@ -657,7 +672,7 @@ export function ProductPage() {
                       className="w-full p-2.5 bg-slate-100 dark:bg-dark-800 border border-slate-200 dark:border-slate-700 rounded-xl"
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className={`grid ${paypalAvailable ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
                     <div>
                       <label className="block text-slate-400 mb-1">Teléfono</label>
                       <input
@@ -707,18 +722,20 @@ export function ProductPage() {
                       <Wallet className="w-4 h-4" />
                       <span>Billetera DoorDrop</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('paypal')}
-                      className={`p-3 rounded-xl border flex items-center gap-2 font-bold ${
-                        paymentMethod === 'paypal'
-                          ? 'border-blue-600 bg-blue-50 dark:bg-blue-950 text-blue-700'
-                          : 'border-slate-200 text-slate-600'
-                      }`}
-                    >
-                      <CreditCard className="w-4 h-4" />
-                      <span>PayPal / Tarjeta</span>
-                    </button>
+                    {paypalAvailable && (
+                      <button
+                        type="button"
+                        onClick={() => setPaymentMethod('paypal')}
+                        className={`p-3 rounded-xl border flex items-center gap-2 font-bold ${
+                          paymentMethod === 'paypal'
+                            ? 'border-blue-600 bg-blue-50 dark:bg-blue-950 text-blue-700'
+                            : 'border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <CreditCard className="w-4 h-4" />
+                        <span>PayPal / Tarjeta</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
