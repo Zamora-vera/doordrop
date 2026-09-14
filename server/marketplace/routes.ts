@@ -137,8 +137,10 @@ export function setupMarketplaceRoutes(app: any, options: {
         let matterhornDeliveries: any[] = [];
         try {
           const destCode = String(destCountry || 'IT').toUpperCase().slice(0, 2);
+          const matterhornApiKey = process.env.MATTERHORN_API_KEY;
+          if (!matterhornApiKey) throw new Error('Matterhorn delivery is not configured');
           const mhRes = await fetch(`https://matterhorn-wholesale.com/B2BAPI/DICTIONARIES/DELIVERY/${destCode}`, {
-            headers: { 'Authorization': '8c6d9d74ee', 'Accept': 'application/json' }
+            headers: { 'Authorization': matterhornApiKey, 'Accept': 'application/json' }
           });
           if (mhRes.ok) {
             matterhornDeliveries = await mhRes.json();

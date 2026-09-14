@@ -8,6 +8,7 @@ import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom'
 import { LayoutDashboard, Server, Bot, Users, Package, Settings, LogOut, BarChart3, Truck, Crown, Edit, Save, LifeBuoy, Sparkles, Menu, X, Eye, Lock, Unlock, LogIn, CreditCard, Wallet, ShieldCheck, XCircle, Moon, Sun, MapPin, Clipboard, PlayCircle, RefreshCw, Mail, Send, Activity, Clock, Plug, Store, Link2, CheckCircle2, AlertTriangle, ExternalLink, BookOpen } from 'lucide-react';
 import { api, removeAuthToken, getAuthToken, setAuthToken } from '../lib/api';
 import { useI18n } from '../lib/i18n';
+import { APP_VERSION } from '../lib/appVersion';
 
 const normalizeAdminCarrierText = (value: any) => String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 const displayAdminCarrierName = (value: any) => {
@@ -144,6 +145,10 @@ const AdminSidebar = ({ isMobileMenuOpen, toggleMobileMenu, currentUser, isDark,
           })}
         </nav>
         <div className="p-4 border-t border-slate-800 flex flex-col gap-4">
+          <div className="px-4 flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+            <span>DoorDrop</span>
+            <span>v{APP_VERSION}</span>
+          </div>
           <div className="px-4 text-black">
             <LanguageSelector />
           </div>

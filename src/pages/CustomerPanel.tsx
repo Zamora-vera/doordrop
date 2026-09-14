@@ -1,6 +1,6 @@
 import { OmnichannelApp } from './OmnichannelApp';
 /* ship24go-cache-bust-1789141438 */
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import { BookOpen, Bot, MessageSquare, Users, LayoutDashboard, Package, Calculator, Store, Settings, LogOut, Plus, Search, Moon, Sun, Wallet, ChartPie, Plug, Box, Globe, ChevronDown, ChevronLeft, ChevronRight, Menu, X, CheckCircle, Code, LifeBuoy, Sparkles, CreditCard, Crown, ShieldCheck, Trash2, Truck, ArrowLeft, User, MapPin, Pencil, Download, RotateCw, Clock, Eye, FileText, Info, Percent, ChevronUp } from 'lucide-react';
 import { api, removeAuthToken, getAuthToken, setAuthToken } from '../lib/api';
@@ -19,6 +19,7 @@ import { useCurrency } from '../lib/currency';
 import { CameraMeasure } from '../components/CameraMeasure';
 import { BrandMark } from '../lib/brand';
 import { PanelErrorBoundary } from '../components/PanelErrorBoundary';
+import { APP_VERSION } from '../lib/appVersion';
 import Tariffa from './Tariffa';
 import { SellerPanel } from './SellerPanel';
 import {
@@ -726,6 +727,10 @@ const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile, isSidebarCollaps
           </nav>
 
           <div className={`border-t border-gray-200 p-3 dark:border-gray-800/50 sm:p-4 ${isSidebarCollapsed ? 'lg:px-2' : ''}`}>
+              <div className={`mb-2 flex items-center justify-between px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400 dark:text-gray-500 ${isSidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}>
+                <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>DoorDrop</span>
+                <span title={`DoorDrop v${APP_VERSION}`}>v{APP_VERSION}</span>
+              </div>
               <button
                 type="button"
                 onClick={() => { removeAuthToken(); navigate('/auth/login'); }}
@@ -2604,6 +2609,16 @@ const Shipments = () => {
   const [editingShipment, setEditingShipment] = useState<any>(null);
   const [editForm, setEditForm] = useState<any>({ sender: {}, recipient: {}, packages: [] });
   const [termsOpen, setTermsOpen] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [courierFilter, setCourierFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [cancellationTargets, setCancellationTargets] = useState<any[]>([]);
+  const [cancellationReasonCode, setCancellationReasonCode] = useState('service_not_needed');
+  const [cancellationDetail, setCancellationDetail] = useState('');
+  const [aiReasonLoading, setAiReasonLoading] = useState(false);
   const serviceTerms = getCustomerServiceTerms(language);
 
   const loadShipments = () => {
@@ -2679,19 +2694,100 @@ const Shipments = () => {
     }
   };
 
-  const requestCancellation = async (shipment: any) => {
-    const reason = window.prompt('Describe brevemente por qué deseas cancelar este envío. La solicitud será revisada por nuestro equipo y el reembolso no será automático.');
-    if (reason === null) return;
-    setActionLoading(`cancel-${shipment.id}`);
+  const cancellationReasons = [
+    { code: 'service_not_needed', label: 'Ya no necesito realizar el envío' },
+    { code: 'incorrect_shipment_data', label: 'Los datos del envío son incorrectos' },
+    { code: 'duplicate_shipment', label: 'El envío fue creado por duplicado' },
+    { code: 'delivery_time', label: 'El plazo de entrega no me conviene' },
+    { code: 'price', label: 'El precio final no me conviene' },
+    { code: 'other', label: 'Otro motivo' },
+  ];
+
+  const openCancellationModal = (targets: any[]) => {
+    const eligible = targets.filter((shipment) => shipment?.canRequestCancellation);
+    if (!eligible.length) return;
+    setCancellationTargets(eligible);
+    setCancellationReasonCode('service_not_needed');
+    setCancellationDetail('');
+  };
+
+  const requestCancellation = async () => {
+    if (!cancellationTargets.length) return;
+    const reasonLabel = cancellationReasons.find((item) => item.code === cancellationReasonCode)?.label || 'Otro motivo';
+    const detail = cancellationDetail.trim();
+    const reason = detail ? `${reasonLabel}. ${detail}` : reasonLabel;
+    setActionLoading('cancel-batch');
     try {
-      const res = await api.requestShipmentCancellation(shipment.id, { reason, lang: language });
-      alert(res.message || 'Solicitud recibida. Te responderemos por correo y ticket.');
-      loadShipments();
+      const results = await Promise.allSettled(
+        cancellationTargets.map((shipment) => api.requestShipmentCancellation(shipment.id, { reason, reasonCode: cancellationReasonCode, lang: language }))
+      );
+      const completed = results.filter((result) => result.status === 'fulfilled').length;
+      const failed = results.length - completed;
+      setCancellationTargets([]);
+      setSelectedIds(new Set());
+      await loadShipments();
+      alert(failed ? `${completed} solicitud(es) enviadas; ${failed} no pudieron procesarse.` : `${completed} solicitud(es) recibidas. Te responderemos por correo y ticket.`);
     } catch (e: any) {
       alert(e.message || 'No se pudo completar la solicitud.');
     } finally {
       setActionLoading('');
     }
+  };
+
+  const suggestCancellationReason = async () => {
+    if (!cancellationTargets.length) return;
+    setAiReasonLoading(true);
+    try {
+      const response = await api.suggestShipmentCancellationReason(cancellationTargets[0].id, {
+        reasonCode: cancellationReasonCode,
+        detail: cancellationDetail,
+        lang: language,
+        shipmentCount: cancellationTargets.length,
+      });
+      if (response?.suggestion) setCancellationDetail(response.suggestion);
+    } catch (e: any) {
+      alert(e.message || 'La asistencia no está disponible. Puedes escribir el motivo directamente.');
+    } finally {
+      setAiReasonLoading(false);
+    }
+  };
+
+  const shipmentRows = useMemo(() => shipments.map((shipment) => {
+    const statusView = getCustomerShipmentStatus(shipment);
+    const courier = getCarrierName({ carrierName: shipment.carrierName, service: shipment.quote?.serviceName || shipment.serviceName });
+    return { shipment, statusView, courier };
+  }), [shipments]);
+
+  const availableStatuses = useMemo(() => Array.from(new Set(shipmentRows.map((row) => row.statusView.label))).sort(), [shipmentRows]);
+  const availableCouriers = useMemo(() => Array.from(new Set(shipmentRows.map((row) => row.courier))).sort(), [shipmentRows]);
+  const filteredRows = useMemo(() => shipmentRows.filter(({ shipment, statusView, courier }) => {
+    const haystack = [shipment.trackingCode, shipment.recipient?.city, shipment.recipient?.country, shipment.recipient?.name, courier, statusView.label].join(' ').toLowerCase();
+    const created = shipment.createdAt ? new Date(shipment.createdAt) : null;
+    const afterStart = !dateFrom || (created && created >= new Date(`${dateFrom}T00:00:00`));
+    const beforeEnd = !dateTo || (created && created <= new Date(`${dateTo}T23:59:59`));
+    return haystack.includes(searchText.trim().toLowerCase())
+      && (statusFilter === 'all' || statusView.label === statusFilter)
+      && (courierFilter === 'all' || courier === courierFilter)
+      && Boolean(afterStart && beforeEnd);
+  }), [shipmentRows, searchText, statusFilter, courierFilter, dateFrom, dateTo]);
+
+  const selectedShipments = shipments.filter((shipment) => selectedIds.has(shipment.id));
+  const allVisibleSelected = filteredRows.length > 0 && filteredRows.every(({ shipment }) => selectedIds.has(shipment.id));
+  const toggleVisibleSelection = () => {
+    setSelectedIds((previous) => {
+      const next = new Set(previous);
+      if (allVisibleSelected) filteredRows.forEach(({ shipment }) => next.delete(shipment.id));
+      else filteredRows.forEach(({ shipment }) => next.add(shipment.id));
+      return next;
+    });
+  };
+
+  const toggleShipmentSelection = (id: string) => {
+    setSelectedIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
   const labelUrl = (shipment: any, download = false) => {
@@ -2721,6 +2817,37 @@ const Shipments = () => {
         </Link>
       </div>
 
+      <div className="mb-5 rounded-3xl border border-gray-200 bg-white/90 p-4 shadow-sm dark:border-gray-800 dark:bg-dark-900/90">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <label className="relative xl:col-span-2">
+            <Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-gray-400" />
+            <input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Tracking, destino, destinatario o courier" className="h-11 w-full rounded-xl border border-gray-200 bg-white pl-10 pr-3 text-sm outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-dark-800" />
+          </label>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-11 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-dark-800">
+            <option value="all">Todos los estados</option>
+            {availableStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+          </select>
+          <select value={courierFilter} onChange={(event) => setCourierFilter(event.target.value)} className="h-11 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-dark-800">
+            <option value="all">Todos los couriers</option>
+            {availableCouriers.map((courier) => <option key={courier} value={courier}>{courier}</option>)}
+          </select>
+          <button type="button" onClick={() => { setSearchText(''); setStatusFilter('all'); setCourierFilter('all'); setDateFrom(''); setDateTo(''); }} className="h-11 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-dark-800">Limpiar filtros</button>
+        </div>
+        <div className="mt-3 flex flex-col gap-3 border-t border-gray-100 pt-3 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <input aria-label="Fecha inicial" type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-xs font-semibold dark:border-gray-700 dark:bg-dark-800" />
+            <span className="text-xs font-bold text-gray-400">a</span>
+            <input aria-label="Fecha final" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-xs font-semibold dark:border-gray-700 dark:bg-dark-800" />
+            <span className="text-xs font-bold text-gray-500">{filteredRows.length} resultado(s)</span>
+          </div>
+          {selectedIds.size > 0 && <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-blue-50 px-3 py-1.5 text-xs font-black text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">{selectedIds.size} seleccionado(s)</span>
+            <button type="button" onClick={() => setSelectedIds(new Set())} className="rounded-xl px-3 py-2 text-xs font-bold text-gray-500 hover:bg-gray-100 dark:hover:bg-dark-800">Quitar selección</button>
+            <button type="button" onClick={() => openCancellationModal(selectedShipments)} disabled={!selectedShipments.some((shipment) => shipment.canRequestCancellation)} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-3 py-2 text-xs font-black text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-40"><Trash2 className="h-4 w-4" /> Solicitar cancelación</button>
+          </div>}
+        </div>
+      </div>
+
       <div className="glass-panel rounded-3xl overflow-hidden border border-gray-200 dark:border-gray-800">
         {shipments.length === 0 && !loading ? (
           <div className="p-16 text-center text-gray-500 dark:text-gray-400">
@@ -2732,6 +2859,7 @@ const Shipments = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-gray-50/50 dark:bg-dark-800/50 border-b border-gray-200 dark:border-gray-800 text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-gray-400">
+                  <th className="p-5"><input aria-label="Seleccionar resultados visibles" type="checkbox" checked={allVisibleSelected} onChange={toggleVisibleSelection} /></th>
                   <th className="p-5">Tracking</th>
                   <th className="p-5">{t('destination')}</th>
                   <th className="p-5">Courier</th>
@@ -2741,15 +2869,15 @@ const Shipments = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                {shipments.map((s: any) => {
-                  const statusView = getCustomerShipmentStatus(s);
+                {filteredRows.map(({ shipment: s, statusView, courier }) => {
                   const StatusIcon = statusView.Icon;
                   return (
                   <tr key={s.id} className="hover:bg-blue-50/50 dark:hover:bg-neon-cyan/5 transition-colors">
+                    <td className="p-5"><input aria-label={`Seleccionar envío ${s.trackingCode || s.id}`} type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleShipmentSelection(s.id)} /></td>
                     <td className="p-5 font-mono font-bold text-blue-600 dark:text-neon-cyan">{s.trackingCode}</td>
                     <td className="p-5 text-gray-900 dark:text-gray-300 font-medium">{s.recipient?.city || '-'}</td>
                     <td className="p-5">
-                      <div className="text-sm font-black text-gray-900 dark:text-white">{getCarrierName({ carrierName: s.carrierName, service: s.quote?.serviceName || s.serviceName })}</div>
+                      <div className="text-sm font-black text-gray-900 dark:text-white">{courier}</div>
                     </td>
                     <td className="p-5">
                       <div className="flex flex-col gap-1.5">
@@ -2781,7 +2909,7 @@ const Shipments = () => {
                           </span>
                         )}
                         {s.canRequestCancellation && (
-                          <button onClick={() => requestCancellation(s)} disabled={actionLoading === 'cancel-' + s.id} className="inline-flex items-center gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-xs font-black text-rose-700 hover:bg-rose-100 disabled:opacity-60 dark:bg-rose-950/30 dark:text-rose-300">
+                          <button onClick={() => openCancellationModal([s])} disabled={actionLoading === 'cancel-batch'} className="inline-flex items-center gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-xs font-black text-rose-700 hover:bg-rose-100 disabled:opacity-60 dark:bg-rose-950/30 dark:text-rose-300">
                             <Trash2 className="w-4 h-4" /> Solicitar cancelación
                           </button>
                         )}
@@ -2815,9 +2943,28 @@ const Shipments = () => {
                 })}
               </tbody>
             </table>
+            {filteredRows.length === 0 && <div className="p-12 text-center text-sm font-semibold text-gray-500">No hay envíos que coincidan con los filtros.</div>}
           </div>
         )}
       </div>
+
+      {cancellationTargets.length > 0 && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
+          <div role="dialog" aria-modal="true" aria-labelledby="cancel-title" className="w-full max-w-xl overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-dark-900">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-100 p-6 dark:border-gray-800">
+              <div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-rose-600">Revisión humana obligatoria</p><h2 id="cancel-title" className="mt-1 text-2xl font-black">Solicitar cancelación</h2><p className="mt-2 text-sm text-gray-500">{cancellationTargets.length} envío(s). El reembolso no es automático.</p></div>
+              <button type="button" onClick={() => setCancellationTargets([])} aria-label="Cerrar" className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 dark:hover:bg-dark-800"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="space-y-4 p-6">
+              <label className="block"><span className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-500">Motivo</span><select value={cancellationReasonCode} onChange={(event) => setCancellationReasonCode(event.target.value)} className="h-12 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-dark-800">{cancellationReasons.map((reason) => <option key={reason.code} value={reason.code}>{reason.label}</option>)}</select></label>
+              <label className="block"><span className="mb-2 block text-xs font-black uppercase tracking-wider text-gray-500">Explicación adicional</span><textarea value={cancellationDetail} onChange={(event) => setCancellationDetail(event.target.value)} maxLength={1500} rows={5} placeholder="Puedes explicar tu caso con tus propias palabras." className="w-full resize-none rounded-2xl border border-gray-200 bg-white p-4 text-sm outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-dark-800" /><span className="mt-1 block text-right text-[11px] text-gray-400">{cancellationDetail.length}/1500</span></label>
+              <button type="button" onClick={suggestCancellationReason} disabled={aiReasonLoading} className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-xs font-black text-violet-700 hover:bg-violet-100 disabled:opacity-50 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-300"><Sparkles className={`h-4 w-4 ${aiReasonLoading ? 'animate-pulse' : ''}`} />{aiReasonLoading ? 'Redactando…' : 'Mejorar explicación con IA'}</button>
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200">DoorDrop comprobará el estado logístico y los costes ya incurridos. Enviar esta solicitud crea un ticket individual por cada envío elegible.</div>
+            </div>
+            <div className="flex flex-col-reverse gap-3 border-t border-gray-100 p-6 dark:border-gray-800 sm:flex-row sm:justify-end"><button type="button" onClick={() => setCancellationTargets([])} className="rounded-xl border border-gray-200 px-5 py-3 text-sm font-black hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-dark-800">Volver</button><button type="button" onClick={requestCancellation} disabled={actionLoading === 'cancel-batch'} className="rounded-xl bg-rose-600 px-5 py-3 text-sm font-black text-white hover:bg-rose-700 disabled:opacity-50">{actionLoading === 'cancel-batch' ? 'Enviando…' : `Enviar ${cancellationTargets.length} solicitud(es)`}</button></div>
+          </div>
+        </div>
+      )}
 
       {termsOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">

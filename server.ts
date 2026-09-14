@@ -46,6 +46,13 @@ import { sendPasswordResetEmail, sendTemplatedEmail, sendNotificationEvent, test
 
 
 const app = express();
+const APP_VERSION = (() => {
+  try {
+    return fs.readFileSync(path.resolve(process.cwd(), 'VERSION'), 'utf8').trim() || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+})();
 app.set('trust proxy', true); // real client IP behind nginx/CF
 
 // HTML shell: avoid CDN caching so script tags stay as type=module
@@ -72,6 +79,10 @@ app.use(express.json({
     }
   }
 }));
+
+app.get('/api/version', (_req, res) => {
+  res.json({ name: 'DoorDrop', version: APP_VERSION });
+});
 
 
 // SHIP24GO_DROP_OFF_ALIAS — public path without supplier name
@@ -13967,6 +13978,41 @@ Answer the customer now. If the context does not contain enough reliable informa
   res.json({ success: true, response: responseText, conversationId: conversation, escalated, ticket: ticket ? { id: ticket.id, subject: ticket.subject, status: ticket.status } : null });
 }
 
+
+const CANCELLATION_REASON_LABELS: Record<string, Record<string, string>> = {
+  es: { service_not_needed: 'Ya no necesito realizar el envío', incorrect_shipment_data: 'Los datos del envío son incorrectos', duplicate_shipment: 'El envío fue creado por duplicado', delivery_time: 'El plazo de entrega no me conviene', price: 'El precio final no me conviene', other: 'Otro motivo' },
+  en: { service_not_needed: 'I no longer need this shipment', incorrect_shipment_data: 'The shipment details are incorrect', duplicate_shipment: 'The shipment was created twice', delivery_time: 'The delivery time does not work for me', price: 'The final price does not work for me', other: 'Other reason' },
+  it: { service_not_needed: 'Non ho più bisogno di effettuare la spedizione', incorrect_shipment_data: 'I dati della spedizione non sono corretti', duplicate_shipment: 'La spedizione è stata creata due volte', delivery_time: 'Il tempo di consegna non è adatto', price: 'Il prezzo finale non è adatto', other: 'Altro motivo' },
+  fr: { service_not_needed: 'Je n’ai plus besoin de cet envoi', incorrect_shipment_data: 'Les informations de l’envoi sont incorrectes', duplicate_shipment: 'L’envoi a été créé deux fois', delivery_time: 'Le délai de livraison ne me convient pas', price: 'Le prix final ne me convient pas', other: 'Autre motif' },
+  de: { service_not_needed: 'Ich benötige diese Sendung nicht mehr', incorrect_shipment_data: 'Die Sendungsdaten sind falsch', duplicate_shipment: 'Die Sendung wurde doppelt erstellt', delivery_time: 'Die Lieferzeit passt nicht', price: 'Der Endpreis passt nicht', other: 'Anderer Grund' },
+};
+
+app.post('/api/shipments/:id/cancellation-reason/suggest', authMiddleware, async (req: any, res) => {
+  try {
+    const shipment = await ShipmentRepo.getById(req.params.id);
+    if (!shipment || shipment.user_id !== req.user.id) return res.status(404).json({ error: 'No hay datos para mostrar.' });
+    if (!canRequestCancellationForShipment(shipment)) return res.status(400).json({ error: 'Este envío no permite solicitar cancelación en este momento.' });
+
+    const language = normalizeCopilotLanguage(req.body?.lang || req.user?.language || 'es');
+    const code = String(req.body?.reasonCode || 'other');
+    const label = CANCELLATION_REASON_LABELS[language]?.[code] || CANCELLATION_REASON_LABELS.es[code] || CANCELLATION_REASON_LABELS.es.other;
+    const customerDetail = String(req.body?.detail || '').trim().slice(0, 1200);
+    const count = Math.max(1, Math.min(100, Number(req.body?.shipmentCount || 1)));
+    const fallback = customerDetail || label;
+
+    try {
+      const ai = await callOpenAIText([
+        { role: 'system', content: `You rewrite a customer's shipment cancellation explanation in ${COPILOT_LANGUAGES[language] || 'Spanish'}. Be factual, polite and concise (maximum 70 words). Preserve the customer's meaning. Do not invent dates, promises, refunds, legal claims, courier actions or personal data. Return only the improved explanation.` },
+        { role: 'user', content: `Selected reason: ${label}\nShipments included: ${count}\nCustomer detail: ${customerDetail || 'No additional detail provided.'}` },
+      ], language, { maxOutputTokens: 180 });
+      return res.json({ success: true, suggestion: cleanCopilotOutput(ai.text).slice(0, 1500), source: 'ai' });
+    } catch {
+      return res.json({ success: true, suggestion: fallback.slice(0, 1500), source: 'predefined' });
+    }
+  } catch {
+    return res.status(500).json({ error: 'No se pudo preparar la explicación.' });
+  }
+});
 
 // Solicitar cancelación: el cliente abre un ticket, el reembolso queda pendiente de revisión.
 app.post('/api/shipments/:id/cancel-request', authMiddleware, async (req: any, res) => {

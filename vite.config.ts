@@ -1,7 +1,10 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import fs from 'fs';
 import {defineConfig} from 'vite';
+
+const packageVersion = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 
 export default defineConfig(() => {
   return {
@@ -21,7 +24,8 @@ export default defineConfig(() => {
       },
     },
     define: {
-      'process.env.GOOGLE_MAPS_PLATFORM_KEY': JSON.stringify(process.env.GOOGLE_MAPS_PLATFORM_KEY || '')
+      'process.env.GOOGLE_MAPS_PLATFORM_KEY': JSON.stringify(process.env.GOOGLE_MAPS_PLATFORM_KEY || ''),
+      '__APP_VERSION__': JSON.stringify(packageVersion)
     },
     server: {
       allowedHosts: ['ship24go.com', 'www.ship24go.com', 'ce2f3596.ship24go.com', 'localhost', '127.0.0.1'],

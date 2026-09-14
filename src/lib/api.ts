@@ -64,6 +64,7 @@ export const api = {
   finalizeShipment: (id: string) => fetchAPI(`/shipments/${id}/finalize`, { method: 'POST' }),
   retryShipmentLabel: (id: string) => fetchAPI(`/shipments/${id}/retry-label`, { method: 'POST' }),
   requestShipmentCancellation: (id: string, data: any = {}) => fetchAPI(`/shipments/${id}/cancel-request`, { method: 'POST', body: JSON.stringify(data) }),
+  suggestShipmentCancellationReason: (id: string, data: any = {}) => fetchAPI(`/shipments/${id}/cancellation-reason/suggest`, { method: 'POST', body: JSON.stringify(data) }),
   trackShipment: (code: string) => fetchAPI(`/tracking/${code}`),
   getAdminStats: () => fetchAPI('/admin/stats'),
   getAdminClients: () => fetchAPI('/admin/clients'),

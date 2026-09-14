@@ -1,7 +1,7 @@
 {
   "name": "ship24go-enviox",
   "private": true,
-  "version": "1.4.37",
+  "version": "1.5.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
