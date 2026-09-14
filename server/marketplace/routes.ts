@@ -11,9 +11,21 @@ export function setupMarketplaceRoutes(app: any, options: {
   requireSuperAdmin: any;
   UserRepo: any;
   generateId: any;
+  walletMutation?: (options: {
+    userId: string;
+    type: 'credit' | 'debit';
+    amount: number;
+    currency: string;
+    description: string;
+    referenceType: string;
+    referenceId: string;
+    status?: string;
+    adminNote?: string | null;
+    rates?: Record<string, number>;
+  }) => Promise<any>;
 }) {
   const router = Router();
-  const { authMiddleware, requireSuperAdmin, UserRepo, pool } = options;
+  const { authMiddleware, requireSuperAdmin, UserRepo, pool, walletMutation: mutateWallet } = options;
 
   // Ensure uploads directory exists
   const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'marketplace');
@@ -700,21 +712,37 @@ export function setupMarketplaceRoutes(app: any, options: {
       const protectionAmountMinor = Math.round(productAmountMinor * 0.02); // 2% buyer protection
       const totalAmountMinor = productAmountMinor + shippingAmountMinor + protectionAmountMinor;
 
-      const totalEuros = totalAmountMinor / 100;
+      const sourceCurrency = String(listing.currency || 'EUR').toUpperCase().slice(0, 3);
+      let walletDebit: any = null;
 
       // Handle payment method: Wallet
       if (paymentMethod === 'wallet') {
-        const user = await UserRepo.getById(req.user.id);
-        const balance = Number(user.balance || 0);
-
-        if (balance < totalEuros) {
-          return res.status(400).json({
-            error: `Saldo insuficiente en tu billetera DoorDrop. Saldo disponible: ${balance.toFixed(2)} €, Total necesario: ${totalEuros.toFixed(2)} €. Recarga saldo para continuar.`
-          });
+        if (!mutateWallet) {
+          return res.status(503).json({ error: 'El cobro del Marketplace no está disponible temporalmente.' });
         }
-
-        // Deduct from buyer wallet
-        await UserRepo.updateBalance(req.user.id, -totalEuros);
+        try {
+          walletDebit = await mutateWallet({
+            userId: req.user.id,
+            type: 'debit',
+            amount: totalAmountMinor / 100,
+            currency: sourceCurrency,
+            description: `Compra Marketplace: ${String(listing.title || listing.id).slice(0, 160)}`,
+            referenceType: 'marketplace_checkout',
+            referenceId: `marketplace:${listing.id}:${req.user.id}:${Date.now()}`
+          });
+        } catch (error: any) {
+          if (error?.code === 'WALLET_INSUFFICIENT') {
+            return res.status(400).json({
+              error: 'Saldo insuficiente en tu billetera DoorDrop.',
+              balance: Number(error.balance || 0),
+              required: Number(error.required || 0)
+            });
+          }
+          if (error?.code === 'FX_UNAVAILABLE') {
+            return res.status(503).json({ error: 'No hay una tasa de cambio disponible para completar la compra.' });
+          }
+          throw error;
+        }
       }
 
       const sellerProfile = await MarketplaceRepo.getSellerProfileByUserId(listing.seller_id);
@@ -727,22 +755,42 @@ export function setupMarketplaceRoutes(app: any, options: {
         phone: sellerProfile?.phone || ''
       };
 
-      const order = await MarketplaceRepo.createOrder({
-        listingId,
-        buyerId: req.user.id,
-        productAmountMinor,
-        shippingAmountMinor,
-        commissionAmountMinor,
-        protectionAmountMinor,
-        totalAmountMinor,
-        currency: listing.currency,
-        buyerAddress,
-        sellerAddress,
-        shippingServiceName,
-        shippingProviderCode,
-        quoteId,
-        paymentMethod
-      });
+      let order: any;
+      try {
+        order = await MarketplaceRepo.createOrder({
+          listingId,
+          buyerId: req.user.id,
+          productAmountMinor,
+          shippingAmountMinor,
+          commissionAmountMinor,
+          protectionAmountMinor,
+          totalAmountMinor,
+          currency: sourceCurrency,
+          buyerAddress,
+          sellerAddress,
+          shippingServiceName,
+          shippingProviderCode,
+          quoteId,
+          paymentMethod
+        });
+      } catch (error) {
+        if (walletDebit && mutateWallet) {
+          try {
+            await mutateWallet({
+              userId: req.user.id,
+              type: 'credit',
+              amount: walletDebit.sourceAmount,
+              currency: walletDebit.sourceCurrency,
+              description: 'Reversión de cobro Marketplace no creado',
+              referenceType: 'marketplace_checkout_reversal',
+              referenceId: walletDebit.transactionId
+            });
+          } catch (reversalError: any) {
+            console.error('[Marketplace] No se pudo revertir el cobro fallido:', reversalError?.code || reversalError?.message || 'error');
+          }
+        }
+        throw error;
+      }
 
       // Notify seller via system message in conversation
       try {
@@ -750,7 +798,7 @@ export function setupMarketplaceRoutes(app: any, options: {
         await MarketplaceRepo.sendMessage(
           conv.id,
           req.user.id,
-          `¡Compra confirmada! Pedido ${order.order_number} por ${(totalAmountMinor / 100).toFixed(2)} ${listing.currency}. El vendedor preparará el paquete con DoorDrop Envíos.`,
+          `¡Compra confirmada! Pedido ${order.order_number} por ${(totalAmountMinor / 100).toFixed(2)} ${sourceCurrency}. El vendedor preparará el paquete con DoorDrop Envíos.`,
           'system'
         );
       } catch {}
@@ -778,7 +826,7 @@ export function setupMarketplaceRoutes(app: any, options: {
             orderNumber: order.order_number,
             listingTitle: listing.title,
             totalAmount: orderTotal,
-            currency: listing.currency,
+            currency: sourceCurrency,
             orderStatus: 'Pagado',
             orderUrl,
             sellerName
@@ -798,7 +846,7 @@ export function setupMarketplaceRoutes(app: any, options: {
             orderNumber: order.order_number,
             listingTitle: listing.title,
             totalAmount: orderTotal,
-            currency: listing.currency,
+            currency: sourceCurrency,
             buyerName,
             orderUrl,
             shippingAddressUrl: orderUrl

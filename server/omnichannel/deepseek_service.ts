@@ -6,6 +6,23 @@ import { getUserOmnichannelSubscription, hasActiveOmnichannelSubscription } from
 let cachedDeepseekKey = process.env.DEEPSEEK_API_KEY || '';
 let cachedMarginPercent = 10.0; // Standard resale margin
 
+type OmnichannelWalletMutation = (options: {
+  userId: string;
+  type: 'credit' | 'debit';
+  amount: number;
+  currency: string;
+  description: string;
+  referenceType: string;
+  referenceId: string;
+  minimumBalance?: number;
+}) => Promise<any>;
+
+let omnichannelWalletMutation: OmnichannelWalletMutation | null = null;
+
+export function configureOmnichannelWalletMutation(mutation: OmnichannelWalletMutation) {
+  omnichannelWalletMutation = mutation;
+}
+
 export async function getDeepSeekConfig() {
   try {
     const [rows]: any = await pool.query(
@@ -118,6 +135,10 @@ export async function callDeepSeekChat(
  */
 export async function billUserForAiUsage(userId: string, totalTokens: number, countryCode: string = 'IT') {
   if (!totalTokens || totalTokens <= 0) return;
+  if (!omnichannelWalletMutation) {
+    console.error('[AI Billing] Wallet mutation service is not configured; charge skipped.');
+    return;
+  }
   const { marginPercent } = await getDeepSeekConfig();
 
   const peak = isPeakHour(countryCode);
@@ -126,18 +147,25 @@ export async function billUserForAiUsage(userId: string, totalTokens: number, co
   // Base cost estimate: 1,000 tokens ≈ $0.0003
   const baseCostUSD = (totalTokens / 1000) * 0.0003;
   const finalCost = baseCostUSD * (1 + (effectiveMargin / 100));
-  const roundedCost = Number(finalCost.toFixed(5));
+  // Wallet balances and wallet_transactions use cents as their accounting precision.
+  const roundedCost = Number(finalCost.toFixed(2));
 
-  if (roundedCost <= 0.00001) return;
+  if (roundedCost <= 0) return;
 
   try {
-    await pool.query(
-      "UPDATE users SET balance = balance - ? WHERE id = ?",
-      [roundedCost, userId]
-    );
-    console.log(`[AI Billing] User ${userId} billed ${roundedCost} (Tokens: ${totalTokens}, Margin: +${effectiveMargin}% ${peak ? '[PEAK HOUR]' : '[STANDARD]'})`);
+    const mutation = await omnichannelWalletMutation({
+      userId,
+      type: 'debit',
+      amount: roundedCost,
+      currency: 'USD',
+      description: `Uso agente IA (${totalTokens} tokens${peak ? ', hora punta' : ''})`,
+      referenceType: 'omnichannel_ai_usage',
+      referenceId: `ai:${userId}:${Date.now()}`,
+      minimumBalance: -1.00
+    });
+    console.log(`[AI Billing] User ${userId} billed ${mutation.walletAmount} ${mutation.walletCurrency} (Tokens: ${totalTokens}, Margin: +${effectiveMargin}% ${peak ? '[PEAK HOUR]' : '[STANDARD]'})`);
   } catch (err: any) {
-    console.error(`[AI Billing] Error deducting balance for user ${userId}:`, err.message);
+    console.error(`[AI Billing] Error deducting balance for user ${userId}:`, err.code || err.message);
   }
 }
 

@@ -793,6 +793,7 @@ async function applyWalletMutation(conn: any, options: {
   transactionId?: string;
   status?: string;
   adminNote?: string | null;
+  minimumBalance?: number;
   rates?: Record<string, number>;
 }) {
   const user = await lockedWalletUser(conn, options.userId);
@@ -804,7 +805,8 @@ async function applyWalletMutation(conn: any, options: {
   const nextBalance = options.type === 'debit'
     ? roundMoney(user.balance - walletAmount)
     : roundMoney(user.balance + walletAmount);
-  if (options.type === 'debit' && nextBalance < 0) {
+  const minimumBalance = Number.isFinite(Number(options.minimumBalance)) ? Number(options.minimumBalance) : 0;
+  if (options.type === 'debit' && nextBalance < minimumBalance) {
     const error: any = new Error('Saldo insuficiente para completar la operación.');
     error.code = 'WALLET_INSUFFICIENT';
     error.balance = user.balance;
@@ -835,6 +837,21 @@ async function applyWalletMutation(conn: any, options: {
     ]
   );
   return { user, sourceAmount, sourceCurrency, walletAmount, walletCurrency: user.currency, newBalance: nextBalance, transactionId };
+}
+
+async function applyWalletMutationCommitted(options: Parameters<typeof applyWalletMutation>[1]) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const result = await applyWalletMutation(conn, options);
+    await conn.commit();
+    return result;
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
 }
 
 
@@ -14440,12 +14457,21 @@ app.get('/api/currencies', async (req, res) => {
 // --- MARKETPLACE INTEGRATION ---
 import { setupMarketplaceRoutes } from './server/marketplace/routes';
 import podRoutes from './server/marketplace/podRoutes';
-setupMarketplaceRoutes(app, { pool, authMiddleware, requireSuperAdmin, UserRepo, generateId });
+setupMarketplaceRoutes(app, {
+  pool,
+  authMiddleware,
+  requireSuperAdmin,
+  UserRepo,
+  generateId,
+  walletMutation: applyWalletMutationCommitted
+});
 app.use('/api/pod', podRoutes);
 app.use(podRoutes);
 
 // --- OMNICHANNEL INTEGRATION ---
 import { setupOmnichannelRoutes } from './server/omnichannel/routes';
+import { configureOmnichannelWalletMutation } from './server/omnichannel/deepseek_service';
+configureOmnichannelWalletMutation(applyWalletMutationCommitted);
 setupOmnichannelRoutes(app, { pool, authMiddleware, requireSuperAdmin, UserRepo });
 
 // --- VITE MIDDLEWARE & FALLBACK ---
