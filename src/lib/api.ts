@@ -32,6 +32,8 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
 
 export const api = {
   login: (data: any) => fetchAPI('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
+  forgotPassword: (data: { email: string }) => fetchAPI('/auth/forgot-password', { method: 'POST', body: JSON.stringify(data) }),
+  resetPassword: (data: { token: string; newPassword: string }) => fetchAPI('/auth/reset-password', { method: 'POST', body: JSON.stringify(data) }),
   register: (data: any) => fetchAPI('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
   getProfile: () => fetchAPI('/user/profile'),
   updateUserSettings: (data: any) => fetchAPI('/user/settings', { method: 'POST', body: JSON.stringify(data) }),

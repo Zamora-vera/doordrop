@@ -249,9 +249,9 @@ const Login = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
                     {t('password')}
                   </label>
-                  <a href="#" className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline">
+                  <Link to="/auth/forgot-password" className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline">
                     {t('forgot_password')}
-                  </a>
+                  </Link>
                 </div>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 dark:text-slate-500">
@@ -802,11 +802,369 @@ const Register = () => {
   );
 };
 
+
+// =============================================================================
+// PANTALLA: RECUPERAR CONTRASEÑA (FORGOT PASSWORD)
+// =============================================================================
+const ForgotPassword = () => {
+  const { t } = useI18n();
+  const { brand } = useBrand();
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setLoading(true);
+    setError('');
+
+    try {
+      await api.forgotPassword({ email: email.trim().toLowerCase() });
+      setSubmitted(true);
+    } catch (err: any) {
+      setError(err.message || 'No se pudo procesar la solicitud. Intenta nuevamente.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 grid grid-cols-1 lg:grid-cols-12 font-sans overflow-x-hidden">
+      <AuthSidebar />
+
+      <div className="col-span-1 lg:col-span-7 flex flex-col justify-between py-8 px-4 sm:px-6 lg:px-16 relative min-h-screen">
+        {/* Top bar */}
+        <div className="flex items-center justify-between w-full mb-8">
+          <Link to="/" className="lg:hidden">
+            <BrandMark iconClassName="w-8 h-8 rounded-lg" textClassName="text-xl text-slate-900 dark:text-white" />
+          </Link>
+          <div className="ml-auto flex items-center gap-4">
+            <LanguageSelector />
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="my-auto w-full max-w-md mx-auto">
+          <div className="text-left mb-8">
+            <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+              {t('forgot_password_title') || 'Recuperar Contraseña'}
+            </h2>
+            <p className="mt-2.5 text-sm text-slate-500 dark:text-slate-400">
+              {t('forgot_password_desc') || 'Ingresa el correo electrónico asociado a tu cuenta y te enviaremos un enlace seguro para restablecer tu contraseña.'}
+            </p>
+          </div>
+
+          <div className="bg-white dark:bg-slate-800 py-8 px-6 sm:px-10 rounded-3xl shadow-xl shadow-slate-100 dark:shadow-none border border-slate-100 dark:border-slate-700/55">
+            {submitted ? (
+              <div className="text-center py-4 space-y-4">
+                <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-2 shadow-sm">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                  {t('reset_email_sent_title') || 'Enlace de recuperación enviado'}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-sm mx-auto">
+                  {t('reset_email_sent_desc') || 'Si el correo ingresado coincide con una cuenta activa en DoorDrop, recibirás un enlace válido durante 30 minutos.'}
+                </p>
+                <div className="pt-4 border-t border-slate-100 dark:border-slate-700/50">
+                  <Link
+                    to="/auth/login"
+                    className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-all shadow-md shadow-blue-500/10"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>{t('back_to_login') || 'Volver a Iniciar Sesión'}</span>
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {error && (
+                  <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 text-xs font-medium">
+                    {error}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                    {t('email') || 'Correo Electrónico'}
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 dark:text-slate-500">
+                      <Mail className="w-4.5 h-4.5" />
+                    </div>
+                    <input
+                      required
+                      type="email"
+                      placeholder="nombre@empresa.com"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      className="block w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900 pl-11 pr-4 py-3 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  disabled={loading}
+                  type="submit"
+                  className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl shadow-lg shadow-blue-500/10 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 active:scale-[0.98] disabled:opacity-50 disabled:scale-100 focus:outline-none focus:ring-4 focus:ring-blue-500/20 cursor-pointer transition-all mt-4"
+                >
+                  {loading ? (
+                    <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                  ) : (
+                    <span>{t('send_reset_link') || 'Enviar Enlace de Recuperación'}</span>
+                  )}
+                </button>
+
+                <div className="pt-3 text-center">
+                  <Link
+                    to="/auth/login"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>{t('back_to_login') || 'Volver a Iniciar Sesión'}</span>
+                  </Link>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="text-center text-xs text-slate-400 dark:text-slate-500 mt-8 lg:hidden">
+          <span>© 2026 {brand.siteName || 'DoorDrop'}. Todos los derechos reservados.</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// =============================================================================
+// PANTALLA: RESTABLECER CONTRASEÑA (RESET PASSWORD)
+// =============================================================================
+const ResetPassword = () => {
+  const { t } = useI18n();
+  const { brand } = useBrand();
+  const location = useLocation();
+  const [token, setToken] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
+
+  // Leer token desde query params al montar y retirarlo de la barra de URL
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const rawToken = params.get('token');
+    if (rawToken) {
+      setToken(rawToken);
+      // Evitar que el token quede expuesto en la URL visible
+      try {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } catch (e) {
+        // Ignorar si el navegador restringe el historial
+      }
+    }
+  }, [location.search]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token) {
+      setError(t('invalid_reset_token') || 'El enlace de recuperación es inválido o ha expirado.');
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      setError(t('password_min_length') || 'La contraseña debe tener al menos 8 caracteres.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setError(t('passwords_dont_match') || 'Las contraseñas no coinciden.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await api.resetPassword({ token, newPassword });
+      setSuccess(true);
+    } catch (err: any) {
+      setError(err.message || 'No se pudo restablecer la contraseña. Solicita un nuevo enlace.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 grid grid-cols-1 lg:grid-cols-12 font-sans overflow-x-hidden">
+      <AuthSidebar />
+
+      <div className="col-span-1 lg:col-span-7 flex flex-col justify-between py-8 px-4 sm:px-6 lg:px-16 relative min-h-screen">
+        {/* Top bar */}
+        <div className="flex items-center justify-between w-full mb-8">
+          <Link to="/" className="lg:hidden">
+            <BrandMark iconClassName="w-8 h-8 rounded-lg" textClassName="text-xl text-slate-900 dark:text-white" />
+          </Link>
+          <div className="ml-auto flex items-center gap-4">
+            <LanguageSelector />
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="my-auto w-full max-w-md mx-auto">
+          <div className="text-left mb-8">
+            <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+              {t('reset_password_title') || 'Crear Nueva Contraseña'}
+            </h2>
+            <p className="mt-2.5 text-sm text-slate-500 dark:text-slate-400">
+              {t('reset_password_desc') || 'Establece una nueva contraseña segura para tu cuenta en DoorDrop.'}
+            </p>
+          </div>
+
+          <div className="bg-white dark:bg-slate-800 py-8 px-6 sm:px-10 rounded-3xl shadow-xl shadow-slate-100 dark:shadow-none border border-slate-100 dark:border-slate-700/55">
+            {success ? (
+              <div className="text-center py-4 space-y-4">
+                <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-2 shadow-sm">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                  {t('reset_success_title') || '¡Contraseña restablecida con éxito!'}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-sm mx-auto">
+                  {t('reset_success_desc') || 'Tu contraseña ha sido actualizada. Ya puedes ingresar a tu cuenta.'}
+                </p>
+                <div className="pt-4 border-t border-slate-100 dark:border-slate-700/50">
+                  <Link
+                    to="/auth/login"
+                    className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-all shadow-md shadow-blue-500/10"
+                  >
+                    <span>{t('back_to_login') || 'Iniciar Sesión'}</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </Link>
+                </div>
+              </div>
+            ) : !token && !loading ? (
+              <div className="text-center py-4 space-y-4">
+                <div className="w-16 h-16 bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 rounded-full flex items-center justify-center mx-auto mb-2 shadow-sm">
+                  <Lock className="w-8 h-8" />
+                </div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Enlace inválido o incompleto
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  No se detectó un token de recuperación válido en la dirección solicitada. Por favor, solicita un nuevo enlace.
+                </p>
+                <div className="pt-4">
+                  <Link
+                    to="/auth/forgot-password"
+                    className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-all shadow-md shadow-blue-500/10"
+                  >
+                    <span>Solicitar nuevo enlace</span>
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {error && (
+                  <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 text-xs font-medium">
+                    {error}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                    {t('new_password') || 'Nueva Contraseña'}
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 dark:text-slate-500">
+                      <Lock className="w-4.5 h-4.5" />
+                    </div>
+                    <input
+                      required
+                      type="password"
+                      placeholder="••••••••"
+                      value={newPassword}
+                      onChange={e => setNewPassword(e.target.value)}
+                      className="block w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900 pl-11 pr-4 py-3 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                    {t('password_min_length') || 'Mínimo 8 caracteres.'}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                    {t('confirm_password') || 'Confirmar Contraseña'}
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 dark:text-slate-500">
+                      <Lock className="w-4.5 h-4.5" />
+                    </div>
+                    <input
+                      required
+                      type="password"
+                      placeholder="••••••••"
+                      value={confirmPassword}
+                      onChange={e => setConfirmPassword(e.target.value)}
+                      className="block w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900 pl-11 pr-4 py-3 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  disabled={loading}
+                  type="submit"
+                  className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl shadow-lg shadow-blue-500/10 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 active:scale-[0.98] disabled:opacity-50 disabled:scale-100 focus:outline-none focus:ring-4 focus:ring-blue-500/20 cursor-pointer transition-all mt-4"
+                >
+                  {loading ? (
+                    <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                  ) : (
+                    <span>{t('reset_password_button') || 'Guardar Nueva Contraseña'}</span>
+                  )}
+                </button>
+
+                <div className="pt-3 text-center">
+                  <Link
+                    to="/auth/login"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>{t('back_to_login') || 'Volver a Iniciar Sesión'}</span>
+                  </Link>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="text-center text-xs text-slate-400 dark:text-slate-500 mt-8 lg:hidden">
+          <span>© 2026 {brand.siteName || 'DoorDrop'}. Todos los derechos reservados.</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 export default function AuthPages() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
     </Routes>
   );
 }

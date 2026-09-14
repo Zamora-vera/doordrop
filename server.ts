@@ -7,8 +7,22 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { pool } from './server/db/connection';
 
-// Asegurar la carga de variables del archivo .env
-dotenv.config();
+// Asegurar la carga de variables del archivo .env con override prioritario
+dotenv.config({ override: true });
+if (!process.env.MAIL_FROM_EMAIL || process.env.MAIL_FROM_EMAIL.includes('ship24go')) {
+  process.env.MAIL_FROM_EMAIL = 'info@doordrop.lat';
+}
+if (!process.env.MAIL_FROM_NAME || process.env.MAIL_FROM_NAME.toLowerCase().includes('ship24go')) {
+  process.env.MAIL_FROM_NAME = 'DoorDrop';
+}
+if (!process.env.APP_URL || process.env.APP_URL.includes('ship24go')) {
+  process.env.APP_URL = 'https://doordrop.lat';
+}
+if (!process.env.SMTP_HOST) {
+  process.env.SMTP_HOST = 'smtp.truobox.com';
+  process.env.SMTP_PORT = '465';
+  process.env.SMTP_SECURE = 'true';
+}
 
 import {
   initDb,
@@ -27,6 +41,8 @@ import {
 } from './server/db/repos';
 import { getDocBundle, docsToMarkdown, docsToPdfBuffer, getOpenApiSpec, getOpenAiToolSchemas } from './server/docs/apiDocs';
 import { swaggerUiHtml } from './server/docs/swaggerUi';
+import { sendPasswordResetEmail } from './server/services/emailService';
+
 
 const app = express();
 app.set('trust proxy', true); // real client IP behind nginx/CF
@@ -5792,6 +5808,184 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // 3. Perfil de Usuario
+
+// =============================================================================
+// RECUPEARACIÓN DE CONTRASEÑA (PASSWORD RESET) VIA SMTP TRUOBOX
+// =============================================================================
+
+// Rate limiter en memoria para /api/auth/forgot-password (IP y Email)
+const forgotPasswordRateLimits = new Map<string, { count: number; resetAt: number }>();
+function checkForgotPasswordRateLimit(key: string, maxRequests: number, windowMs: number): boolean {
+  const now = Date.now();
+  const entry = forgotPasswordRateLimits.get(key);
+  if (!entry || now > entry.resetAt) {
+    forgotPasswordRateLimits.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (entry.count >= maxRequests) {
+    return false;
+  }
+  entry.count++;
+  return true;
+}
+
+// Limpieza periódica de rate limits cada 30 minutos
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of forgotPasswordRateLimits.entries()) {
+    if (now > val.resetAt) {
+      forgotPasswordRateLimits.delete(key);
+    }
+  }
+}, 30 * 60 * 1000);
+
+// Solicitar recuperación de contraseña (público, no-enumeración)
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const publicSuccessMessage = 'Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.';
+  try {
+    const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!rawEmail || !emailRegex.test(rawEmail)) {
+      return res.status(400).json({ error: 'Por favor, ingresa un correo electrónico válido.' });
+    }
+
+    const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+
+    // Rate limits: max 5 por IP cada 15 min, max 3 por email cada 15 min
+    const ipAllowed = checkForgotPasswordRateLimit(`ip_${clientIp}`, 5, 15 * 60 * 1000);
+    const emailAllowed = checkForgotPasswordRateLimit(`email_${rawEmail}`, 3, 15 * 60 * 1000);
+
+    if (!ipAllowed || !emailAllowed) {
+      return res.status(429).json({
+        error: 'Demasiadas solicitudes de recuperación. Por favor, espera 15 minutos antes de intentar de nuevo.'
+      });
+    }
+
+    // Buscar usuario sin revelar existencia (evita enumeración)
+    const user = await UserRepo.getByEmail(rawEmail);
+    if (!user) {
+      return res.status(202).json({
+        ok: true,
+        message: publicSuccessMessage
+      });
+    }
+
+    // Invalidar tokens activos previos del mismo usuario
+    await pool.query(
+      'UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = ? AND used_at IS NULL',
+      [user.id]
+    );
+
+    // Generar token criptográficamente seguro
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const tokenId = generateId('prt_');
+
+    // Almacenar con expiración de 30 minutos
+    await pool.query(
+      `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at, request_ip)
+       VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 30 MINUTE), NOW(), ?)`,
+      [tokenId, user.id, tokenHash, clientIp]
+    );
+
+    // Enviar correo por SMTP Truobox (sin registrar token en logs)
+    try {
+      await sendPasswordResetEmail({
+        toEmail: user.email,
+        recipientName: user.name || '',
+        resetToken: rawToken,
+        expirationMinutes: 30
+      });
+    } catch (mailError: any) {
+      console.error('[auth/forgot-password] Error en el servicio de correo SMTP:', mailError?.message || 'Error desconocido');
+    }
+
+    return res.status(202).json({
+      ok: true,
+      message: publicSuccessMessage
+    });
+  } catch (err: any) {
+    console.error('[auth/forgot-password] Error interno procesando solicitud:', err?.message || err);
+    return res.status(500).json({ error: 'No se pudo procesar la solicitud en este momento.' });
+  }
+});
+
+// Restablecer contraseña mediante token (público, atómico)
+app.post('/api/auth/reset-password', async (req, res) => {
+  const genericError = 'El enlace de restablecimiento es inválido o ha expirado. Solicita uno nuevo.';
+  try {
+    const rawToken = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+
+    if (!rawToken) {
+      return res.status(400).json({ error: genericError });
+    }
+
+    if (!newPassword || newPassword.length < 8) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 8 caracteres.' });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+    // Consumo atómico con transacción SQL
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      // Buscar token activo no usado y no expirado con bloqueo de fila
+      const [rows]: any = await conn.query(
+        `SELECT id, user_id, expires_at, used_at
+         FROM password_reset_tokens
+         WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW()
+         FOR UPDATE`,
+        [tokenHash]
+      );
+
+      if (!rows || rows.length === 0) {
+        await conn.rollback();
+        return res.status(400).json({ error: genericError });
+      }
+
+      const resetRecord = rows[0];
+      const userId = resetRecord.user_id;
+
+      // 1. Marcar el token como consumido
+      await conn.query(
+        'UPDATE password_reset_tokens SET used_at = NOW() WHERE id = ?',
+        [resetRecord.id]
+      );
+
+      // 2. Invalidar cualquier otro token activo del mismo usuario
+      await conn.query(
+        'UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = ? AND used_at IS NULL',
+        [userId]
+      );
+
+      // 3. Actualizar contraseña usando el hash pbkdf2 histórico
+      const newPasswordHash = hashPassword(newPassword);
+      await conn.query(
+        'UPDATE users SET password_hash = ? WHERE id = ?',
+        [newPasswordHash, userId]
+      );
+
+      await conn.commit();
+
+      return res.json({
+        ok: true,
+        message: 'Contraseña restablecida exitosamente. Ya puedes iniciar sesión con tu nueva contraseña.'
+      });
+    } catch (txErr: any) {
+      await conn.rollback();
+      throw txErr;
+    } finally {
+      conn.release();
+    }
+  } catch (err: any) {
+    console.error('[auth/reset-password] Error procesando cambio de contraseña:', err?.message || err);
+    return res.status(500).json({ error: 'No se pudo restablecer la contraseña. Intenta nuevamente.' });
+  }
+});
+
 app.get('/api/user/profile', authMiddleware, async (req: any, res) => {
   try {
     const company = await CompanyRepo.getByUserId(req.user.id);
