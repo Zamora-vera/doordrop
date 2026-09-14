@@ -13391,16 +13391,20 @@ app.post('/api/admin/paypal/products/sync', authMiddleware, requireSuperAdmin, a
     const base = ship24goPayPalApiBase(keys?.paypalEnvironment);
     const plans = await PlanRepo.getAll();
     const synced: any[] = [];
+    const syncErrors: any[] = [];
     for (const plan of plans) {
       if (plan.is_active === 0 || plan.paypal_enabled === 0) continue;
       let productId = plan.paypal_product_id || '';
       if (!productId) {
         const productResponse = await fetch(`${base}/v1/catalogs/products`, {
           method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'PayPal-Request-Id': `${plan.id}-product` },
-          body: JSON.stringify({ name: `DoorDrop ${plan.name}`, type: 'SERVICE', category: 'SHIPPING_AND_DELIVERY', description: `Plan ${plan.name} de DoorDrop` })
+          body: JSON.stringify({ name: `DoorDrop ${plan.name}`, type: 'SERVICE', category: 'SERVICES', description: `Plan ${plan.name} de DoorDrop` })
         });
         const product: any = await productResponse.json().catch(() => ({}));
-        if (!productResponse.ok) { synced.push({ plan: plan.name, status: 'error' }); continue; }
+        if (!productResponse.ok) {
+          syncErrors.push({ plan: plan.name, stage: 'product', status: productResponse.status, error: product?.name || product?.details?.[0]?.issue || 'PayPal rechazó el producto.' });
+          continue;
+        }
         productId = product.id;
       }
       let paypalPlanId = plan.paypal_plan_id || '';
@@ -13417,14 +13421,25 @@ app.post('/api/admin/paypal/products/sync', authMiddleware, requireSuperAdmin, a
           })
         });
         const pp: any = await planResponse.json().catch(() => ({}));
-        if (!planResponse.ok) { synced.push({ plan: plan.name, status: 'error' }); continue; }
+        if (!planResponse.ok) {
+          syncErrors.push({ plan: plan.name, stage: 'billing_plan', status: planResponse.status, error: pp?.name || pp?.details?.[0]?.issue || 'PayPal rechazó el plan.' });
+          continue;
+        }
         paypalPlanId = pp.id;
       }
       await pool.query('UPDATE plans SET paypal_product_id = ?, paypal_plan_id = ?, paypal_sync_status = ?, paypal_last_synced_at = NOW() WHERE id = ?', [productId, paypalPlanId, 'synced', plan.id]);
       synced.push({ plan: plan.name, productId, paypalPlanId, status: 'synced' });
     }
     const fresh = (await PlanRepo.getAll()).map(ship24goPublicPlan);
-    res.json({ success: true, message: 'Planes sincronizados con PayPal.', synced, plans: fresh });
+    res.status(syncErrors.length ? 400 : 200).json({
+      success: syncErrors.length === 0,
+      message: syncErrors.length
+        ? `${synced.length} plan(es) sincronizado(s); ${syncErrors.length} no se pudo(ieron) sincronizar.`
+        : 'Planes sincronizados con PayPal.',
+      synced,
+      errors: syncErrors,
+      plans: fresh
+    });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || 'No se pudieron sincronizar los planes con PayPal.' });
   }
