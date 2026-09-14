@@ -820,7 +820,7 @@ export function setupOmnichannelRoutes(app: any, options: {
       const [insertRes]: any = await pool.query(
         `INSERT INTO omnichannel_conversations 
          (user_id, platform, contact_id, contact_name, contact_phone, last_message, last_message_at, unread_count, ai_active, assigned_agent_id, assigned_agent_name, assigned_agent_type, status)
-         VALUES (?, ?, ?, ?, ?, ?, NOW(), 0, 1, 'agent-ai-sofia', 'Sofia AI Concierge', 'ai', 'open')`,
+         VALUES (?, ?, ?, ?, ?, ?, NOW(), 0, 1, NULL, NULL, 'ai', 'open')`,
         [userId, cleanPlatform, cleanPhone || ('contact_' + Date.now()), cleanName, cleanPhone, initial_message || 'Conversación iniciada']
       );
 
@@ -1102,7 +1102,7 @@ export function setupOmnichannelRoutes(app: any, options: {
       if (!target_agent_id) return res.status(400).json({ error: 'ID de agente requerido.' });
 
       const isAi = target_agent_type === 'ai' || target_agent_id.includes('-ai-');
-      const agentName = target_agent_name || (isAi ? 'Sofia AI' : 'Agente Humano');
+      const agentName = target_agent_name || (isAi ? 'Agente AI' : 'Equipo Humano');
 
       const [conversationRows]: any = await pool.query(
         "SELECT * FROM omnichannel_conversations WHERE id = ? AND user_id = ? LIMIT 1",
@@ -1123,7 +1123,7 @@ export function setupOmnichannelRoutes(app: any, options: {
 
       // Record system transfer message in chat
       const alertText = isAi
-        ? '🤖 Asistente Sofia AI activada: El sistema automatizado de DoorDrop retoma la atención de esta conversación.'
+        ? '🤖 Agente AI activado: El sistema automatizado de DoorDrop retoma la atención de esta conversación.'
         : `🔔 Conversación transferida con éxito a: ${agentName}. Un operador humano está a cargo.`;
 
       await pool.query(

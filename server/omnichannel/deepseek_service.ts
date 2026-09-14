@@ -527,7 +527,7 @@ Analizza queste informazioni del negozio:
 Genera una configurazione completa, persuasiva e altamente professionale per l'assistente vendite virtuale (AI Sales Employee).
 Restituisci ESCLUSIVAMENTE un oggetto JSON valido (senza testo markdown attorno) con questi campi:
 {
-  "agent_name": "Nome accattivante per il venditore (es. Sofia di Zubay Moda)",
+  "agent_name": "Nome descrittivo del ruolo del venditore (es. Assistente AI del negozio)",
   "tone": "uno tra 'friendly_professional', 'sales_oriented', 'casual', 'luxury'",
   "language": "${user.country === 'ES' ? 'es' : user.country === 'DE' ? 'de' : 'it'}",
   "business_info": "Descrizione accattivante del negozio, qualità dei materiali, stile e attenzione al cliente (circa 3-4 frasi).",
