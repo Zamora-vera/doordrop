@@ -2,7 +2,7 @@ import { OmnichannelApp } from './OmnichannelApp';
 /* ship24go-cache-bust-1789141438 */
 import React, { useEffect, useState, useRef } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
-import { BookOpen, Bot, MessageSquare, LayoutDashboard, Package, Calculator, Store, Settings, LogOut, Plus, Search, Moon, Sun, Wallet, ChartPie, Plug, Box, Globe, ChevronDown, Menu, X, CheckCircle, Code, LifeBuoy, Sparkles, CreditCard, Crown, ShieldCheck, Trash2, Truck, ArrowLeft, User, MapPin, Pencil, Download, RotateCw, Clock, Eye, FileText, Info, Percent, ChevronUp } from 'lucide-react';
+import { BookOpen, Bot, MessageSquare, Users, LayoutDashboard, Package, Calculator, Store, Settings, LogOut, Plus, Search, Moon, Sun, Wallet, ChartPie, Plug, Box, Globe, ChevronDown, Menu, X, CheckCircle, Code, LifeBuoy, Sparkles, CreditCard, Crown, ShieldCheck, Trash2, Truck, ArrowLeft, User, MapPin, Pencil, Download, RotateCw, Clock, Eye, FileText, Info, Percent, ChevronUp } from 'lucide-react';
 import { api, removeAuthToken, getAuthToken, setAuthToken } from '../lib/api';
 import { loadGuestQuoteSession, clearGuestQuoteSession, guestSessionToPanelState } from '../lib/guestQuoteSession';
 import { useI18n } from '../lib/i18n';
@@ -612,6 +612,7 @@ const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile }: any) => {
     { name: 'Marketplace', path: '/panel/marketplace', icon: Store },
     { name: 'Omnicanal + AI', path: '/panel/omnichannel', icon: Bot },
     { name: 'Live Chat Omnicanal', path: '/panel/omnichannel?tab=inbox', icon: MessageSquare },
+    { name: 'Equipo & Empleados', path: '/panel/omnichannel?tab=team', icon: Users },
     { name: 'Integraciones', path: '/panel/stores', icon: Plug },
     { name: 'Facturación & Saldo', path: '/panel/settings', icon: Wallet },
     { name: t('tickets_support'), path: '/panel/tickets', icon: LifeBuoy },
@@ -640,7 +641,9 @@ const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile }: any) => {
 
           <nav className="p-4 space-y-1 flex-1 overflow-y-auto">
               {menu.map(item => {
-                const active = location.pathname === item.path;
+                const active = item.path.includes('?')
+                  ? (location.pathname + location.search) === item.path
+                  : (location.pathname === item.path && (!location.search || !menu.some(m => m.path === location.pathname + location.search)));
                 return (
                   <Link key={item.path} onClick={() => { if (window.innerWidth < 768) toggleMobileMenu(); }} to={item.path} className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${active ? 'bg-blue-50 text-blue-600 dark:bg-gray-800 dark:text-neon-cyan' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800/50'}`}>
                       <item.icon className={`w-5 h-5 ${active ? 'text-blue-500 dark:text-neon-cyan' : ''}`} /> <span>{item.name}</span>

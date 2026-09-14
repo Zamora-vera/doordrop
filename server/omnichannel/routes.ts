@@ -719,6 +719,142 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
+  
+  // ---------------------------------------------------------------------------
+  // Team Management & Agent Transfer Endpoints
+  // ---------------------------------------------------------------------------
+  router.get('/team', authMiddleware, async (req: any, res: Response) => {
+    try {
+      const userId = String(req.user.id || req.user.userId);
+      const [members]: any = await pool.query(
+        "SELECT * FROM omnichannel_team WHERE user_id = ? AND is_active = 1 ORDER BY type ASC, created_at ASC",
+        [userId]
+      );
+      res.json({ success: true, team: members });
+    } catch (err: any) {
+      console.error('[Omnichannel Team] Get team error:', err);
+      res.status(500).json({ error: 'Error al listar miembros del equipo.' });
+    }
+  });
+
+  router.post('/team', authMiddleware, async (req: any, res: Response) => {
+    try {
+      const userId = String(req.user.id || req.user.userId);
+      const { name, role, email, phone, type, status } = req.body;
+      if (!name) return res.status(400).json({ error: 'El nombre es requerido.' });
+
+      const memberId = 'agent-' + (type === 'ai' ? 'ai' : 'hum') + '-' + Date.now();
+      const initials = name.split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase() || 'OP';
+      const gradients = [
+        'from-amber-500 to-orange-600',
+        'from-emerald-500 to-teal-600',
+        'from-blue-600 to-indigo-600',
+        'from-purple-600 to-indigo-600',
+        'from-rose-500 to-pink-600'
+      ];
+      const avatarGradient = gradients[Math.floor(Math.random() * gradients.length)];
+
+      await pool.query(
+        `INSERT INTO omnichannel_team (user_id, member_id, name, role, type, email, phone, initials, avatar_gradient, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, memberId, name, role || 'Agente de Soporte', type || 'human', email || null, phone || null, initials, avatarGradient, status || 'online']
+      );
+
+      res.json({ success: true, message: 'Miembro del equipo agregado con éxito.' });
+    } catch (err: any) {
+      console.error('[Omnichannel Team] Add member error:', err);
+      res.status(500).json({ error: 'Error al agregar miembro del equipo.' });
+    }
+  });
+
+  router.put('/team/:id', authMiddleware, async (req: any, res: Response) => {
+    try {
+      const userId = String(req.user.id || req.user.userId);
+      const memberId = req.params.id;
+      const { name, role, email, phone, status, is_active } = req.body;
+
+      await pool.query(
+        `UPDATE omnichannel_team SET
+           name = COALESCE(?, name),
+           role = COALESCE(?, role),
+           email = COALESCE(?, email),
+           phone = COALESCE(?, phone),
+           status = COALESCE(?, status),
+           is_active = COALESCE(?, is_active),
+           updated_at = NOW()
+         WHERE (id = ? OR member_id = ?) AND user_id = ?`,
+        [name, role, email, phone, status, is_active, memberId, memberId, userId]
+      );
+
+      res.json({ success: true, message: 'Miembro actualizado.' });
+    } catch (err: any) {
+      console.error('[Omnichannel Team] Update member error:', err);
+      res.status(500).json({ error: 'Error al actualizar miembro.' });
+    }
+  });
+
+  router.delete('/team/:id', authMiddleware, async (req: any, res: Response) => {
+    try {
+      const userId = String(req.user.id || req.user.userId);
+      const memberId = req.params.id;
+      await pool.query(
+        "UPDATE omnichannel_team SET is_active = 0 WHERE (id = ? OR member_id = ?) AND user_id = ?",
+        [memberId, memberId, userId]
+      );
+      res.json({ success: true, message: 'Miembro desactivado.' });
+    } catch (err: any) {
+      console.error('[Omnichannel Team] Delete member error:', err);
+      res.status(500).json({ error: 'Error al desactivar miembro.' });
+    }
+  });
+
+  // Transfer conversation to an agent (AI or human team member)
+  router.post('/conversations/:id/transfer', authMiddleware, async (req: any, res: Response) => {
+    try {
+      const userId = String(req.user.id || req.user.userId);
+      const convId = Number(req.params.id);
+      const { target_agent_id, target_agent_name, target_agent_type } = req.body;
+
+      if (!target_agent_id) return res.status(400).json({ error: 'ID de agente requerido.' });
+
+      const isAi = target_agent_type === 'ai' || target_agent_id.includes('-ai-');
+      const agentName = target_agent_name || (isAi ? 'Sofia AI' : 'Agente Humano');
+
+      await pool.query(
+        `UPDATE omnichannel_conversations 
+         SET assigned_agent_id = ?,
+             assigned_agent_name = ?,
+             assigned_agent_type = ?,
+             ai_active = ?
+         WHERE id = ? AND user_id = ?`,
+        [target_agent_id, agentName, isAi ? 'ai' : 'human', isAi ? 1 : 0, convId, userId]
+      );
+
+      // Record system transfer message in chat
+      const alertText = isAi
+        ? '🤖 Asistente Sofia AI activada: El sistema automatizado de DoorDrop retoma la atención de esta conversación.'
+        : `🔔 Conversación transferida con éxito a: ${agentName}. Un operador humano está a cargo.`;
+
+      await pool.query(
+        `INSERT INTO omnichannel_messages 
+          (conversation_id, direction, sender_type, sender_name, text_content, status)
+         VALUES (?, 'outbound', 'system', 'Sistema DoorDrop', ?, 'read')`,
+        [convId, alertText]
+      );
+
+      res.json({
+        success: true,
+        assigned_agent_id: target_agent_id,
+        assigned_agent_name: agentName,
+        assigned_agent_type: isAi ? 'ai' : 'human',
+        ai_active: isAi
+      });
+    } catch (err: any) {
+      console.error('[Omnichannel Transfer] Transfer error:', err);
+      res.status(500).json({ error: 'Error al transferir conversación.' });
+    }
+  });
+
   router.get('/comments', authMiddleware, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);

@@ -55,6 +55,23 @@ export const omnichannelApi = {
     method: 'POST',
     body: JSON.stringify({ ai_active })
   }),
+  transferConversation: (conversationId: number, target_agent_id: string, target_agent_name?: string, target_agent_type?: 'ai' | 'human') => request(`/omnichannel/conversations/${conversationId}/transfer`, {
+    method: 'POST',
+    body: JSON.stringify({ target_agent_id, target_agent_name, target_agent_type })
+  }),
+  getTeam: () => request('/omnichannel/team'),
+  addTeamMember: (data: { name: string; role?: string; email?: string; phone?: string; type?: 'ai' | 'human'; status?: string }) => request('/omnichannel/team', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }),
+  updateTeamMember: (id: string | number, data: any) => request(`/omnichannel/team/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  }),
+  deleteTeamMember: (id: string | number) => request(`/omnichannel/team/${id}`, {
+    method: 'DELETE'
+  }),
+  
 
   // Comments & Automations
   getComments: () => request('/omnichannel/comments'),

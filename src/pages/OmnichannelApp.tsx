@@ -22,6 +22,7 @@ import {
   Trash2,
   Sliders,
   Check,
+  CheckCheck,
   Zap,
   Globe,
   Radio,
@@ -29,10 +30,21 @@ import {
   ShoppingBag,
   Truck,
   ArrowRight,
+  ArrowLeft,
   ShieldCheck,
   Power,
   CreditCard,
-  Wallet
+  Wallet,
+  X,
+  Paperclip,
+  PanelLeftClose,
+  PanelLeft,
+  UserCheck,
+  Users,
+  Phone,
+  Mail,
+  Package,
+  ChevronDown
 } from 'lucide-react';
 import { omnichannelApi } from '../lib/omnichannelApi';
 import { useI18n } from '../lib/i18n';
@@ -116,6 +128,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       tabComments: 'Comentarios & DM',
       tabAi: 'Empleado AI',
       tabPublishing: 'Auto-Publicación',
+      tabTeam: 'Equipo & Empleados',
       tabPlans: 'Planes & Precios',
       managePlans: 'Gestionar Planes',
       activePlan: 'Plan Actual Activo',
@@ -159,6 +172,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       tabComments: 'Commenti & DM',
       tabAi: 'Dipendente AI',
       tabPublishing: 'Auto-Pubblicazione',
+      tabTeam: 'Team & Dipendenti',
       tabPlans: 'Piani & Prezzi',
       managePlans: 'Gestisci Piani',
       activePlan: 'Piano Attuale Attivo',
@@ -202,6 +216,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       tabComments: 'Comments & DM',
       tabAi: 'AI Employee',
       tabPublishing: 'Auto-Publishing',
+      tabTeam: 'Team & Staff',
       tabPlans: 'Plans & Pricing',
       managePlans: 'Manage Plans',
       activePlan: 'Current Active Plan',
@@ -245,6 +260,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       tabComments: 'Kommentare & DM',
       tabAi: 'KI-Mitarbeiter',
       tabPublishing: 'Auto-Publishing',
+      tabTeam: 'Team & Mitarbeiter',
       tabPlans: 'Pläne & Preise',
       managePlans: 'Pläne verwalten',
       activePlan: 'Aktueller aktiver Plan',
@@ -283,20 +299,20 @@ export function OmnichannelApp({ profile }: { profile: any }) {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const getInitialTab = (): 'dashboard' | 'channels' | 'inbox' | 'comments' | 'ai' | 'publishing' | 'plans' => {
+  const getInitialTab = (): 'dashboard' | 'channels' | 'inbox' | 'comments' | 'ai' | 'publishing' | 'team' | 'plans' => {
     try {
       const params = new URLSearchParams(location.search);
       const t = params.get('tab');
-      if (t && ['dashboard', 'channels', 'inbox', 'comments', 'ai', 'publishing', 'plans'].includes(t)) {
+      if (t && ['dashboard', 'channels', 'inbox', 'comments', 'ai', 'publishing', 'team', 'plans'].includes(t)) {
         return t as any;
       }
     } catch {}
     return 'dashboard';
   };
 
-  const [activeTab, setActiveTabState] = useState<'dashboard' | 'channels' | 'inbox' | 'comments' | 'ai' | 'publishing' | 'plans'>(getInitialTab);
+  const [activeTab, setActiveTabState] = useState<'dashboard' | 'channels' | 'inbox' | 'comments' | 'ai' | 'publishing' | 'team' | 'plans'>(getInitialTab);
 
-  const setActiveTab = (tab: 'dashboard' | 'channels' | 'inbox' | 'comments' | 'ai' | 'publishing' | 'plans') => {
+  const setActiveTab = (tab: 'dashboard' | 'channels' | 'inbox' | 'comments' | 'ai' | 'publishing' | 'team' | 'plans') => {
     setActiveTabState(tab);
     try {
       const sp = new URLSearchParams(location.search);
@@ -308,7 +324,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const t = params.get('tab');
-    if (t && t !== activeTab && ['dashboard', 'channels', 'inbox', 'comments', 'ai', 'publishing', 'plans'].includes(t)) {
+    if (t && t !== activeTab && ['dashboard', 'channels', 'inbox', 'comments', 'ai', 'publishing', 'team', 'plans'].includes(t)) {
       setActiveTabState(t as any);
     }
   }, [location.search]);
@@ -323,6 +339,24 @@ export function OmnichannelApp({ profile }: { profile: any }) {
   const [messages, setMessages] = useState<any[]>([]);
   const [msgInput, setMsgInput] = useState('');
   const [sendingMsg, setSendingMsg] = useState(false);
+
+  // Live Chat UI & Team State (Modern Omnichannel Inbox)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [mobileView, setMobileView] = useState<'sidebar' | 'chat'>('chat');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [showCatalogModal, setShowCatalogModal] = useState<boolean>(false);
+  const [showQuickReplies, setShowQuickReplies] = useState<boolean>(false);
+  const [showInfoDrawer, setShowInfoDrawer] = useState<boolean>(false);
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
+  const [loadingTeam, setLoadingTeam] = useState<boolean>(false);
+  const [showAddMemberModal, setShowAddMemberModal] = useState<boolean>(false);
+  const [newMemberName, setNewMemberName] = useState('');
+  const [newMemberRole, setNewMemberRole] = useState('');
+  const [newMemberEmail, setNewMemberEmail] = useState('');
+  const [newMemberPhone, setNewMemberPhone] = useState('');
+  const [newMemberType, setNewMemberType] = useState<'human' | 'ai'>('human');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // AI Employee States
   const [aiSettings, setAiSettings] = useState<any>({
@@ -387,6 +421,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
 
   // Load Inbox
   const loadInbox = async () => {
+    if (teamMembers.length === 0) loadTeam();
     try {
       const res = await omnichannelApi.getConversations();
       const list = res.conversations || [];
@@ -419,6 +454,97 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       setMessages(res.messages || []);
     } catch (e: any) {
       console.error(e);
+    }
+  };
+
+  // Load Team
+  const loadTeam = async () => {
+    setLoadingTeam(true);
+    try {
+      const res = await (omnichannelApi as any).getTeam();
+      if (res && res.team) {
+        setTeamMembers(res.team);
+      }
+    } catch (e: any) {
+      console.error('[Omnichannel] Error loading team:', e);
+    } finally {
+      setLoadingTeam(false);
+    }
+  };
+
+  // Transfer conversation to an agent (AI or human)
+  const handleTransfer = async (targetAgent: any) => {
+    if (!selectedConv) return;
+    try {
+      const res = await (omnichannelApi as any).transferConversation(
+        selectedConv.id,
+        targetAgent.member_id || targetAgent.id,
+        targetAgent.name,
+        targetAgent.type
+      );
+      
+      const updatedConv = {
+        ...selectedConv,
+        assigned_agent_id: targetAgent.member_id || targetAgent.id,
+        assigned_agent_name: targetAgent.name,
+        assigned_agent_type: targetAgent.type,
+        ai_active: targetAgent.type === 'ai' ? 1 : 0
+      };
+      
+      setSelectedConv(updatedConv);
+      setConversations(conversations.map(c => c.id === selectedConv.id ? updatedConv : c));
+      
+      // Reload messages to display the automatic system banner
+      const mRes = await omnichannelApi.getMessages(selectedConv.id);
+      setMessages(mRes.messages || []);
+    } catch (err: any) {
+      alert(err.message || 'Error al transferir conversación');
+    }
+  };
+
+  // Toggle quick AI <-> Human handover
+  const handleQuickHandover = async () => {
+    if (!selectedConv) return;
+    const isCurrentlyAi = selectedConv.ai_active === 1 || selectedConv.assigned_agent_type === 'ai';
+    const target = isCurrentlyAi
+      ? (teamMembers.find(m => m.type === 'human') || { member_id: 'agent-hum-gabriel', name: 'Gabriel Castro', type: 'human' })
+      : (teamMembers.find(m => m.type === 'ai') || { member_id: 'agent-ai-sofia', name: 'Sofia AI Concierge', type: 'ai' });
+    
+    await handleTransfer(target);
+  };
+
+  // Add new team member
+  const handleCreateMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMemberName.trim()) return;
+    try {
+      await (omnichannelApi as any).addTeamMember({
+        name: newMemberName.trim(),
+        role: newMemberRole.trim() || (newMemberType === 'ai' ? 'Agente Virtual' : 'Especialista de Ventas'),
+        email: newMemberEmail.trim(),
+        phone: newMemberPhone.trim(),
+        type: newMemberType
+      });
+      setShowAddMemberModal(false);
+      setNewMemberName('');
+      setNewMemberRole('');
+      setNewMemberEmail('');
+      setNewMemberPhone('');
+      loadTeam();
+      alert('Miembro del equipo registrado exitosamente.');
+    } catch (err: any) {
+      alert(err.message || 'Error al registrar miembro del equipo');
+    }
+  };
+
+  // Delete team member
+  const handleDeleteMember = async (id: any) => {
+    if (!confirm('¿Seguro que deseas desactivar este miembro del equipo?')) return;
+    try {
+      await (omnichannelApi as any).deleteTeamMember(id);
+      loadTeam();
+    } catch (err: any) {
+      alert(err.message || 'Error al eliminar miembro');
     }
   };
 
@@ -650,6 +776,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
     if (activeTab === 'ai') loadAi();
     if (activeTab === 'comments') loadComments();
     if (activeTab === 'plans') loadPlans();
+    if (activeTab === 'team' || activeTab === 'inbox') loadTeam();
   }, [activeTab]);
 
   const currentPlanCode = data?.subscription?.plan_code || 'whatsapp';
@@ -697,6 +824,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
             { id: 'comments', label: t.tabComments, icon: Sliders },
             { id: 'ai', label: t.tabAi, icon: Bot },
             { id: 'publishing', label: t.tabPublishing, icon: Calendar },
+            { id: 'team', label: (t as any).tabTeam || 'Equipo & Empleados', icon: Users },
             { id: 'plans', label: t.tabPlans, icon: Zap }
           ].map(tab => {
             const Icon = tab.icon;
@@ -1058,198 +1186,894 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       )}
 
       {/* --------------------------------------------------------------------- */}
-      {/* 3. UNIFIED INBOX */}
+      {/* 3. UNIFIED INBOX - MODERN LIVE CHAT OMNICANAL & TRANSFER */}
       {/* --------------------------------------------------------------------- */}
       {activeTab === 'inbox' && (
-        <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm overflow-hidden h-[680px] flex flex-col md:flex-row">
-          {/* Conversation List Sidebar */}
-          <div className="w-full md:w-80 border-r border-gray-200 dark:border-gray-800 flex flex-col h-full bg-gray-50/50 dark:bg-gray-900/50">
-            <div className="p-3.5 border-b border-gray-200 dark:border-gray-800 space-y-2">
-              <div className="flex justify-between items-center">
-                <h3 className="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4 text-blue-500" /> {t.conversations}
-                </h3>
-                <div className="flex items-center gap-1">
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden h-[740px] flex flex-col relative select-none">
+          
+          {/* Main Workspace: Left Inbox Column + Center Chat Stream + Right Info Drawer */}
+          <div className="flex-1 flex overflow-hidden relative">
+
+            {/* Left Column: Unified Inbox Sidebar (Collapsible & Mobile Full-screen) */}
+            <aside
+              className={`transition-all duration-300 ease-in-out border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col z-20 ${
+                mobileView === 'chat' ? 'hidden md:flex' : 'flex w-full'
+              } ${
+                isSidebarCollapsed
+                  ? 'md:w-0 md:opacity-0 md:pointer-events-none md:border-r-0'
+                  : 'md:w-[350px] lg:w-[380px] md:opacity-100'
+              }`}
+            >
+              {/* Sidebar Header */}
+              <div className="p-3.5 sm:p-4 border-b border-slate-100 dark:border-slate-800/80 space-y-3 shrink-0">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2.5">
+                    <h1 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
+                      <MessageSquare className="w-4 h-4 text-blue-600" />
+                      <span>Bandeja Unificada</span>
+                    </h1>
+                    {conversations.reduce((acc, curr) => acc + (Number(curr.unread_count) || 0), 0) > 0 && (
+                      <span className="relative flex h-5 min-w-[20px] px-1.5 items-center justify-center rounded-full bg-blue-600 text-[11px] font-bold text-white shadow-sm shadow-blue-500/50 animate-pulse">
+                        {conversations.reduce((acc, curr) => acc + (Number(curr.unread_count) || 0), 0)}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center space-x-1">
+                    <button
+                      onClick={() => setSoundEnabled(!soundEnabled)}
+                      title={soundEnabled ? 'Silenciar notificaciones' : 'Activar sonido'}
+                      className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    >
+                      {soundEnabled ? (
+                        <Volume2 className="w-4 h-4 text-emerald-500" />
+                      ) : (
+                        <VolumeX className="w-4 h-4 text-rose-500" />
+                      )}
+                    </button>
+
+                    <button
+                      onClick={loadInbox}
+                      title="Refrescar conversaciones"
+                      className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
+
+                    {/* Desktop Quick Collapse */}
+                    <button
+                      onClick={() => setIsSidebarCollapsed(true)}
+                      title="Ocultar barra lateral"
+                      className="hidden md:flex p-1.5 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    >
+                      <PanelLeftClose className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Fast Search Bar */}
+                <div className="relative flex items-center">
+                  <Search className="w-4 h-4 absolute left-3 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Buscar cliente, mensaje o teléfono..."
+                    className="w-full h-9 pl-9 pr-8 bg-slate-100 dark:bg-slate-800/70 text-xs rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40 border border-transparent dark:border-slate-700/50 transition"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Channel Filter Pills with Touch-friendly Horizontal Scroll */}
+                <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
                   <button
-                    onClick={() => setSoundEnabled(!soundEnabled)}
-                    title={soundEnabled ? "Silenzia notifiche audio" : "Attiva campanella audio notifiche"}
-                    className={`p-1.5 rounded-lg border text-xs transition ${
-                      soundEnabled ? 'text-blue-600 border-blue-200 bg-blue-50 dark:bg-blue-950' : 'text-gray-400 border-gray-200 dark:border-gray-700'
+                    onClick={() => setInboxFilter('all')}
+                    className={`px-3 py-1 rounded-lg font-medium whitespace-nowrap transition-all ${
+                      inboxFilter === 'all'
+                        ? 'bg-slate-900 dark:bg-blue-600 text-white shadow-sm'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700/80'
                     }`}
                   >
-                    {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                    Todos
                   </button>
-                  <button onClick={loadInbox} className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-white">
-                    <RefreshCw className="w-3.5 h-3.5" />
+
+                  <button
+                    onClick={() => setInboxFilter('unread')}
+                    className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap transition-all ${
+                      inboxFilter === 'unread'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700/80'
+                    }`}
+                  >
+                    Sin leer
+                  </button>
+
+                  <button
+                    onClick={() => setInboxFilter('whatsapp')}
+                    className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap flex items-center space-x-1.5 transition-all ${
+                      inboxFilter === 'whatsapp'
+                        ? 'bg-[#25D366] text-white shadow-sm shadow-[#25D366]/30'
+                        : 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200/50 dark:border-emerald-800/40 hover:bg-emerald-100'
+                    }`}
+                  >
+                    {renderPlatformLogo('whatsapp', "w-3.5 h-3.5")}
+                    <span>WhatsApp</span>
+                  </button>
+
+                  <button
+                    onClick={() => setInboxFilter('instagram')}
+                    className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap flex items-center space-x-1.5 transition-all ${
+                      inboxFilter === 'instagram'
+                        ? 'bg-gradient-to-r from-purple-600 via-rose-500 to-amber-500 text-white shadow-sm'
+                        : 'bg-pink-50 dark:bg-pink-950/30 text-pink-700 dark:text-pink-400 border border-pink-200/50 dark:border-pink-800/40 hover:bg-pink-100'
+                    }`}
+                  >
+                    {renderPlatformLogo('instagram', "w-3.5 h-3.5")}
+                    <span>Instagram</span>
+                  </button>
+
+                  <button
+                    onClick={() => setInboxFilter('facebook')}
+                    className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap flex items-center space-x-1.5 transition-all ${
+                      inboxFilter === 'facebook'
+                        ? 'bg-[#0084FF] text-white shadow-sm'
+                        : 'bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40 hover:bg-blue-100'
+                    }`}
+                  >
+                    {renderPlatformLogo('facebook', "w-3.5 h-3.5")}
+                    <span>Messenger</span>
+                  </button>
+
+                  <button
+                    onClick={() => setInboxFilter('telegram')}
+                    className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap flex items-center space-x-1.5 transition-all ${
+                      inboxFilter === 'telegram'
+                        ? 'bg-[#29B6F6] text-white shadow-sm'
+                        : 'bg-sky-50 dark:bg-sky-950/30 text-sky-700 dark:text-sky-400 border border-sky-200/50 dark:border-sky-800/40 hover:bg-sky-100'
+                    }`}
+                  >
+                    {renderPlatformLogo('telegram', "w-3.5 h-3.5")}
+                    <span>Telegram</span>
                   </button>
                 </div>
               </div>
 
-              {/* Channel Filter Pills */}
-              <div className="flex gap-1 overflow-x-auto no-scrollbar pb-1 text-[11px]">
-                {[
-                  { id: 'all', label: 'Tutti' },
-                  { id: 'unread', label: 'Non Letti' },
-                  { id: 'whatsapp', label: 'WhatsApp' },
-                  { id: 'facebook', label: 'Meta' }
-                ].map(f => (
-                  <button
-                    key={f.id}
-                    onClick={() => setInboxFilter(f.id as any)}
-                    className={`px-2.5 py-1 rounded-lg font-semibold transition whitespace-nowrap ${
-                      inboxFilter === f.id
-                        ? 'bg-blue-600 text-white shadow-xs'
-                        : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200'
-                    }`}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+              {/* Conversation List */}
+              <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60">
+                {conversations
+                  .filter(c => {
+                    const matchesSearch = !searchQuery.trim() ||
+                      (c.contact_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      (c.last_message || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      (c.contact_phone || '').includes(searchQuery);
 
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
-              {conversations
-                .filter(conv => {
-                  if (inboxFilter === 'unread') return (Number(conv.unread_count) || 0) > 0;
-                  if (inboxFilter === 'whatsapp') return conv.platform === 'whatsapp';
-                  if (inboxFilter === 'facebook') return ['facebook', 'messenger', 'instagram'].includes(conv.platform);
-                  return true;
-                })
-                .length === 0 ? (
-                <div className="text-center py-12 text-xs text-gray-400">
-                  Nessuna conversazione trovata con questo filtro.
-                </div>
-              ) : (
-                conversations
-                  .filter(conv => {
-                    if (inboxFilter === 'unread') return (Number(conv.unread_count) || 0) > 0;
-                    if (inboxFilter === 'whatsapp') return conv.platform === 'whatsapp';
-                    if (inboxFilter === 'facebook') return ['facebook', 'messenger', 'instagram'].includes(conv.platform);
+                    if (!matchesSearch) return false;
+                    if (inboxFilter === 'all') return true;
+                    if (inboxFilter === 'unread') return (Number(c.unread_count) || 0) > 0;
+                    if (inboxFilter === 'whatsapp') return c.platform === 'whatsapp';
+                    if (inboxFilter === 'instagram') return c.platform === 'instagram';
+                    if (inboxFilter === 'facebook') return ['facebook', 'messenger'].includes(c.platform);
+                    if (inboxFilter === 'telegram') return c.platform === 'telegram';
                     return true;
                   })
-                  .map(conv => (
-                  <button
-                    key={conv.id}
-                    onClick={() => selectConversation(conv)}
-                    className={`w-full text-left p-3 rounded-xl transition flex items-start gap-3 ${
-                      selectedConv?.id === conv.id
-                        ? 'bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800'
-                        : 'hover:bg-gray-100 dark:hover:bg-gray-800'
-                    }`}
-                  >
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
-                      {conv.contact_name?.slice(0, 2).toUpperCase() || 'CL'}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-xs text-gray-900 dark:text-white truncate">
-                          {conv.contact_name || 'Cliente'}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          {renderPlatformLogo(conv.platform, "w-3 h-3")}
-                          <span className="text-[10px] text-gray-400 uppercase font-semibold">{conv.platform}</span>
+                  .length === 0 ? (
+                  <div className="p-8 text-center text-slate-400 text-xs">
+                    No se encontraron conversaciones con los filtros seleccionados.
+                  </div>
+                ) : (
+                  conversations
+                    .filter(c => {
+                      const matchesSearch = !searchQuery.trim() ||
+                        (c.contact_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        (c.last_message || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        (c.contact_phone || '').includes(searchQuery);
+
+                      if (!matchesSearch) return false;
+                      if (inboxFilter === 'all') return true;
+                      if (inboxFilter === 'unread') return (Number(c.unread_count) || 0) > 0;
+                      if (inboxFilter === 'whatsapp') return c.platform === 'whatsapp';
+                      if (inboxFilter === 'instagram') return c.platform === 'instagram';
+                      if (inboxFilter === 'facebook') return ['facebook', 'messenger'].includes(c.platform);
+                      if (inboxFilter === 'telegram') return c.platform === 'telegram';
+                      return true;
+                    })
+                    .map(contact => {
+                      const isSelected = selectedConv?.id === contact.id;
+                      const isAi = contact.assigned_agent_type === 'ai' || contact.ai_active === 1;
+                      const agentName = contact.assigned_agent_name || (isAi ? 'Sofia AI' : 'Gabriel C.');
+                      const initials = (contact.contact_name || 'CL').slice(0, 2).toUpperCase();
+
+                      return (
+                        <div
+                          key={contact.id}
+                          onClick={() => {
+                            selectConversation(contact);
+                            setMobileView('chat');
+                          }}
+                          className={`p-3 sm:p-3.5 flex items-start space-x-3 cursor-pointer transition-all duration-200 relative group active:bg-slate-100 dark:active:bg-slate-800 ${
+                            isSelected
+                              ? 'bg-blue-50/80 dark:bg-slate-800/90 border-l-4 border-blue-600'
+                              : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                          }`}
+                        >
+                          {/* Avatar with Channel Overlay Badge */}
+                          <div className="relative shrink-0">
+                            <div
+                              className="w-11 h-11 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-700 flex items-center justify-center text-white font-bold text-xs tracking-wider shadow-sm"
+                            >
+                              {initials}
+                            </div>
+                            <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-white dark:bg-slate-900 flex items-center justify-center shadow ring-2 ring-white dark:ring-slate-900">
+                              {renderPlatformLogo(contact.platform, "w-3 h-3")}
+                            </div>
+                          </div>
+
+                          {/* Conversation details */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-0.5">
+                              <span
+                                className={`font-semibold text-xs truncate ${
+                                  isSelected
+                                    ? 'text-blue-950 dark:text-white'
+                                    : 'text-slate-800 dark:text-slate-200'
+                                }`}
+                              >
+                                {contact.contact_name || 'Cliente'}
+                              </span>
+                              <span className="text-[10px] text-slate-400 shrink-0 font-medium ml-1">
+                                {contact.last_message_at ? new Date(contact.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'reciente'}
+                              </span>
+                            </div>
+
+                            {/* Last message snippet */}
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mb-1.5 leading-relaxed">
+                              {contact.last_message || 'Nuevo mensaje'}
+                            </p>
+
+                            {/* Agent Attending Chip & Unread Bubble */}
+                            <div className="flex items-center justify-between">
+                              <span
+                                className={`inline-flex items-center space-x-1 text-[10px] font-semibold px-2 py-0.5 rounded-md ${
+                                  isAi
+                                    ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200/80 dark:border-purple-800/60'
+                                    : 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/60'
+                                }`}
+                              >
+                                {isAi ? (
+                                  <>
+                                    <Bot className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                                    <span>{agentName.split(' ')[0]} (AI)</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <User className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                                    <span>{agentName.split(' ')[0]}</span>
+                                  </>
+                                )}
+                              </span>
+
+                              {(Number(contact.unread_count) || 0) > 0 && (
+                                <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center shadow-sm">
+                                  {contact.unread_count}
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                      <p className="text-xs text-gray-500 truncate mt-0.5">{conv.last_message || 'Nuevo mensaje'}</p>
-                      {conv.ai_active ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-purple-600 dark:text-purple-400 mt-1">
-                          <Bot className="w-3 h-3" /> AI Activo
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400 mt-1">
-                          <User className="w-3 h-3" /> Humano
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* Active Chat Pane */}
-          {selectedConv ? (
-            <div className="flex-1 flex flex-col h-full bg-white dark:bg-gray-900">
-              {/* Chat Top Bar */}
-              <div className="p-3.5 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center bg-gray-50/30 dark:bg-gray-900/30">
-                <div className="flex items-center gap-3">
-                  <div className="relative">
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-700 text-white font-bold text-xs flex items-center justify-center shadow">
-                      {selectedConv.contact_name?.slice(0, 2).toUpperCase() || 'CL'}
-                    </div>
-                    <span className="absolute -bottom-1 -right-1">
-                      {renderPlatformLogo(selectedConv.platform, "w-3.5 h-3.5")}
-                    </span>
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-sm text-gray-900 dark:text-white">{selectedConv.contact_name || 'Cliente'}</h4>
-                    <span className="text-xs text-gray-400 capitalize flex items-center gap-1">
-                      Canale: <strong>{selectedConv.platform}</strong>
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleToggleAi}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 border ${
-                      selectedConv.ai_active
-                        ? 'bg-purple-50 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800'
-                        : 'bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800'
-                    }`}
-                  >
-                    <Bot className="w-3.5 h-3.5" />
-                    {selectedConv.ai_active ? t.aiActive : t.humanHandoff}
-                  </button>
-                </div>
+                      );
+                    })
+                )}
               </div>
+            </aside>
 
-              {/* Chat Messages */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/20 dark:bg-gray-950/20">
-                {messages.map(msg => {
-                  const isOut = msg.direction === 'outbound';
-                  return (
-                    <div key={msg.id} className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}>
+            {/* Center Column: Active Chat Stream */}
+            {selectedConv ? (
+              <main
+                className={`flex-1 flex flex-col bg-slate-50/60 dark:bg-slate-950 relative overflow-hidden transition-all ${
+                  mobileView === 'sidebar' ? 'hidden md:flex' : 'flex w-full'
+                }`}
+              >
+                {/* Active Chat Top Header */}
+                <div className="h-16 px-3 sm:px-5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between z-10 shrink-0">
+                  <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
+                    {/* Mobile Back to Conversations Button */}
+                    <button
+                      onClick={() => setMobileView('sidebar')}
+                      className="md:hidden p-2 -ml-1 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+                      title="Volver a la bandeja"
+                    >
+                      <ArrowLeft className="w-5 h-5" />
+                    </button>
+
+                    {/* Collapsed Sidebar Re-open button on Desktop */}
+                    {isSidebarCollapsed && (
+                      <button
+                        onClick={() => setIsSidebarCollapsed(false)}
+                        title="Mostrar bandeja de chats"
+                        className="hidden md:flex p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+                      >
+                        <PanelLeft className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      </button>
+                    )}
+
+                    {/* Customer Avatar & Channel */}
+                    <div className="relative shrink-0">
                       <div
-                        className={`max-w-[75%] p-3 rounded-2xl text-xs leading-relaxed ${
-                          isOut
-                            ? 'bg-blue-600 text-white rounded-tr-none'
-                            : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white rounded-tl-none border border-gray-200 dark:border-gray-700'
+                        className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-700 flex items-center justify-center text-white font-bold text-xs tracking-wider shadow-sm"
+                      >
+                        {(selectedConv.contact_name || 'CL').slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white dark:bg-slate-900 flex items-center justify-center ring-2 ring-white dark:ring-slate-900">
+                        {renderPlatformLogo(selectedConv.platform, "w-3 h-3")}
+                      </div>
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex items-center space-x-1.5 sm:space-x-2">
+                        <h2 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white truncate">
+                          {selectedConv.contact_name || 'Cliente'}
+                        </h2>
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-500/20 shrink-0" />
+                      </div>
+                      <div className="flex items-center space-x-1.5 text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400">
+                        <span className="capitalize font-medium text-slate-600 dark:text-slate-300">
+                          {selectedConv.platform}
+                        </span>
+                        <span>•</span>
+                        <span className="truncate">{selectedConv.contact_phone || selectedConv.contact_id || 'ID: ' + selectedConv.id}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Side: Prominent Attending Agent & Action Controls */}
+                  <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0">
+                    {/* PROMINENT ATTENDING AGENT BADGE (Atendido por) */}
+                    <div
+                      onClick={handleQuickHandover}
+                      className={`cursor-pointer group flex items-center space-x-2 px-2.5 sm:px-3 py-1.5 rounded-xl border transition-all shadow-xs ${
+                        selectedConv.assigned_agent_type === 'ai' || selectedConv.ai_active === 1
+                          ? 'bg-purple-50 hover:bg-purple-100/80 dark:bg-purple-950/50 dark:hover:bg-purple-900/50 border-purple-300 dark:border-purple-800'
+                          : 'bg-amber-50 hover:bg-amber-100/80 dark:bg-amber-950/50 dark:hover:bg-amber-900/50 border-amber-300 dark:border-amber-800'
+                      }`}
+                      title="Click para alternar rápidamente entre Inteligencia Artificial y Operador Humano"
+                    >
+                      <div
+                        className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-xs ${
+                          selectedConv.assigned_agent_type === 'ai' || selectedConv.ai_active === 1
+                            ? 'bg-gradient-to-tr from-purple-600 to-indigo-600'
+                            : 'bg-gradient-to-tr from-amber-500 to-orange-600'
                         }`}
                       >
-                        <div className="font-semibold text-[10px] opacity-75 mb-1">
-                          {isOut ? (msg.sender_name || 'DoorDrop AI / Agente') : (msg.sender_name || 'Cliente')}
+                        {selectedConv.assigned_agent_type === 'ai' || selectedConv.ai_active === 1 ? (
+                          <Bot className="w-3.5 h-3.5" />
+                        ) : (
+                          <User className="w-3.5 h-3.5" />
+                        )}
+                      </div>
+
+                      <div className="text-left hidden sm:block">
+                        <p className="text-[10px] uppercase font-bold tracking-wider text-slate-400 dark:text-slate-400 leading-none">
+                          Atendido por
+                        </p>
+                        <p
+                          className={`text-xs font-bold leading-tight ${
+                            selectedConv.assigned_agent_type === 'ai' || selectedConv.ai_active === 1
+                              ? 'text-purple-700 dark:text-purple-300'
+                              : 'text-amber-800 dark:text-amber-300'
+                          }`}
+                        >
+                          {selectedConv.assigned_agent_name || (selectedConv.ai_active === 1 ? 'Sofia AI' : 'Gabriel Castro')}
+                        </p>
+                      </div>
+
+                      {/* Switch Action Tag */}
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                          selectedConv.assigned_agent_type === 'ai' || selectedConv.ai_active === 1
+                            ? 'bg-purple-200/70 text-purple-800 dark:bg-purple-800/60 dark:text-purple-200'
+                            : 'bg-amber-200/70 text-amber-800 dark:bg-amber-800/60 dark:text-amber-200'
+                        }`}
+                      >
+                        {selectedConv.assigned_agent_type === 'ai' || selectedConv.ai_active === 1 ? '🤖 AI' : '👤 Humano'}
+                      </span>
+                    </div>
+
+                    {/* Customer Info Drawer Toggle Button */}
+                    <button
+                      onClick={() => setShowInfoDrawer(!showInfoDrawer)}
+                      title="Ver ficha del cliente y agentes"
+                      className={`p-2 rounded-xl text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${
+                        showInfoDrawer ? 'bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400' : ''
+                      }`}
+                    >
+                      <Package className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Message Chat Stream */}
+                <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-3 sm:space-y-4 bg-gradient-to-b from-slate-100/40 via-white to-slate-50/60 dark:from-slate-950 dark:via-slate-900/60 dark:to-slate-950">
+                  
+                  {/* Security Banner badge */}
+                  <div className="flex justify-center my-1">
+                    <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-slate-200/70 dark:bg-slate-800/80 text-[10px] sm:text-[11px] text-slate-600 dark:text-slate-400 font-medium">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>Canal cifrado • Traspaso en vivo asistido</span>
+                    </div>
+                  </div>
+
+                  {/* Message List Loop */}
+                  {messages.map(message => {
+                    const isSystem = message.sender_type === 'system' || (message.text_content || '').startsWith('🔔') || (message.text_content || '').startsWith('🤖');
+                    if (isSystem) {
+                      return (
+                        <div key={message.id} className="flex justify-center my-2">
+                          <div className="max-w-md px-3.5 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-200 text-[11px] sm:text-xs text-center font-medium shadow-xs">
+                            {message.text_content}
+                          </div>
                         </div>
-                        <p className="whitespace-pre-wrap">{msg.text_content}</p>
+                      );
+                    }
+
+                    const isOutbound = message.direction === 'outbound';
+
+                    return (
+                      <div
+                        key={message.id}
+                        className={`flex flex-col ${isOutbound ? 'items-end' : 'items-start'}`}
+                      >
+                        {/* Sender Identity Tag for AI vs Human */}
+                        {isOutbound && (
+                          <div className="flex items-center space-x-1 mb-1 mr-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                            {message.sender_type === 'ai' || (selectedConv.ai_active === 1 && message.sender_name?.includes('AI')) ? (
+                              <>
+                                <Bot className="w-3 h-3 text-purple-500" />
+                                <span>Sofia (AI Concierge)</span>
+                              </>
+                            ) : (
+                              <>
+                                <User className="w-3 h-3 text-amber-500" />
+                                <span>{message.sender_name || selectedConv.assigned_agent_name || 'Agente'}</span>
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Main Bubble */}
+                        <div
+                          className={`max-w-[90%] sm:max-w-md lg:max-w-lg p-3 sm:p-3.5 shadow-xs transition-all ${
+                            isOutbound
+                              ? 'bg-gradient-to-tr from-blue-600 to-indigo-600 text-white rounded-2xl rounded-br-xs'
+                              : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 rounded-2xl rounded-bl-xs border border-slate-200/80 dark:border-slate-700/60'
+                          }`}
+                        >
+                          {message.text_content && (
+                            <p className="text-xs sm:text-sm leading-relaxed whitespace-pre-line">
+                              {message.text_content}
+                            </p>
+                          )}
+
+                          {/* Media preview if available */}
+                          {message.media_url && (
+                            <div className="mt-2 rounded-xl overflow-hidden max-w-xs border border-white/20">
+                              <img src={message.media_url} alt="Adjunto" className="w-full h-auto object-cover" />
+                            </div>
+                          )}
+
+                          {/* Timestamp & Read Status */}
+                          <div
+                            className={`flex items-center justify-end space-x-1 mt-1 text-[10px] ${
+                              isOutbound ? 'text-blue-100/80' : 'text-slate-400'
+                            }`}
+                          >
+                            <span>{message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                            {isOutbound && (
+                              <span>
+                                <CheckCheck className="w-3.5 h-3.5 text-sky-300" />
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <div ref={messagesEndRef} />
+                </div>
+
+                {/* Quick Replies Drawer */}
+                {showQuickReplies && (
+                  <div className="p-3 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 animate-in slide-in-from-bottom duration-200">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-1">
+                        <Zap className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Plantillas Rápidas</span>
+                      </span>
+                      <button
+                        onClick={() => setShowQuickReplies(false)}
+                        className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {[
+                        '📦 Tu pedido ya fue despachado y va en camino con nuestro mensajero DoorDrop.',
+                        '💳 Aquí tienes el enlace de pago seguro SafePay para completar tu compra.',
+                        '📍 Hacemos envíos express en 90 minutos a todo el Gran Santo Domingo.',
+                        '🏷️ Te apliqué un cupón especial del 10% de descuento de cortesía: VIP10.'
+                      ].map((reply, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => {
+                            setMsgInput(reply);
+                            setShowQuickReplies(false);
+                          }}
+                          className="p-2 text-left text-xs rounded-lg bg-slate-100 dark:bg-slate-800/80 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-slate-800 dark:text-slate-200 border border-transparent hover:border-blue-300 dark:hover:border-blue-700 transition"
+                        >
+                          {reply}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Bottom Input Bar */}
+                <div className="p-2.5 sm:p-3.5 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0 pb-safe">
+                  <div className="flex items-end space-x-1.5 sm:space-x-2 bg-slate-100 dark:bg-slate-800/90 rounded-2xl p-1.5 sm:p-2 border border-slate-200/80 dark:border-slate-700/60 focus-within:ring-2 focus-within:ring-blue-500/30 focus-within:border-blue-500 transition-all">
+                    
+                    {/* Action Buttons: Clip, Zap */}
+                    <div className="flex items-center space-x-0.5 sm:space-x-1 pb-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setShowQuickReplies(!showQuickReplies)}
+                        title="Respuestas rápidas"
+                        className={`p-2 rounded-xl transition ${
+                          showQuickReplies
+                            ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-600'
+                            : 'text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 hover:bg-slate-200/60 dark:hover:bg-slate-700/60'
+                        }`}
+                      >
+                        <Zap className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Auto-growing Text Input */}
+                    <textarea
+                      ref={textareaRef}
+                      rows={1}
+                      value={msgInput}
+                      onChange={e => setMsgInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSendMessage();
+                        }
+                      }}
+                      placeholder="Escribe un mensaje..."
+                      className="flex-1 max-h-28 bg-transparent text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none py-1.5 px-1"
+                    />
+
+                    {/* Send Button */}
+                    <button
+                      onClick={handleSendMessage}
+                      disabled={!msgInput.trim() || sendingMsg}
+                      className={`p-2 sm:p-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md flex items-center justify-center transition-all shrink-0 ${
+                        msgInput.trim() && !sendingMsg
+                          ? 'hover:scale-105 active:scale-95 opacity-100 cursor-pointer'
+                          : 'opacity-40 cursor-not-allowed'
+                      }`}
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </main>
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-xs text-slate-400">
+                Selecciona una conversación de la bandeja para comenzar.
+              </div>
+            )}
+
+            {/* Right Side: Customer Info Drawer & Agent Transfer List */}
+            {showInfoDrawer && selectedConv && (
+              <>
+                {/* Mobile Backdrop for Drawer */}
+                <div
+                  onClick={() => setShowInfoDrawer(false)}
+                  className="fixed inset-0 bg-slate-950/50 z-30 lg:hidden animate-in fade-in"
+                />
+
+                <aside className="fixed inset-y-0 right-0 w-80 max-w-[85vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 flex flex-col z-40 shadow-2xl lg:static lg:z-10 animate-in slide-in-from-right duration-200">
+                  <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                    <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center space-x-2">
+                      <UserCheck className="w-4 h-4 text-blue-600" />
+                      <span>Ficha & Transferencia</span>
+                    </h3>
+                    <button
+                      onClick={() => setShowInfoDrawer(false)}
+                      className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="p-4 space-y-4 overflow-y-auto flex-1 text-xs">
+                    {/* SECCIÓN DESTACADA: AGENTE QUE LO ATIENDE */}
+                    <div className="p-3.5 rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-800/80 dark:to-slate-800/30 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">
+                          Agente Asignado
+                        </span>
+                        <span className="flex items-center space-x-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                          <span>Activo</span>
+                        </span>
+                      </div>
+
+                      <div className="flex items-center space-x-3">
+                        <div
+                          className="w-10 h-10 rounded-full bg-gradient-to-tr from-purple-600 to-indigo-600 flex items-center justify-center text-white font-bold text-xs shadow"
+                        >
+                          {selectedConv.assigned_agent_type === 'ai' ? 'AI' : 'OP'}
+                        </div>
+                        <div>
+                          <h5 className="font-bold text-slate-900 dark:text-white text-xs">
+                            {selectedConv.assigned_agent_name || (selectedConv.ai_active === 1 ? 'Sofia AI' : 'Gabriel Castro')}
+                          </h5>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {selectedConv.assigned_agent_type === 'ai' || selectedConv.ai_active === 1 ? 'Inteligencia Artificial Ventas' : 'Operador Humano'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Agent re-assignment options */}
+                      <div className="pt-2 border-t border-slate-200/80 dark:border-slate-700/60 space-y-1.5">
+                        <p className="text-[10px] font-semibold text-slate-400">Transferir a otro miembro del equipo:</p>
+                        <div className="space-y-1 max-h-48 overflow-y-auto">
+                          {teamMembers.map(agent => (
+                            <button
+                              key={agent.id || agent.member_id}
+                              onClick={() => handleTransfer(agent)}
+                              className={`w-full p-1.5 px-2 rounded-lg text-left text-[11px] flex items-center justify-between transition ${
+                                selectedConv.assigned_agent_id === (agent.member_id || agent.id)
+                                  ? 'bg-blue-600 text-white font-bold shadow-xs'
+                                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-700/60'
+                              }`}
+                            >
+                              <span className="flex items-center space-x-1.5 truncate">
+                                {agent.type === 'ai' ? (
+                                  <Bot className="w-3 h-3 shrink-0 text-purple-400" />
+                                ) : (
+                                  <User className="w-3 h-3 shrink-0 text-amber-400" />
+                                )}
+                                <span className="truncate">{agent.name}</span>
+                              </span>
+                              <span className="text-[9px] opacity-75 shrink-0 ml-1">
+                                {agent.type === 'ai' ? 'Auto AI' : 'Humano'}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
 
-              {/* Input Box */}
-              <div className="p-3 border-t border-gray-200 dark:border-gray-800 flex gap-2">
-                <input
-                  type="text"
-                  value={msgInput}
-                  onChange={e => setMsgInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
-                  placeholder={t.writeMsg}
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button
-                  onClick={handleSendMessage}
-                  disabled={sendingMsg || !msgInput.trim()}
-                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-xs transition flex items-center gap-1.5 shadow"
-                >
-                  <Send className="w-3.5 h-3.5" /> {t.send}
-                </button>
-              </div>
+                    {/* Customer Information */}
+                    <div className="text-center pt-2">
+                      <div
+                        className="w-14 h-14 mx-auto rounded-full bg-gradient-to-tr from-blue-600 to-indigo-700 flex items-center justify-center text-white font-bold text-base shadow mb-1.5"
+                      >
+                        {(selectedConv.contact_name || 'CL').slice(0, 2).toUpperCase()}
+                      </div>
+                      <h4 className="font-bold text-sm text-slate-900 dark:text-white">
+                        {selectedConv.contact_name || 'Cliente'}
+                      </h4>
+                      <p className="text-[11px] text-slate-400 capitalize">Canal {selectedConv.platform}</p>
+                    </div>
+
+                    <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[11px]">
+                      <div className="flex items-center space-x-2 text-slate-600 dark:text-slate-400">
+                        <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span>{selectedConv.contact_phone || 'Sin número registrado'}</span>
+                      </div>
+                      <div className="flex items-center space-x-2 text-slate-600 dark:text-slate-400">
+                        <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="truncate">{selectedConv.contact_id || 'ID de contacto: ' + selectedConv.id}</span>
+                      </div>
+                    </div>
+                  </div>
+                </aside>
+              </>
+            )}
+
+          </div>
+        </div>
+      )}
+
+      {/* --------------------------------------------------------------------- */}
+      {/* 3.5. TEAM & EMPLOYEES MANAGEMENT */}
+      {/* --------------------------------------------------------------------- */}
+      {activeTab === 'team' && (
+        <div className="space-y-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-sm">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                <Users className="w-5 h-5 text-blue-600" /> Equipo y Empleados (Humanos & Agentes AI)
+              </h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Gestiona a tus operadores de atención al cliente y a tus agentes virtuales de ventas. Asigna roles, canales y permisos de transferencia.
+              </p>
             </div>
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-xs text-gray-400">
-              {t.selectConv}
+            <button
+              onClick={() => setShowAddMemberModal(true)}
+              className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center gap-2 shadow self-start md:self-auto"
+            >
+              <Plus className="w-4 h-4" /> Agregar Miembro
+            </button>
+          </div>
+
+          {/* Team Members Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {teamMembers.map(member => (
+              <div
+                key={member.id || member.member_id}
+                className="p-5 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-sm flex flex-col justify-between space-y-4 hover:border-blue-300 dark:hover:border-blue-800 transition"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-sm shadow ${
+                        member.type === 'ai'
+                          ? 'bg-gradient-to-tr from-purple-600 to-indigo-600'
+                          : 'bg-gradient-to-tr from-amber-500 to-orange-600'
+                      }`}
+                    >
+                      {member.initials || (member.name || 'OP').slice(0, 2).toUpperCase()}
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-gray-900 dark:text-white">{member.name}</h4>
+                      <p className="text-xs text-gray-500">{member.role}</p>
+                    </div>
+                  </div>
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      member.type === 'ai'
+                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
+                        : 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
+                    }`}
+                  >
+                    {member.type === 'ai' ? '🤖 Agente AI' : '👤 Humano'}
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 text-xs text-gray-600 dark:text-gray-400 pt-2 border-t border-gray-100 dark:border-gray-800">
+                  {member.email && (
+                    <div className="flex items-center gap-2">
+                      <Mail className="w-3.5 h-3.5 text-gray-400" />
+                      <span className="truncate">{member.email}</span>
+                    </div>
+                  )}
+                  {member.phone && (
+                    <div className="flex items-center gap-2">
+                      <Phone className="w-3.5 h-3.5 text-gray-400" />
+                      <span>{member.phone}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-[11px] text-gray-400">Estado operativo:</span>
+                    <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Online
+                    </span>
+                  </div>
+                </div>
+
+                {member.type === 'human' && (
+                  <button
+                    onClick={() => handleDeleteMember(member.id || member.member_id)}
+                    className="w-full py-1.5 rounded-lg border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 text-xs font-semibold transition"
+                  >
+                    Desactivar Acceso
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Add Member Modal */}
+          {showAddMemberModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+              <div className="w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-800 p-6 space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-gray-200 dark:border-gray-800">
+                  <h3 className="font-bold text-base text-gray-900 dark:text-white flex items-center gap-2">
+                    <Users className="w-5 h-5 text-blue-600" /> Registrar Nuevo Miembro
+                  </h3>
+                  <button onClick={() => setShowAddMemberModal(false)} className="text-gray-400 hover:text-gray-600">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleCreateMember} className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Nombre Completo</label>
+                    <input
+                      type="text"
+                      required
+                      value={newMemberName}
+                      onChange={e => setNewMemberName(e.target.value)}
+                      placeholder="Ej. Laura Méndez"
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Cargo / Especialidad</label>
+                    <input
+                      type="text"
+                      value={newMemberRole}
+                      onChange={e => setNewMemberRole(e.target.value)}
+                      placeholder="Ej. Ventas VIP y Cierre"
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Tipo de Empleado</label>
+                    <select
+                      value={newMemberType}
+                      onChange={e => setNewMemberType(e.target.value as any)}
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-white"
+                    >
+                      <option value="human">👤 Operador Humano</option>
+                      <option value="ai">🤖 Agente Virtual AI</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Correo Electrónico</label>
+                    <input
+                      type="email"
+                      value={newMemberEmail}
+                      onChange={e => setNewMemberEmail(e.target.value)}
+                      placeholder="laura@empresa.com"
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Teléfono / WhatsApp</label>
+                    <input
+                      type="tel"
+                      value={newMemberPhone}
+                      onChange={e => setNewMemberPhone(e.target.value)}
+                      placeholder="+1 (809) 000-0000"
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-3 border-t border-gray-200 dark:border-gray-800">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddMemberModal(false)}
+                      className="px-4 py-2 rounded-xl text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow"
+                    >
+                      Guardar Miembro
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
         </div>
