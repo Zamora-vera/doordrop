@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Package, Globe, ChevronDown, Sun, Moon, ArrowRightLeft, Search, Copy, Trash2, Plus, Lock, Box, Cpu, Rocket } from 'lucide-react';
+import { Package, Globe, ChevronDown, Sun, Moon, ArrowRightLeft, Search, Copy, Trash2, Plus, Lock, Box, Cpu, Rocket, MessageCircle, Sparkles } from 'lucide-react';
 import { LanguageSelector } from '../components/LanguageSelector';
 import { CurrencySelector } from '../components/CurrencySelector';
 import { useI18n } from '../lib/i18n';
@@ -18,6 +18,13 @@ export const Landing = () => {
   const navigate = useNavigate();
   const { brand } = useBrand();
   const supportWhatsAppHref = getSupportWhatsAppUrl(language);
+  const landingLanguage = language.startsWith('it') ? 'it' : language.startsWith('en') ? 'en' : language.startsWith('fr') ? 'fr' : 'es';
+  const omnichannelAnnouncement = {
+    es: { badge: 'NUEVO', label: 'Omnicanal + AI', text: 'WhatsApp, Instagram, Facebook y Telegram en un solo lugar.', cta: 'Descubrir' },
+    it: { badge: 'NOVITÀ', label: 'Omnicanale + AI', text: 'WhatsApp, Instagram, Facebook e Telegram in un unico spazio.', cta: 'Scopri' },
+    en: { badge: 'NEW', label: 'Omnichannel + AI', text: 'WhatsApp, Instagram, Facebook and Telegram in one place.', cta: 'Discover' },
+    fr: { badge: 'NOUVEAU', label: 'Omnicanal + IA', text: 'WhatsApp, Instagram, Facebook et Telegram au même endroit.', cta: 'Découvrir' }
+  }[landingLanguage];
   
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   
@@ -168,10 +175,20 @@ export const Landing = () => {
 
   return (
     <div className="antialiased overflow-x-hidden selection:bg-neon-pink selection:text-white bg-light-100 text-gray-800 dark:bg-dark-900 dark:text-[#C5C6C7] min-h-screen">
-      {/* Top Marketplace Announcement Bar */}
-      <div className="fixed w-full top-0 z-50 bg-gradient-to-r from-blue-700 via-indigo-700 to-blue-900 text-white text-xs py-2 px-4 text-center font-bold flex items-center justify-center gap-2 shadow-md">
-        <span>🛒 <strong>¡Nuevo!</strong> DoorDrop Marketplace: Compra y vende con cotización y etiquetas de envío automáticas.</span>
-        <Link to="/marketplace" className="underline hover:text-blue-200 font-black ml-1">Explorar Marketplace →</Link>
+      {/* Animated omnichannel announcement bar */}
+      <div className="fixed w-full top-0 z-50 min-h-9 bg-gradient-to-r from-slate-950 via-blue-900 to-cyan-800 text-white text-[11px] px-4 font-bold shadow-md">
+        <Link to="/omnichannel" className="group mx-auto flex min-h-9 max-w-5xl items-center justify-center gap-2.5 py-1.5 hover:text-cyan-100" aria-label={`${omnichannelAnnouncement.label}: ${omnichannelAnnouncement.cta}`}>
+          <span className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20 transition-transform duration-300 group-hover:scale-110">
+            <MessageCircle className="h-3.5 w-3.5 text-cyan-200" aria-hidden="true" />
+            <Sparkles className="absolute -right-1 -top-1 h-3 w-3 animate-pulse text-amber-300" aria-hidden="true" />
+          </span>
+          <span className="shrink-0 rounded-full bg-gradient-to-r from-amber-300 to-yellow-400 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-slate-950 shadow-sm shadow-amber-400/30 animate-pulse">
+            {omnichannelAnnouncement.badge}
+          </span>
+          <span className="truncate text-[11px] font-black sm:text-xs">{omnichannelAnnouncement.label}</span>
+          <span className="hidden truncate font-semibold text-blue-100 md:inline">— {omnichannelAnnouncement.text}</span>
+          <span className="hidden shrink-0 items-center gap-1 rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-black text-white transition-colors group-hover:bg-white/20 sm:inline-flex">{omnichannelAnnouncement.cta} <span aria-hidden="true">→</span></span>
+        </Link>
       </div>
 
       {/* Header / Navbar */}
@@ -183,7 +200,11 @@ export const Landing = () => {
 
           {/* Nav Desktop */}
           <nav className="hidden md:flex space-x-8 font-medium text-sm text-gray-600 dark:text-gray-300">
-            <Link to="/omnichannel" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_services') || 'Servicios'}</Link>
+            <Link to="/omnichannel" className="group inline-flex items-center gap-1.5 hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">
+              <Sparkles className="h-3.5 w-3.5 text-cyan-500 transition-transform group-hover:rotate-12" aria-hidden="true" />
+              <span>{omnichannelAnnouncement.label.replace(' + AI', '').replace(' + IA', '')}</span>
+              <span className="rounded-full bg-cyan-100 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-cyan-700 dark:bg-cyan-950/70 dark:text-cyan-300 animate-pulse">{omnichannelAnnouncement.badge}</span>
+            </Link>
             <Link to="/marketplace" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors font-bold text-blue-600 dark:text-neon-cyan">Marketplace</Link>
             <Link to="/tracking" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_tracking') || 'Seguimiento'}</Link>
             <Link to="/omnichannel#plans" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_companies') || 'Empresas'}</Link>
