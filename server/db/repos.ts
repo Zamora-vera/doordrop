@@ -3,10 +3,47 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
-// Hashing helper
+// Password hashing: new users receive an individual salt and a deliberately
+// expensive PBKDF2 hash. Legacy hashes remain verifiable and are upgraded on
+// the next successful login, so existing accounts are not broken.
+const LEGACY_PASSWORD_SALT = 'ship24go_salt_98765';
+const PASSWORD_ALGORITHM = 'pbkdf2_sha512';
+const PASSWORD_ITERATIONS = 210000;
+
+function timingSafeHexEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(String(left || ''), 'hex');
+  const rightBuffer = Buffer.from(String(right || ''), 'hex');
+  return leftBuffer.length > 0
+    && leftBuffer.length === rightBuffer.length
+    && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
 export function hashPassword(password: string): string {
-  const salt = 'ship24go_salt_98765';
-  return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derived = crypto.pbkdf2Sync(password, salt, PASSWORD_ITERATIONS, 64, 'sha512').toString('hex');
+  return `${PASSWORD_ALGORITHM}$${PASSWORD_ITERATIONS}$${salt}$${derived}`;
+}
+
+export function verifyPassword(password: string, storedHash: string): { valid: boolean; needsRehash: boolean } {
+  if (typeof password !== 'string' || typeof storedHash !== 'string' || !storedHash) {
+    return { valid: false, needsRehash: false };
+  }
+
+  const parts = storedHash.split('$');
+  if (parts.length === 4 && parts[0] === PASSWORD_ALGORITHM) {
+    const iterations = Number(parts[1]);
+    const salt = parts[2];
+    const expected = parts[3];
+    if (!Number.isInteger(iterations) || iterations < 10000 || iterations > 600000 || !salt || !expected) {
+      return { valid: false, needsRehash: false };
+    }
+    const derived = crypto.pbkdf2Sync(password, salt, iterations, 64, 'sha512').toString('hex');
+    return { valid: timingSafeHexEqual(derived, expected), needsRehash: iterations < PASSWORD_ITERATIONS };
+  }
+
+  // Compatibility for the historical shared-salt format.
+  const legacyDerived = crypto.pbkdf2Sync(password, LEGACY_PASSWORD_SALT, 10000, 64, 'sha512').toString('hex');
+  return { valid: timingSafeHexEqual(legacyDerived, storedHash), needsRehash: true };
 }
 
 // Generador de IDs
@@ -162,6 +199,7 @@ export async function initDb() {
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS currency CHAR(3) DEFAULT 'EUR'`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS status ENUM('active','suspended','closed') NOT NULL DEFAULT 'active'`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_payment_method VARCHAR(30) NOT NULL DEFAULT 'wallet'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_token_version INT NOT NULL DEFAULT 1`,
     `ALTER TABLE wallet_topups ADD COLUMN IF NOT EXISTS payment_provider VARCHAR(80) NULL`,
     `ALTER TABLE wallet_topups ADD COLUMN IF NOT EXISTS provider_reference VARCHAR(191) NULL`,
     `ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS status VARCHAR(30) NULL`

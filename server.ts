@@ -38,6 +38,7 @@ import {
   TrackingEventRepo,
   TicketRepo,
   hashPassword,
+  verifyPassword,
   generateId
 } from './server/db/repos';
 import { getDocBundle, docsToMarkdown, docsToPdfBuffer, getOpenApiSpec, getOpenAiToolSchemas } from './server/docs/apiDocs';
@@ -54,6 +55,14 @@ const APP_VERSION = (() => {
   }
 })();
 app.set('trust proxy', true); // real client IP behind nginx/CF
+app.disable('x-powered-by');
+app.use((_req, res, next) => {
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+  next();
+});
 
 // HTML shell: avoid CDN caching so script tags stay as type=module
 app.use((req, res, next) => {
@@ -73,7 +82,10 @@ app.use(express.json({
       req.originalUrl === '/api/webhooks/polar' ||
       req.originalUrl === '/api/webhooks/paypal' ||
       req.originalUrl === '/api/webhooks/logihub' ||
-      req.originalUrl === '/api/webhooks/logihub-intl'
+      req.originalUrl === '/api/webhooks/logihub-intl' ||
+      req.originalUrl === '/api/webhooks/genei' ||
+      req.originalUrl === '/api/webhooks/spedirepro' ||
+      req.originalUrl === '/api/webhooks/easypost'
     ) {
       req.rawBody = buf;
     }
@@ -360,10 +372,28 @@ if (!JWT_SECRET || JWT_SECRET.length < 32) {
   throw new Error('Configura JWT_SECRET seguro antes de iniciar producción.');
 }
 
-function generateToken(payload: { userId: string; role: string; adminUserId?: string; impersonated?: boolean }): string {
+const JWT_TTL_SECONDS = 7 * 24 * 60 * 60;
+type AuthTokenPayload = {
+  userId: string;
+  role: string;
+  adminUserId?: string;
+  impersonated?: boolean;
+  authTokenVersion: number;
+  iat: number;
+  exp: number;
+};
+
+function generateToken(payload: { userId: string; role: string; adminUserId?: string; impersonated?: boolean; authTokenVersion?: number }): string {
   const header = { alg: 'HS256', typ: 'JWT' };
+  const now = Math.floor(Date.now() / 1000);
+  const tokenPayload = {
+    ...payload,
+    authTokenVersion: Number.isInteger(payload.authTokenVersion) ? Number(payload.authTokenVersion) : 1,
+    iat: now,
+    exp: now + JWT_TTL_SECONDS
+  };
   const base64Header = Buffer.from(JSON.stringify(header)).toString('base64url');
-  const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const base64Payload = Buffer.from(JSON.stringify(tokenPayload)).toString('base64url');
   
   const signature = crypto
     .createHmac('sha256', JWT_SECRET)
@@ -373,11 +403,13 @@ function generateToken(payload: { userId: string; role: string; adminUserId?: st
   return `${base64Header}.${base64Payload}.${signature}`;
 }
 
-function verifyToken(token: string): { userId: string; role: string; adminUserId?: string; impersonated?: boolean } | null {
+function verifyToken(token: string): AuthTokenPayload | null {
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
     const [headerB64, payloadB64, signatureB64] = parts;
+    const header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
+    if (header?.alg !== 'HS256' || header?.typ !== 'JWT') return null;
     
     const expectedSig = crypto
       .createHmac('sha256', JWT_SECRET)
@@ -386,7 +418,19 @@ function verifyToken(token: string): { userId: string; role: string; adminUserId
       
     if (signatureB64 !== expectedSig) return null;
     
-    return JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    const now = Math.floor(Date.now() / 1000);
+    if (
+      !payload ||
+      typeof payload.userId !== 'string' ||
+      typeof payload.role !== 'string' ||
+      !Number.isFinite(Number(payload.iat)) ||
+      !Number.isFinite(Number(payload.exp)) ||
+      Number(payload.exp) <= now ||
+      Number(payload.exp) > now + JWT_TTL_SECONDS + 300 ||
+      !Number.isInteger(Number(payload.authTokenVersion))
+    ) return null;
+    return payload as AuthTokenPayload;
   } catch {
     return null;
   }
@@ -5916,6 +5960,9 @@ const authMiddleware = async (req: any, res: any, next: any) => {
     if (!user) {
       return res.status(401).json({ error: 'No se pudo completar la operación. Usuario no encontrado.' });
     }
+    if (Number(user.auth_token_version || 1) !== Number(decoded.authTokenVersion)) {
+      return res.status(401).json({ error: 'No se pudo completar la operación. Sesión expirada.' });
+    }
     
     const isImpersonation = Boolean(decoded.impersonated && decoded.adminUserId);
     if (user.role !== 'super_admin' && user.status && user.status !== 'active' && !isImpersonation) {
@@ -6022,12 +6069,19 @@ app.get('/api/docs/pdf', (req, res) => {
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password, name, phone, country, currency, businessType, storeType, pickupAddress } = req.body;
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const normalizedName = typeof name === 'string' ? name.trim() : '';
     
-    if (!email || !password || !name) {
-      return res.status(400).json({ error: 'El correo, la contraseña y el nombre son obligatorios.' });
+    if (!normalizedEmail || typeof password !== 'string' || password.length < 8 || !normalizedName) {
+      return res.status(400).json({ error: 'El correo, el nombre y una contraseña de al menos 8 caracteres son obligatorios.' });
     }
 
-    const existingUser = await UserRepo.getByEmail(email);
+    const clientIp = String(req.socket.remoteAddress || req.ip || '').slice(0, 45);
+    if (!checkForgotPasswordRateLimit(`register_ip_${clientIp}`, 10, 15 * 60 * 1000)) {
+      return res.status(429).json({ error: 'Demasiados registros desde esta conexión. Intenta nuevamente más tarde.' });
+    }
+
+    const existingUser = await UserRepo.getByEmail(normalizedEmail);
     if (existingUser) {
       return res.status(400).json({ error: 'El correo ya está registrado. Intenta iniciar sesión.' });
     }
@@ -6037,9 +6091,9 @@ app.post('/api/auth/register', async (req, res) => {
     
     const newUser = {
       id: userId,
-      email,
+      email: normalizedEmail,
       password_hash: passwordHash,
-      name,
+      name: normalizedName,
       phone: phone || '',
       country: country || 'ES',
       currency: currency || 'EUR',
@@ -6082,18 +6136,18 @@ app.post('/api/auth/register', async (req, res) => {
       await CompanyRepo.create({
         id: generateId('comp_'),
         user_id: userId,
-        company_name: pickupAddress.companyName || name,
+        company_name: pickupAddress.companyName || normalizedName,
         address: pickupAddress.address,
         city: pickupAddress.city || 'Madrid',
         zip_code: pickupAddress.zip || '',
         country: pickupAddress.country || 'ES',
         phone: pickupAddress.phone || phone || '',
-        email: email
+        email: normalizedEmail
       });
     }
 
     const userForToken = { id: userId, role: 'customer' };
-    const token = generateToken({ userId: userForToken.id, role: userForToken.role });
+    const token = generateToken({ userId: userForToken.id, role: userForToken.role, authTokenVersion: 1 });
     
     res.json({
       user: {
@@ -6118,17 +6172,33 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    const user = await UserRepo.getByEmail(email);
-    
-    if (!user || user.password_hash !== hashPassword(password)) {
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    if (!normalizedEmail || typeof password !== 'string') {
       return res.status(401).json({ error: 'Credenciales incorrectas. Intenta nuevamente.' });
+    }
+    const clientIp = String(req.socket.remoteAddress || req.ip || '').slice(0, 45);
+    const ipAllowed = checkForgotPasswordRateLimit(`login_ip_${clientIp}`, 20, 15 * 60 * 1000);
+    const emailAllowed = checkForgotPasswordRateLimit(`login_email_${normalizedEmail}`, 10, 15 * 60 * 1000);
+    if (!ipAllowed || !emailAllowed) {
+      return res.status(429).json({ error: 'Demasiados intentos. Espera unos minutos antes de intentar nuevamente.' });
+    }
+
+    const user = await UserRepo.getByEmail(normalizedEmail);
+    const passwordCheck = user ? verifyPassword(password, user.password_hash) : { valid: false, needsRehash: false };
+    
+    if (!user || !passwordCheck.valid) {
+      return res.status(401).json({ error: 'Credenciales incorrectas. Intenta nuevamente.' });
+    }
+
+    if (passwordCheck.needsRehash) {
+      await pool.query('UPDATE users SET password_hash = ? WHERE id = ?', [hashPassword(password), user.id]).catch(() => null);
     }
 
     if (user.role !== 'super_admin' && user.status && user.status !== 'active') {
       return res.status(403).json({ error: 'Cuenta no disponible temporalmente.' });
     }
 
-    const token = generateToken({ userId: user.id, role: user.role });
+    const token = generateToken({ userId: user.id, role: user.role, authTokenVersion: Number(user.auth_token_version || 1) });
     
     res.json({
       user: {
@@ -6311,7 +6381,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
       // 3. Actualizar contraseña usando el hash pbkdf2 histórico
       const newPasswordHash = hashPassword(newPassword);
       await conn.query(
-        'UPDATE users SET password_hash = ? WHERE id = ?',
+        'UPDATE users SET password_hash = ?, auth_token_version = COALESCE(auth_token_version, 1) + 1 WHERE id = ?',
         [newPasswordHash, userId]
       );
 
@@ -10199,9 +10269,36 @@ app.delete('/api/address-book/:id', authMiddleware, async (req: any, res) => {
 
 // --- WEBHOOK GENEI ---
 
+function verifyWebhookHmac(rawBody: string, signatureHeader: string, secret: string): boolean {
+  const supplied = String(signatureHeader || '').trim().replace(/^(sha256=|v1=)/i, '').trim().toLowerCase();
+  const expectedHex = crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex').toLowerCase();
+  const expectedBase64 = crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64').toLowerCase();
+  return [expectedHex, expectedBase64].some((expected) => {
+    const left = Buffer.from(supplied);
+    const right = Buffer.from(expected);
+    return left.length === right.length && left.length > 0 && crypto.timingSafeEqual(left, right);
+  });
+}
 
 app.post('/api/webhooks/spedirepro', async (req: any, res) => {
   try {
+    const provider = await ProviderRepo.getByCode('spedirepro');
+    const webhookSecret = String(process.env.SPEDIREPRO_WEBHOOK_SECRET || providerConfig(provider || {}).webhookSecret || '').trim();
+    const rawBody = Buffer.isBuffer(req.rawBody)
+      ? req.rawBody.toString('utf8')
+      : JSON.stringify(req.body || {});
+    const webhookSignature = String(
+      req.get('X-SpedirePro-Signature') ||
+      req.get('X-Webhook-Signature') ||
+      req.get('X-Signature') ||
+      ''
+    );
+    if (!webhookSecret) {
+      return res.status(503).json({ success: false, message: 'Webhook pendiente de configuración segura.' });
+    }
+    if (!verifyWebhookHmac(rawBody, webhookSignature, webhookSecret)) {
+      return res.status(401).json({ success: false, message: 'Invalid signature' });
+    }
     const payload = req.body || {};
     const normalized = normalizeSpedireProWebhookPayload(payload);
     const externalId = String(normalized.reference || normalized.order || normalized.tracking || crypto.randomBytes(8).toString('hex'));
@@ -10325,13 +10422,13 @@ app.post('/api/webhooks/logihub', async (req: any, res) => {
 
     const provider = await ProviderRepo.getByCode('logihub_intl');
     const secret = logihubIntlConfig(provider).webhookSecret || process.env.LOGIHUB_WEBHOOK_SECRET || '';
-    if (secret) {
-      const expected = crypto.createHmac('sha256', secret).update(raw, 'utf8').digest('hex');
-      const ok = signature && signature.length === expected.length && crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-      if (!ok) {
-        await writeProviderLog('logihub_intl', 'webhook_invalid_signature', { event }, { signature: String(signature).slice(0, 16) }, 401);
-        return res.status(401).json({ ok: false, message: 'Invalid signature' });
-      }
+    if (!secret) {
+      await writeProviderLog('logihub_intl', 'webhook_missing_secret', { event }, { rejected: true }, 503);
+      return res.status(503).json({ ok: false, message: 'Webhook pendiente de configuración segura.' });
+    }
+    if (!verifyWebhookHmac(raw, signature, secret)) {
+      await writeProviderLog('logihub_intl', 'webhook_invalid_signature', { event }, { rejected: true }, 401);
+      return res.status(401).json({ ok: false, message: 'Invalid signature' });
     }
 
     const data = req.body || {};
@@ -10383,6 +10480,22 @@ app.post('/api/webhooks/logihub', async (req: any, res) => {
 
 app.post('/api/webhooks/easypost', async (req: any, res) => {
   try {
+    const rawBody = Buffer.isBuffer(req.rawBody)
+      ? req.rawBody.toString('utf8')
+      : JSON.stringify(req.body || {});
+    const webhookSecret = String(process.env.EASYPOST_WEBHOOK_SECRET || '').trim();
+    const webhookSignature = String(
+      req.get('X-Hmac-Signature') ||
+      req.get('X-Easypost-Signature') ||
+      req.get('X-Webhook-Signature') ||
+      ''
+    );
+    if (!webhookSecret) {
+      return res.status(503).json({ success: false, message: 'Webhook pendiente de configuración segura.' });
+    }
+    if (!verifyWebhookHmac(rawBody, webhookSignature, webhookSecret)) {
+      return res.status(401).json({ success: false, message: 'Invalid signature' });
+    }
     const payload = req.body || {};
     const normalized = normalizeEasyPostWebhookPayload(payload);
     const externalId = String(normalized.eventId || normalized.shipmentId || normalized.trackingCode || crypto.randomBytes(8).toString('hex'));
@@ -10465,6 +10578,23 @@ app.post('/api/admin/easypost/webhook/create', authMiddleware, requireSuperAdmin
 
 app.post('/api/webhooks/genei', async (req: any, res) => {
   try {
+    const provider = await ProviderRepo.getByCode('genei');
+    const webhookSecret = String(process.env.GENEI_WEBHOOK_SECRET || providerConfig(provider || {}).webhookSecret || '').trim();
+    const rawBody = Buffer.isBuffer(req.rawBody)
+      ? req.rawBody.toString('utf8')
+      : JSON.stringify(req.body || {});
+    const webhookSignature = String(
+      req.get('X-Genei-Signature') ||
+      req.get('X-Webhook-Signature') ||
+      req.get('X-Signature') ||
+      ''
+    );
+    if (!webhookSecret) {
+      return res.status(503).json({ success: false, message: 'Webhook pendiente de configuración segura.' });
+    }
+    if (!verifyWebhookHmac(rawBody, webhookSignature, webhookSecret)) {
+      return res.status(401).json({ success: false, message: 'Invalid signature' });
+    }
     const payload = req.body;
     const { status, message, data } = payload;
     if (!data || !data.codigo_envio) {
@@ -11258,7 +11388,7 @@ app.post('/api/admin/clients/:id/impersonate', authMiddleware, requireSuperAdmin
       return res.status(404).json({ error: 'Cliente no encontrado.' });
     }
 
-    const token = generateToken({ userId: user.id, role: user.role, adminUserId: req.user.id, impersonated: true });
+    const token = generateToken({ userId: user.id, role: user.role, adminUserId: req.user.id, impersonated: true, authTokenVersion: Number(user.auth_token_version || 1) });
     await writeAdminClientLog('client_impersonation', { adminId: req.user.id, clientId: user.id }, { success: true });
 
     res.json({

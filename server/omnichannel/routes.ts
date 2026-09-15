@@ -4,6 +4,7 @@ import https from 'https';
 import crypto from 'crypto';
 import { handleAIToolCall } from './ai_sales_tools';
 import { sendNotificationEvent } from '../services/emailService';
+import { verifyZernioWebhookSignature } from './service';
 import {
   getUserOmnichannelSubscription,
   hasActiveOmnichannelSubscription,
@@ -398,6 +399,20 @@ export function setupOmnichannelRoutes(app: any, options: {
   // ---------------------------------------------------------------------------
   app.post('/api/webhooks/zernio', async (req: Request, res: Response) => {
     const payload = req.body || {};
+    const rawBody = Buffer.isBuffer((req as any).rawBody)
+      ? (req as any).rawBody.toString('utf8')
+      : JSON.stringify(payload);
+    const signature = String(
+      req.get('X-Zernio-Signature') ||
+      req.get('X-Webhook-Signature') ||
+      req.get('X-Signature') ||
+      ''
+    );
+    const { webhookSecret } = await getZernioSettings();
+    if (!webhookSecret || !verifyZernioWebhookSignature(rawBody, signature, webhookSecret)) {
+      console.warn('[Omnichannel Webhook] Rejected: missing or invalid signature.');
+      return res.status(401).json({ status: 'invalid_signature' });
+    }
     const eventType = payload.event || payload.type;
     const eventId = String(
       req.headers['x-zernio-event-id']
@@ -534,13 +549,17 @@ export function setupOmnichannelRoutes(app: any, options: {
         case 'comment.received': {
           const comment = payload.data || payload.comment || payload;
           const profileId = payload.profileId || comment.profileId;
-          let userId = 1;
+          let userId = '';
           if (profileId) {
             const [prof]: any = await pool.query(
               "SELECT user_id FROM omnichannel_profiles WHERE zernio_profile_id = ? LIMIT 1",
               [profileId]
             );
             if (prof.length > 0) userId = prof[0].user_id;
+          }
+          if (!userId) {
+            console.warn('[Omnichannel Webhook] Comentario ignorado: perfil no reconocido.');
+            break;
           }
 
           const zPostId = comment.postId || comment.post_id || null;
@@ -593,13 +612,17 @@ export function setupOmnichannelRoutes(app: any, options: {
         case 'account.connected': {
           const acc = payload.data || payload.account || payload;
           const profileId = payload.profileId || acc.profileId;
-          let userId = 1;
+          let userId = '';
           if (profileId) {
             const [prof]: any = await pool.query(
               "SELECT user_id FROM omnichannel_profiles WHERE zernio_profile_id = ? LIMIT 1",
               [profileId]
             );
             if (prof.length > 0) userId = prof[0].user_id;
+          }
+          if (!userId) {
+            console.warn('[Omnichannel Webhook] Cuenta ignorada: perfil no reconocido.');
+            break;
           }
 
           const zAccId = acc.accountId || acc._id || acc.id;
