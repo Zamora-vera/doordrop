@@ -39,6 +39,30 @@ export const api = {
   sendAdminTemplateTest: (id: string, data: any) => fetchAPI(`/admin/smtp/templates/${id}/send-test`, { method: 'POST', body: JSON.stringify(data) }),
   getAdminEmailNotificationEvents: () => fetchAPI('/admin/smtp/events'),
   updateAdminEmailNotificationEvent: (eventCode: string, data: any) => fetchAPI(`/admin/smtp/events/${encodeURIComponent(eventCode)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getAdminWebmailStatus: () => fetchAPI('/admin/webmail/status'),
+  verifyAdminWebmail: () => fetchAPI('/admin/webmail/verify', { method: 'POST' }),
+  getAdminWebmailFolders: () => fetchAPI('/admin/webmail/folders'),
+  getAdminWebmailMessages: (params: { folder?: string; page?: number; pageSize?: number; search?: string } = {}) => {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && String(value).trim() !== '') query.set(key, String(value));
+    });
+    return fetchAPI(`/admin/webmail/messages${query.toString() ? `?${query.toString()}` : ''}`);
+  },
+  getAdminWebmailMessage: (uid: string | number, mailbox: string) => fetchAPI(`/admin/webmail/messages/${encodeURIComponent(String(uid))}?mailbox=${encodeURIComponent(mailbox)}`),
+  downloadAdminWebmailAttachment: async (uid: string | number, mailbox: string, index: number) => {
+    const token = getAuthToken();
+    const response = await fetch(`${API_BASE}/admin/webmail/messages/${encodeURIComponent(String(uid))}/attachments/${encodeURIComponent(String(index))}?mailbox=${encodeURIComponent(mailbox)}`, {
+      headers: token ? { Authorization: token } : {}
+    });
+    if (!response.ok) {
+      throw new Error('El archivo adjunto no está disponible.');
+    }
+    return response.blob();
+  },
+  adminWebmailMessageAction: (uid: string | number, data: any) => fetchAPI(`/admin/webmail/messages/${encodeURIComponent(String(uid))}/action`, { method: 'POST', body: JSON.stringify(data) }),
+  sendAdminWebmail: (data: any) => fetchAPI('/admin/webmail/send', { method: 'POST', body: JSON.stringify(data) }),
+  saveAdminWebmailDraft: (data: any) => fetchAPI('/admin/webmail/drafts', { method: 'POST', body: JSON.stringify(data) }),
   login: (data: any) => fetchAPI('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
   forgotPassword: (data: { email: string }) => fetchAPI('/auth/forgot-password', { method: 'POST', body: JSON.stringify(data) }),
   resetPassword: (data: { token: string; newPassword: string }) => fetchAPI('/auth/reset-password', { method: 'POST', body: JSON.stringify(data) }),

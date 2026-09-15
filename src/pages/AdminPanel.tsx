@@ -1,6 +1,7 @@
 import AdminPodSettings from './admin/AdminPodSettings';
 import SmtpSettings from './admin/SmtpSettings';
 import EmailTemplates from './admin/EmailTemplates';
+import Webmail from './admin/Webmail';
 import { AdminOmnichannel } from './AdminOmnichannel';
 import { getCountryName, WORLD_COUNTRIES } from '../lib/countries';
 import React, { useEffect, useState } from 'react';
@@ -81,6 +82,7 @@ const AdminSidebar = ({ isMobileMenuOpen, toggleMobileMenu, currentUser, isDark,
     { name: 'Omnicanal + AI', path: '/admin/omnichannel', icon: Bot },
     { name: t('providers'), path: '/admin/providers', icon: Truck },
     { name: 'Documentación', path: '/admin/docs', icon: BookOpen },
+    { name: t('admin_webmail_nav'), path: '/admin/webmail', icon: Mail },
     { name: 'Integraciones', path: '/admin/integraciones', icon: Plug },
     { name: 'Polar', path: '/admin/polar', icon: Sparkles },
     { name: 'PayPal', path: '/admin/paypal', icon: CreditCard },
@@ -2739,6 +2741,8 @@ const AdminSettings = () => {
   const [spedireLookup, setSpedireLookup] = useState('');
   const [spedireWebhookHistory, setSpedireWebhookHistory] = useState<any[]>([]);
   const [spedireBusy, setSpedireBusy] = useState(false);
+  const [webmailStatus, setWebmailStatus] = useState<any>(null);
+  const [webmailChecking, setWebmailChecking] = useState(false);
   const polarWebhookUrl = apiKeys.polarWebhookUrl || 'https://doordrop.lat/api/webhooks/polar';
   const polarEnvironment = apiKeys.polarEnvironment || 'sandbox';
   const paypalWebhookUrl = apiKeys.paypalWebhookUrl || 'https://doordrop.lat/api/webhooks/paypal';
@@ -2773,6 +2777,23 @@ const AdminSettings = () => {
   useEffect(() => {
     loadSpedireProIntegration(1);
   }, []);
+
+  useEffect(() => {
+    api.getAdminWebmailStatus().then(setWebmailStatus).catch(() => setWebmailStatus(null));
+  }, []);
+
+  const handleVerifyWebmail = async () => {
+    setWebmailChecking(true);
+    try {
+      const result = await api.verifyAdminWebmail();
+      setWebmailStatus(result);
+      alert(t('admin_webmail_connection_verified'));
+    } catch (error: any) {
+      alert(error?.message || t('admin_webmail_service_unavailable'));
+    } finally {
+      setWebmailChecking(false);
+    }
+  };
 
   const handleCopySpedireWebhook = async () => {
     const value = spedireInfo?.webhookUrl || 'https://doordrop.lat/api/webhooks/spedirepro';
@@ -2973,6 +2994,23 @@ const AdminSettings = () => {
             <Save className="w-4 h-4" /> {saving ? 'Guardando...' : 'Guardar configuración'}
           </button>
         </div>
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm mb-8">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-600 dark:text-blue-300 mb-2">{t('admin_webmail_eyebrow')}</p>
+            <h3 className="text-xl font-black text-gray-900 dark:text-white mb-1">{t('admin_webmail_corporate_title')}</h3>
+            <p className="text-gray-500 dark:text-gray-400 text-sm">{webmailStatus?.account || 'info@doordrop.lat'} · {t('admin_webmail_sender')}: {webmailStatus?.senderName || 'DoorDrop'}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-slate-400"><span className={`h-2.5 w-2.5 rounded-full ${webmailStatus?.receiveStatus === 'operational' ? 'bg-emerald-500' : 'bg-amber-400'}`}></span>{t('admin_webmail_receive')}: {webmailStatus?.receiveStatus === 'operational' ? t('admin_webmail_operational') : t('admin_webmail_pending')}</div>
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-slate-400"><span className={`h-2.5 w-2.5 rounded-full ${webmailStatus?.sendStatus === 'operational' ? 'bg-emerald-500' : 'bg-rose-400'}`}></span>{t('admin_webmail_send')}: {webmailStatus?.sendStatus === 'operational' ? t('admin_webmail_operational') : t('admin_webmail_unavailable')}</div>
+            <button onClick={handleVerifyWebmail} disabled={webmailChecking} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white hover:bg-blue-700 disabled:opacity-50"><RefreshCw className={`w-4 h-4 ${webmailChecking ? 'animate-spin' : ''}`} /> {t('admin_webmail_verify')}</button>
+            <Link to="/admin/webmail" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"><Mail className="w-4 h-4" /> {t('admin_webmail_open')}</Link>
+          </div>
+        </div>
+        <div className="mt-4 border-t border-slate-100 pt-4 text-xs text-slate-400 dark:border-slate-800 dark:text-slate-500">{t('admin_webmail_last_sync')}: {webmailStatus?.lastSyncAt ? new Date(webmailStatus.lastSyncAt).toLocaleString() : t('admin_webmail_not_synced')}</div>
       </div>
 
       <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-blue-100 dark:border-blue-900/40 shadow-sm mb-8">
@@ -3411,6 +3449,7 @@ export default function AdminPanel() {
             <Route path="/settings/smtp/template" element={<EmailTemplates />} />
             <Route path="/settings/smtp/template/" element={<EmailTemplates />} />
             <Route path="/settings/email/logs" element={<AdminEmailLogs />} />
+            <Route path="/webmail" element={<Webmail />} />
             <Route path="/tickets" element={<AdminTickets />} />
             <Route path="/copilot" element={<AiCopilotChat />} />
             <Route path="*" element={<div className="p-4 md:p-8 text-slate-500 dark:text-slate-400">Módulo en preparación para el Super Admin</div>} />

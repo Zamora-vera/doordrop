@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import MailComposer from 'nodemailer/lib/mail-composer';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import { pool } from '../db/connection';
@@ -44,9 +45,27 @@ export interface SendNotificationEventResult {
   subject?: string;
 }
 
-let transporter: nodemailer.Transporter | null = null;
+export interface WebmailAttachmentInput {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+}
 
-export function getTransporter(): nodemailer.Transporter {
+export interface WebmailMessageInput {
+  to: string | string[];
+  cc?: string | string[];
+  bcc?: string | string[];
+  subject: string;
+  text: string;
+  html: string;
+  attachments?: WebmailAttachmentInput[];
+  inReplyTo?: string;
+  references?: string | string[];
+}
+
+let transporter: any = null;
+
+export function getTransporter(): any {
   if (transporter) return transporter;
 
   const host = process.env.SMTP_HOST || 'smtp.truobox.com';
@@ -74,6 +93,91 @@ export function getTransporter(): nodemailer.Transporter {
   });
 
   return transporter;
+}
+
+const CORPORATE_FROM_EMAIL = 'info@doordrop.lat';
+
+function normalizeWebmailRecipientList(value: string | string[] | undefined): string[] {
+  const values = Array.isArray(value) ? value : String(value || '').split(/[;,]/);
+  const emails = values
+    .map((item) => String(item || '').trim().toLowerCase())
+    .filter(Boolean);
+  if (emails.some((email) => !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(email))) {
+    throw new Error('El destinatario del correo no es válido.');
+  }
+  return Array.from(new Set(emails));
+}
+
+function normalizeWebmailSubject(value: any): string {
+  const subject = String(value || '').replace(/[\r\n]+/g, ' ').trim();
+  if (!subject) throw new Error('El asunto del correo es obligatorio.');
+  return subject.slice(0, 255);
+}
+
+function normalizeWebmailHeader(value: string | undefined): string | undefined {
+  const header = String(value || '').trim();
+  if (!header || header.length > 998 || /[\r\n]/.test(header)) return undefined;
+  return header;
+}
+
+function normalizeWebmailMailOptions(input: WebmailMessageInput, requireRecipient = true): any {
+  const to = normalizeWebmailRecipientList(input.to);
+  const cc = normalizeWebmailRecipientList(input.cc);
+  const bcc = normalizeWebmailRecipientList(input.bcc);
+  if (requireRecipient && !to.length) throw new Error('Debes indicar al menos un destinatario.');
+  if (to.length + cc.length + bcc.length > 50) throw new Error('El correo supera el límite de destinatarios.');
+
+  const fromName = process.env.MAIL_FROM_NAME || 'DoorDrop';
+  const mailOptions: any = {
+    from: `"${fromName.replace(/[\r\n"]+/g, ' ').slice(0, 120)}" <${CORPORATE_FROM_EMAIL}>`,
+    sender: CORPORATE_FROM_EMAIL,
+    envelope: {
+      from: CORPORATE_FROM_EMAIL,
+      to: [...to, ...cc, ...bcc]
+    },
+    to,
+    cc: cc.length ? cc : undefined,
+    bcc: bcc.length ? bcc : undefined,
+    subject: normalizeWebmailSubject(input.subject),
+    text: String(input.text || '').slice(0, 2_000_000),
+    html: String(input.html || '').slice(0, 4_000_000),
+    attachments: (input.attachments || []).map((attachment) => ({
+      filename: String(attachment.filename || 'archivo').replace(/[\r\n\\/]+/g, '_').slice(0, 180),
+      content: attachment.content,
+      contentType: attachment.contentType || undefined
+    }))
+  };
+
+  const inReplyTo = normalizeWebmailHeader(input.inReplyTo);
+  const references = Array.isArray(input.references)
+    ? input.references.map((value) => normalizeWebmailHeader(value)).filter(Boolean).join(' ')
+    : normalizeWebmailHeader(input.references);
+  if (inReplyTo) mailOptions.inReplyTo = inReplyTo;
+  if (references) mailOptions.references = references;
+  return mailOptions;
+}
+
+/**
+ * Envío manual del Webmail usando el mismo relay corporativo ya configurado.
+ * El remitente y el envelope sender quedan fijados al buzón autorizado.
+ */
+export async function sendWebmailMessage(input: WebmailMessageInput): Promise<{ messageId?: string; accepted?: any[] }> {
+  const info = await getTransporter().sendMail(normalizeWebmailMailOptions(input));
+  return { messageId: info.messageId, accepted: info.accepted };
+}
+
+/**
+ * Genera MIME para guardar un borrador en el buzón IMAP sin enviarlo.
+ */
+export async function buildWebmailMimeMessage(input: WebmailMessageInput): Promise<Buffer> {
+  const options = normalizeWebmailMailOptions(input, false);
+  return new Promise((resolve, reject) => {
+    const composer = new (MailComposer as any)(options);
+    composer.compile().build((error: Error | null, message: Buffer) => {
+      if (error) return reject(error);
+      resolve(message);
+    });
+  });
 }
 
 /**

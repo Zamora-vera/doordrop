@@ -44,6 +44,20 @@ import {
 import { getDocBundle, docsToMarkdown, docsToPdfBuffer, getOpenApiSpec, getOpenAiToolSchemas } from './server/docs/apiDocs';
 import { swaggerUiHtml } from './server/docs/swaggerUi';
 import { sendPasswordResetEmail, sendTemplatedEmail, sendNotificationEvent, testSmtpConnection, renderTemplateText } from './server/services/emailService';
+import {
+  WebmailServiceError,
+  actOnWebmailMessage,
+  downloadWebmailAttachment,
+  getWebmailAttachmentLimits,
+  getWebmailFolders,
+  getWebmailMessage,
+  getWebmailStatus,
+  listWebmailMessages,
+  sanitizeWebmailHtml,
+  saveWebmailDraft,
+  sendWebmailCompose,
+  verifyWebmailConnection
+} from './server/services/webmailService';
 
 
 const app = express();
@@ -6557,6 +6571,179 @@ app.put('/api/admin/smtp/events/:eventCode', authMiddleware, requireSuperAdmin, 
     res.json({ success: true, event: { ...updated[0], isEnabled: Boolean(updated[0]?.isEnabled) } });
   } catch (err: any) {
     res.status(500).json({ error: 'Error al guardar la automatización de correo.' });
+  }
+});
+
+// =============================================================================
+// ADMIN: WEBMAIL CORPORATIVO (IMAP real + SMTP corporativo)
+// =============================================================================
+
+function webmailPublicError(error: any): { status: number; message: string } {
+  const code = error instanceof WebmailServiceError ? error.code : String(error?.code || 'WEBMAIL_UNAVAILABLE');
+  if (code === 'MAILBOX_NOT_CONFIGURED') return { status: 503, message: 'El buzón corporativo aún no está configurado.' };
+  if (code === 'FOLDER_NOT_FOUND') return { status: 404, message: 'La carpeta solicitada no está disponible.' };
+  if (code === 'MESSAGE_NOT_FOUND' || code === 'ATTACHMENT_NOT_FOUND') return { status: 404, message: 'El contenido solicitado no está disponible.' };
+  if (code === 'ACTION_NOT_ALLOWED') return { status: 400, message: 'La acción solicitada no está disponible.' };
+  if (code === 'ATTACHMENT_TOO_LARGE' || code === 'MESSAGE_TOO_LARGE') return { status: 413, message: 'El archivo o mensaje supera el tamaño permitido.' };
+  if (code === 'INVALID_INPUT') return { status: 400, message: 'Revisa los datos del correo e inténtalo nuevamente.' };
+  return { status: 503, message: 'El servicio de correo está temporalmente no disponible.' };
+}
+
+function logWebmailFailure(operation: string, error: any) {
+  const code = error instanceof WebmailServiceError ? error.code : String(error?.code || 'WEBMAIL_UNAVAILABLE');
+  console.error(`[admin/webmail] ${operation} failed`, code.slice(0, 80));
+}
+
+function parseWebmailAttachments(value: any): any[] {
+  const { maxAttachmentBytes, maxAttachments } = getWebmailAttachmentLimits();
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > maxAttachments) throw new WebmailServiceError('INVALID_INPUT', 'El número de archivos adjuntos no es válido.');
+  let totalBytes = 0;
+  return value.map((item: any) => {
+    const filename = String(item?.filename || '').replace(/[\\/\r\n]+/g, '_').trim().slice(0, 180);
+    const contentBase64 = String(item?.contentBase64 || '');
+    if (!filename || !contentBase64 || !/^[A-Za-z0-9+/]*={0,2}$/.test(contentBase64)) throw new WebmailServiceError('INVALID_INPUT', 'El archivo adjunto no es válido.');
+    const content = Buffer.from(contentBase64, 'base64');
+    if (!content.length || content.length > maxAttachmentBytes) throw new WebmailServiceError('ATTACHMENT_TOO_LARGE', 'El archivo adjunto supera el tamaño permitido.');
+    totalBytes += content.length;
+    if (totalBytes > 7 * 1024 * 1024) throw new WebmailServiceError('ATTACHMENT_TOO_LARGE', 'Los archivos adjuntos superan el tamaño permitido.');
+    return { filename, content, contentType: String(item?.contentType || 'application/octet-stream').slice(0, 120) };
+  });
+}
+
+function parseWebmailComposePayload(body: any): any {
+  const to = typeof body?.to === 'string' || Array.isArray(body?.to) ? body.to : '';
+  const cc = typeof body?.cc === 'string' || Array.isArray(body?.cc) ? body.cc : undefined;
+  const bcc = typeof body?.bcc === 'string' || Array.isArray(body?.bcc) ? body.bcc : undefined;
+  const subject = String(body?.subject || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 255);
+  const html = sanitizeWebmailHtml(String(body?.html || '').slice(0, 4_000_000));
+  const text = String(body?.text || '').slice(0, 2_000_000);
+  if (!subject || (!html && !text)) throw new WebmailServiceError('INVALID_INPUT', 'El asunto y el mensaje son obligatorios.');
+  return {
+    to,
+    cc,
+    bcc,
+    subject,
+    html,
+    text,
+    attachments: parseWebmailAttachments(body?.attachments),
+    inReplyTo: typeof body?.inReplyTo === 'string' ? body.inReplyTo : undefined,
+    references: Array.isArray(body?.references) ? body.references : (typeof body?.references === 'string' ? body.references : undefined)
+  };
+}
+
+app.get('/api/admin/webmail/status', authMiddleware, requireSuperAdmin, async (_req: any, res: any) => {
+  try {
+    res.json(await getWebmailStatus({ verify: true }));
+  } catch (error: any) {
+    logWebmailFailure('status', error);
+    const failure = webmailPublicError(error);
+    res.status(failure.status).json({ success: false, message: failure.message });
+  }
+});
+
+app.post('/api/admin/webmail/verify', authMiddleware, requireSuperAdmin, async (_req: any, res: any) => {
+  try {
+    res.json(await verifyWebmailConnection());
+  } catch (error: any) {
+    logWebmailFailure('verify', error);
+    const failure = webmailPublicError(error);
+    res.status(failure.status).json({ success: false, message: failure.message });
+  }
+});
+
+app.get('/api/admin/webmail/folders', authMiddleware, requireSuperAdmin, async (_req: any, res: any) => {
+  try {
+    res.json({ success: true, folders: await getWebmailFolders() });
+  } catch (error: any) {
+    logWebmailFailure('folders', error);
+    const failure = webmailPublicError(error);
+    res.status(failure.status).json({ success: false, message: failure.message });
+  }
+});
+
+app.get('/api/admin/webmail/messages', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    const folder = String(req.query?.folder || 'inbox') as any;
+    const allowedFolders = new Set(['inbox', 'unread', 'starred', 'sent', 'drafts', 'spam', 'trash', 'archive']);
+    if (!allowedFolders.has(folder)) throw new WebmailServiceError('INVALID_INPUT', 'La carpeta solicitada no es válida.');
+    const page = Math.max(1, Math.min(1000, Number(req.query?.page) || 1));
+    const pageSize = Math.max(10, Math.min(50, Number(req.query?.pageSize) || 25));
+    res.json({ success: true, ...(await listWebmailMessages({ folder, page, pageSize, search: String(req.query?.search || '') })) });
+  } catch (error: any) {
+    logWebmailFailure('list', error);
+    const failure = webmailPublicError(error);
+    res.status(failure.status).json({ success: false, message: failure.message });
+  }
+});
+
+app.get('/api/admin/webmail/messages/:uid', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    const mailbox = String(req.query?.mailbox || '').trim();
+    const uid = Number(req.params.uid);
+    if (!mailbox || !Number.isSafeInteger(uid)) throw new WebmailServiceError('INVALID_INPUT', 'El mensaje solicitado no es válido.');
+    res.json({ success: true, message: await getWebmailMessage(mailbox, uid) });
+  } catch (error: any) {
+    logWebmailFailure('read', error);
+    const failure = webmailPublicError(error);
+    res.status(failure.status).json({ success: false, message: failure.message });
+  }
+});
+
+app.get('/api/admin/webmail/messages/:uid/attachments/:index', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    const mailbox = String(req.query?.mailbox || '').trim();
+    const uid = Number(req.params.uid);
+    const index = Number(req.params.index);
+    if (!mailbox || !Number.isSafeInteger(uid) || !Number.isSafeInteger(index)) throw new WebmailServiceError('INVALID_INPUT', 'El archivo solicitado no es válido.');
+    const attachment = await downloadWebmailAttachment(mailbox, uid, index);
+    res.setHeader('Content-Type', attachment.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${attachment.filename.replace(/"/g, '')}"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(attachment.content);
+  } catch (error: any) {
+    logWebmailFailure('attachment', error);
+    const failure = webmailPublicError(error);
+    res.status(failure.status).json({ success: false, message: failure.message });
+  }
+});
+
+app.post('/api/admin/webmail/messages/:uid/action', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    const mailbox = String(req.body?.mailbox || '').trim();
+    const uid = Number(req.params.uid);
+    const action = String(req.body?.action || '').trim();
+    const targetMailbox = req.body?.targetMailbox ? String(req.body.targetMailbox).trim() : undefined;
+    if (!mailbox || !Number.isSafeInteger(uid)) throw new WebmailServiceError('INVALID_INPUT', 'El mensaje solicitado no es válido.');
+    await actOnWebmailMessage({ mailbox, uid, action, targetMailbox });
+    res.json({ success: true });
+  } catch (error: any) {
+    logWebmailFailure('action', error);
+    const failure = webmailPublicError(error);
+    res.status(failure.status).json({ success: false, message: failure.message });
+  }
+});
+
+app.post('/api/admin/webmail/send', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    const result = await sendWebmailCompose(parseWebmailComposePayload(req.body || {}));
+    res.json({ success: true, message: 'Correo enviado correctamente.', messageId: result.messageId });
+  } catch (error: any) {
+    logWebmailFailure('send', error);
+    const failure = webmailPublicError(error);
+    res.status(failure.status).json({ success: false, message: failure.status === 400 ? (error?.message || failure.message) : failure.message });
+  }
+});
+
+app.post('/api/admin/webmail/drafts', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  try {
+    await saveWebmailDraft(parseWebmailComposePayload(req.body || {}));
+    res.json({ success: true, message: 'Borrador guardado correctamente.' });
+  } catch (error: any) {
+    logWebmailFailure('draft', error);
+    const failure = webmailPublicError(error);
+    res.status(failure.status).json({ success: false, message: failure.status === 400 ? (error?.message || failure.message) : failure.message });
   }
 });
 
