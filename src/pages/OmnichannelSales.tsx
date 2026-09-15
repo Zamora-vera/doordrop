@@ -475,7 +475,7 @@ const PlanCard = ({ plan, content, language }: { plan: CatalogPlan; content: typ
 
 export default function OmnichannelSales() {
   const { language } = useI18n();
-  const { brand } = useBrand();
+  const { brand, loading: brandLoading } = useBrand();
   const marketingLanguage = normalizeLanguage(language);
   const content = copy[marketingLanguage];
   const supportHref = getSupportWhatsAppUrl(marketingLanguage);
@@ -508,7 +508,7 @@ export default function OmnichannelSales() {
     document.title = `${content.nav} | ${brand.siteName || 'DoorDrop'}`;
     const description = document.head.querySelector<HTMLMetaElement>('meta[name="description"]');
     if (description) description.content = content.heroDescription;
-  }, [brand.siteName, content.heroDescription, content.nav]);
+  }, [brand.siteName, brandLoading, content.heroDescription, content.nav]);
 
   const channelCards = useMemo(() => [
     { label: content.channelLabels[0], icon: <MessageCircle className="h-6 w-6" />, tone: 'from-emerald-400 to-green-600' },
@@ -590,7 +590,7 @@ export default function OmnichannelSales() {
             {loadingPlans && <div className="mt-12 grid gap-6 md:grid-cols-3"><div className="h-[34rem] animate-pulse rounded-[2rem] bg-white dark:bg-slate-800" /><div className="h-[34rem] animate-pulse rounded-[2rem] bg-white dark:bg-slate-800" /><div className="h-[34rem] animate-pulse rounded-[2rem] bg-white dark:bg-slate-800" /></div>}
             {!loadingPlans && plansError && <div className="mx-auto mt-12 max-w-xl rounded-3xl border border-amber-200 bg-amber-50 p-6 text-center text-sm font-bold text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200"><p>{content.plansError}</p><button type="button" onClick={loadPlans} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-black text-white hover:bg-amber-700">{content.refreshPlans}<ArrowRight className="h-4 w-4" /></button></div>}
             {!loadingPlans && !plansError && plans.length === 0 && <div className="mx-auto mt-12 max-w-xl rounded-3xl border border-slate-200 bg-white p-8 text-center text-sm font-bold text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">{content.plansError}</div>}
-            {!loadingPlans && !plansError && plans.length > 0 && <div className="mt-12 grid gap-6 lg:grid-cols-3">{plans.map((plan) => <PlanCard key={plan.id} plan={plan} content={content} language={marketingLanguage} />)}</div>}
+            {!loadingPlans && !plansError && plans.length > 0 && <div className="mt-12 grid gap-6 lg:grid-cols-3">{plans.map((plan) => <div key={plan.id}><PlanCard plan={plan} content={content} language={marketingLanguage} /></div>)}</div>}
             {!loadingPlans && !plansError && addOns.length > 0 && <div className="mt-12"><div className="mx-auto max-w-2xl text-center"><h3 className="text-2xl font-black text-slate-950 dark:text-white">{content.addonsTitle}</h3><p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{content.addonsDescription}</p></div><div className="mx-auto mt-6 grid max-w-5xl gap-4 sm:grid-cols-3">{addOns.map((addon) => <div key={addon.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black text-slate-900 dark:text-white">{addon.name || addon.code}</p><p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">{addon.description}</p></div><Sparkles className="h-5 w-5 shrink-0 text-fuchsia-500" /></div><p className="mt-4 text-lg font-black text-blue-600 dark:text-cyan-300">{formatPrice(addon.price, addon.currency, marketingLanguage)} <span className="text-xs font-bold text-slate-500">/ {content.monthly}</span></p></div>)}</div></div>}
           </div>
         </section>
