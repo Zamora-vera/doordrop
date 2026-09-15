@@ -1,6 +1,6 @@
 import { pool } from '../db/connection.js';
 import crypto from 'crypto';
-import { sendNotificationEvent } from '../services/emailService';
+import { sendNotificationEvent } from '../services/emailService.js';
 
 /**
  * Autonomous Sales Tools for DoorDrop AI Employee:
@@ -15,6 +15,7 @@ import { sendNotificationEvent } from '../services/emailService';
 
 export async function handleAIToolCall(toolName: string, args: any, sellerUserId: string) {
   try {
+    args = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
     switch (toolName) {
       case 'search_products': {
         const query = String(args.query || args.term || '').trim();
@@ -41,6 +42,97 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
             description: p.description?.slice(0, 180) || '',
             primary_image: p.cover_image ? p.cover_image.replace(/^http:\/\//i, 'https://') : null
           }))
+        };
+      }
+
+      case 'get_product_recommendation': {
+        const category = String(args.category || '').trim();
+        const requirements = String(args.customer_requirements || args.query || '').trim();
+        const maxPrice = Number(args.max_price);
+        const searchText = [category, requirements].filter(Boolean).join(' ').trim();
+        const term = searchText ? `%${searchText}%` : '%';
+        const categoryTerm = category ? `%${category}%` : '%';
+        const priceLimit = Number.isFinite(maxPrice) && maxPrice > 0 ? maxPrice * 100 : null;
+
+        const conditions = [
+          '(l.seller_id = ? OR ? = \'\')',
+          "l.status = 'active'",
+          'COALESCE(l.quantity, 0) > 0',
+          '(l.title LIKE ? OR l.description LIKE ? OR l.category_id IN (SELECT id FROM marketplace_categories WHERE name LIKE ?))'
+        ];
+        const params: any[] = [sellerUserId, sellerUserId, term, term, categoryTerm];
+        if (priceLimit !== null) {
+          conditions.push('l.price_minor <= ?');
+          params.push(Math.round(priceLimit));
+        }
+
+        const [rows]: any = await pool.query(
+          `SELECT l.id, l.title, l.description, l.price_minor, l.currency, l.quantity, l.category_id, l.weight_grams,
+                  (SELECT img.url FROM marketplace_listing_images img WHERE img.listing_id = l.id ORDER BY img.is_cover DESC, img.sort_order ASC LIMIT 1) AS cover_image
+             FROM marketplace_listings l
+            WHERE ${conditions.join(' AND ')}
+            ORDER BY CASE WHEN l.title LIKE ? THEN 0 WHEN l.description LIKE ? THEN 1 ELSE 2 END, l.updated_at DESC
+            LIMIT 3`,
+          [...params, term, term]
+        );
+
+        return {
+          count: rows.length,
+          basis: 'Catálogo real DoorDrop: artículos activos con disponibilidad comprobada.',
+          products: rows.map((p: any, index: number) => ({
+            position: index + 1,
+            id: p.id,
+            title: p.title,
+            price: Number((Number(p.price_minor || 0) / 100).toFixed(2)),
+            currency: String(p.currency || 'EUR').toUpperCase(),
+            stock: Number(p.quantity || 0),
+            description: String(p.description || '').slice(0, 240),
+            primary_image: p.cover_image ? String(p.cover_image).replace(/^http:\/\//i, 'https://') : null
+          }))
+        };
+      }
+
+      case 'get_store_info': {
+        const [storeRows]: any = await pool.query(
+          `SELECT id, name, email, phone, country, currency, business_type, status
+             FROM users
+            WHERE id = ?
+            LIMIT 1`,
+          [sellerUserId]
+        );
+        if (!storeRows.length) return { found: false, message: 'No se encontró la tienda.' };
+
+        const [settingsRows]: any = await pool.query(
+          `SELECT business_info, sales_contract_text, free_shipping_threshold, min_order_amount, website_url
+             FROM omnichannel_ai_settings
+            WHERE user_id = ?
+            LIMIT 1`,
+          [sellerUserId]
+        );
+        const store = storeRows[0];
+        const settings = settingsRows[0] || {};
+        return {
+          found: true,
+          store: {
+            name: store.name || null,
+            email: store.email || null,
+            phone: store.phone || null,
+            country: store.country || null,
+            currency: String(store.currency || 'EUR').toUpperCase(),
+            business_type: store.business_type || null,
+            status: store.status || null,
+            website_url: settings.website_url || null,
+            business_info: settings.business_info || null
+          },
+          policies: {
+            sales_contract: settings.sales_contract_text || null,
+            free_shipping_threshold: settings.free_shipping_threshold === null || settings.free_shipping_threshold === undefined
+              ? null
+              : Number(settings.free_shipping_threshold),
+            min_order_amount: settings.min_order_amount === null || settings.min_order_amount === undefined
+              ? null
+              : Number(settings.min_order_amount)
+          }
         };
       }
 

@@ -2,6 +2,7 @@ import https from 'https';
 import { pool } from '../db/connection.js';
 import { handleAIToolCall } from './ai_sales_tools.js';
 import { getUserOmnichannelSubscription, hasActiveOmnichannelSubscription } from './entitlements.js';
+import { runAgentTurn } from './agent_runtime.js';
 
 let cachedDeepseekKey = process.env.DEEPSEEK_API_KEY || '';
 let cachedMarginPercent = 10.0; // Standard resale margin
@@ -72,6 +73,7 @@ export async function callDeepSeekChat(
   options: { maxTokens?: number; temperature?: number; responseFormat?: any } = {}
 ) {
   const { apiKey } = await getDeepSeekConfig();
+  if (!apiKey) throw new Error('DeepSeek no está configurado para este entorno.');
   const requestBody: any = {
     model: 'deepseek-chat',
     messages,
@@ -105,13 +107,15 @@ export async function callDeepSeekChat(
       res.on('end', () => {
         try {
           const parsed = JSON.parse(body);
-          if (parsed.choices && parsed.choices[0]?.message) {
+          const status = Number(res.statusCode || 500);
+          if (status >= 200 && status < 300 && parsed.choices && parsed.choices[0]?.message) {
             resolve({
               message: parsed.choices[0].message,
               usage: parsed.usage || {}
             });
           } else {
-            reject(new Error(parsed.error?.message || `DeepSeek error: ${body}`));
+            const providerMessage = String(parsed.error?.message || 'Respuesta no válida del proveedor').slice(0, 300);
+            reject(new Error(`DeepSeek HTTP ${status}: ${providerMessage}`));
           }
         } catch (e) {
           reject(e);
@@ -191,7 +195,38 @@ function buildToolsForMerchant(settings: any) {
         }
       }
     });
+
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'get_product_recommendation',
+        description: 'Sugiere hasta tres productos reales del catálogo según categoría, preferencias, presupuesto y disponibilidad del cliente. Nunca inventes productos, precios o stock.',
+        parameters: {
+          type: 'object',
+          properties: {
+            category: { type: 'string', description: 'Categoría o tipo de producto buscado' },
+            customer_requirements: { type: 'string', description: 'Preferencias, talla, estilo, uso o presupuesto indicados por el cliente' },
+            max_price: { type: 'number', description: 'Precio máximo si el cliente lo indicó' }
+          },
+          required: ['customer_requirements']
+        }
+      }
+    });
   }
+
+  tools.push({
+    type: 'function',
+    function: {
+      name: 'get_store_info',
+      description: 'Consulta información real y actual del negocio, políticas, contacto, moneda, catálogo y condiciones configuradas por el vendedor.',
+      parameters: {
+        type: 'object',
+        properties: {
+          topic: { type: 'string', description: 'Tema que pregunta el cliente: contacto, envíos, devoluciones, pagos, horarios o información general' }
+        }
+      }
+    }
+  });
 
   // 2. Send product photos
   if (settings.can_send_photos !== 0) {
@@ -463,16 +498,17 @@ Regole commerciali e contrattuali del negozio:
 Istruzioni comportamentali e conversazionali fondamentali:
 1. MEMORIA CONVERSAZIONALE RIGOROSA: ${memoryEnabled ? 'Usa la cronologia disponibile della conversazione e, se esiste, la memoria recente dello stesso cliente nello stesso canale.' : 'La memoria conversazionale è disattivata: usa solo il messaggio attuale e le informazioni del negozio.'} Se hai presentato un elenco di articoli e il cliente risponde con un numero (es. "14", "1", "2"), con "sì", "inviami foto", o con "lo quiero", "prendo questo", capisci immediatamente a quale prodotto della lista si riferisce e procedi (invia le foto di quel prodotto o chiedi i dati per la spedizione). NON chiedere mai "a cosa ti riferisci?" se era già nel contesto!
 2. Sii SEMPRE CONVERSAZIONALE, naturale ed empatico. Non rispondere MAI come un robot o con elenchi rigidi privi di calore.
-3. Quando il cliente chiede informazioni su capi o prodotti, usa lo strumento "search_products" per trovare gli articoli disponibili e consigliali con entusiasmo.
-4. Se il cliente chiede di vedere il prodotto o foto (o se ha risposto "sì" / "14" dopo che gli hai offerto le foto), invoca SEMPRE "send_product_photos".
-5. Se il cliente chiede quanto costa la spedizione o dove si spedisce, chiedi gentilmente il suo CAP / Città e calcola la tariffa con "quote_shipping". Ricorda sempre al cliente la soglia di spedizione gratuita (€${freeShipping}) per incoraggiare acquisti aggiuntivi!
-6. Quando il cliente manifesta l'intenzione di acquistare, raccogli i dati mancanti e mostra prima il prodotto e il totale. Chiama "create_order_checkout" solo dopo una conferma esplicita del cliente (es. "confirmo", "puedes crear el pedido", "confermo l'ordine") e solo con dati completi e verificati.
-7. Se il cliente chiede dov'è il suo pacco o un tracking, usa "lookup_or_generate_tracking".
-8. Se il cliente chiede espressamente di parlare con una persona reale, invoca "handoff_to_human".
-9. Mantieni le risposte snelle, calorose ed efficaci: 2-4 frasi brevi e massimo circa 600 caratteri. Fai al massimo una domanda o richiesta di dati per messaggio.
-10. FORMATO ORDINATO: se proponi prodotti, mostra massimo 3 opzioni numerate, una per riga, con nome, prezzo e disponibilità solo se verificati. Evita tabelle, paragrafi lunghi, saluti ripetuti e spiegazioni tecniche.
-11. DATI VERIFICATI: non inventare stock, prezzi, tempi, políticas, pagos, pedidos, direcciones ni estados. Se manca un dato reale, dilo brevemente y pide solo ese dato.
-12. CONTINUITÀ: se la memoria contiene un dato ya confirmado por el cliente, reutilízalo y no vuelvas a preguntarlo. Si faltan varios datos, solicita únicamente el siguiente dato necesario.`;
+3. Quando il cliente chiede informazioni generali sul negozio, su pagamenti, resi, contatti, orari o spedizioni, usa "get_store_info" e rispondi solo con dati restituiti dal negozio.
+4. Quando il cliente descrive un bisogno, stile, categoria, taglia o budget, usa "get_product_recommendation" per proporre fino a tre articoli reali e disponibili. Usa "search_products" per una ricerca esatta per nome o codice.
+5. Se il cliente chiede di vedere il prodotto o foto (o se ha risposto "sì" / "14" dopo che gli hai offerto le foto), invoca SEMPRE "send_product_photos".
+6. Se il cliente chiede quanto costa la spedizione o dove si spedisce, chiedi gentilmente il suo CAP / Città e calcola la tariffa con "quote_shipping". Ricorda sempre al cliente la soglia di spedizione gratuita (€${freeShipping}) per incoraggiare acquisti aggiuntivi!
+7. Quando il cliente manifesta l'intenzione di acquistare, raccogli i dati mancanti e mostra prima il prodotto e il totale. Chiama "create_order_checkout" solo dopo una conferma esplicita del cliente (es. "confirmo", "puedes crear el pedido", "confermo l'ordine") e solo con dati completi e verificati.
+8. Se il cliente chiede dov'è il suo pacco o un tracking, usa "lookup_or_generate_tracking".
+9. Se il cliente chiede espressamente di parlare con una persona reale, invoca "handoff_to_human".
+10. Mantieni le risposte snelle, calorose ed efficaci: 2-4 frasi brevi e massimo circa 600 caratteri. Fai al massimo una domanda o richiesta di dati per messaggio.
+11. FORMATO ORDINATO: se proponi prodotti, mostra massimo 3 opzioni numerate, una per riga, con nome, prezzo e disponibilità solo se verificati. Evita tabelle, paragrafi lunghi, saluti ripetuti e spiegazioni tecniche.
+12. DATI VERIFICATI: non inventare stock, prezzi, tempi, políticas, pagos, pedidos, direcciones ni estados. Se manca un dato reale, dilo brevemente y pide solo ese dato.
+13. CONTINUITÀ: se la memoria contiene un dato ya confirmado por el cliente, reutilízalo y no vuelvas a preguntarlo. Si faltan varios datos, solicita únicamente el siguiente dato necesario.`;
 
     const tools = buildToolsForMerchant(settings);
 
@@ -503,53 +539,28 @@ Istruzioni comportamentali e conversazionali fondamentali:
       { role: 'user', content: incomingText }
     ];
 
-    let totalTokensUsed = 0;
     let photoAttachmentUrl: string | null = null;
 
-    // 5. Multi-turn tool execution loop (up to 3 turns)
-    let currentCall = await callDeepSeekChat(messages, tools, { temperature: 0.6 });
-    let loopCount = 0;
-    const maxLoops = 3;
-
-    while (currentCall.message?.tool_calls && currentCall.message.tool_calls.length > 0 && loopCount < maxLoops) {
-      loopCount++;
-      if (currentCall.usage?.total_tokens) totalTokensUsed += currentCall.usage.total_tokens;
-
-      messages.push(currentCall.message);
-
-      for (const tc of currentCall.message.tool_calls) {
-        const fnName = tc.function?.name;
-        let fnArgs: any = {};
-        try { fnArgs = JSON.parse(tc.function?.arguments || '{}'); } catch {}
-
-        console.log(`[AI Sales Agent] Loop #${loopCount} Executing: ${fnName}`);
+    // 5. Bounded tool-calling runtime adapted to DoorDrop's real tenant data.
+    const agentRun = await runAgentTurn({
+      messages,
+      tools,
+      maxLoops: 4,
+      executeTool: async (fnName, fnArgs) => {
+        console.log(`[AI Sales Agent] Executing tool: ${fnName}`);
         const toolResult = await handleAIToolCall(fnName, fnArgs, userId);
-
-        if (fnName === 'send_product_photos' && toolResult.media_attachment_url) {
-          photoAttachmentUrl = toolResult.media_attachment_url;
+        if (fnName === 'send_product_photos' && (toolResult as any)?.media_attachment_url) {
+          photoAttachmentUrl = (toolResult as any).media_attachment_url;
         }
-
-        messages.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: JSON.stringify(toolResult)
-        });
-      }
-
-      // Next call: allow tools if loops < maxLoops, else complete
-      currentCall = await callDeepSeekChat(
-        messages,
-        loopCount < maxLoops ? tools : undefined,
-        { temperature: 0.6 }
-      );
-    }
-
-    if (currentCall.usage?.total_tokens) totalTokensUsed += currentCall.usage.total_tokens;
+        return toolResult;
+      },
+      callChat: (agentMessages, agentTools) => callDeepSeekChat(agentMessages, agentTools, { temperature: 0.6 })
+    });
 
     // Bill user balance with Peak Hours dynamic pricing
-    await billUserForAiUsage(userId, totalTokensUsed, countryCode);
+    await billUserForAiUsage(userId, agentRun.totalTokens, countryCode);
 
-    const replyContent = currentCall.message?.content || 'Come posso aiutarti?';
+    const replyContent = agentRun.message?.content || 'Come posso aiutarti?';
     return photoAttachmentUrl ? { text: replyContent, mediaUrl: photoAttachmentUrl } : replyContent;
   } catch (err: any) {
     console.error('[AI Sales Agent] Error:', err.message);
