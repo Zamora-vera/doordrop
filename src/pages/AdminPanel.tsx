@@ -6,7 +6,7 @@ import { AdminOmnichannel } from './AdminOmnichannel';
 import { getCountryName, WORLD_COUNTRIES } from '../lib/countries';
 import React, { useEffect, useState } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Server, Bot, Users, Package, Settings, LogOut, BarChart3, Truck, Crown, Edit, Save, LifeBuoy, Sparkles, Menu, X, Eye, Lock, Unlock, LogIn, CreditCard, Wallet, ShieldCheck, XCircle, Moon, Sun, MapPin, Clipboard, PlayCircle, RefreshCw, Mail, Send, Activity, Clock, Plug, Store, Link2, CheckCircle2, AlertTriangle, ExternalLink, BookOpen } from 'lucide-react';
+import { LayoutDashboard, Server, Bot, Users, UserPlus, Package, Settings, LogOut, BarChart3, Truck, Crown, Edit, Save, LifeBuoy, Sparkles, Menu, X, Eye, Lock, Unlock, LogIn, CreditCard, Wallet, ShieldCheck, XCircle, Moon, Sun, MapPin, Clipboard, PlayCircle, RefreshCw, Mail, Send, Activity, Clock, Plug, Store, Link2, CheckCircle2, AlertTriangle, ExternalLink, BookOpen } from 'lucide-react';
 import { api, removeAuthToken, getAuthToken, setAuthToken } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { APP_VERSION } from '../lib/appVersion';
@@ -37,6 +37,7 @@ import { AdminTickets } from '../components/AdminTickets';
 import { AdminMarketplace } from '../components/AdminMarketplace';
 import { AiCopilotChat } from '../components/AiCopilotChat';
 import AdminDocs from './AdminDocs';
+import Staff from './admin/Staff';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -77,6 +78,7 @@ const AdminSidebar = ({ isMobileMenuOpen, toggleMobileMenu, currentUser, isDark,
   const menu = [
     { name: t('dashboard'), path: '/admin', icon: LayoutDashboard },
     { name: t('clients'), path: '/admin/clients', icon: Users },
+    { name: 'Equipo interno', path: '/admin/staff', icon: UserPlus },
     { name: t('totalShipments'), path: '/admin/shipments', icon: Package },
     { name: 'Marketplace', path: '/admin/marketplace', icon: Store },
     { name: 'Omnicanal + AI', path: '/admin/omnichannel', icon: Bot },
@@ -3430,6 +3432,7 @@ export default function AdminPanel() {
           <Routes>
             <Route path="/" element={<AdminDashboard />} />
             <Route path="/clients" element={<AdminClients />} />
+            <Route path="/staff" element={<Staff />} />
             <Route path="/shipments" element={<AdminShipments />} />
             <Route path="/marketplace/zubuy-print" element={<AdminPodSettings />} />
             <Route path="/marketplace/*" element={<AdminMarketplace />} />

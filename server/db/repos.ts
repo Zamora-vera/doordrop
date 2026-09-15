@@ -129,6 +129,23 @@ export async function initDb() {
     UNIQUE KEY uq_email_shipment_event_to (shipment_id, event_code, to_email)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
+  // Internal Super Admin staff accounts are real users with role=support.
+  // Keep their operational profile separate from customer-owned omnichannel_team.
+  await pool.query(`CREATE TABLE IF NOT EXISTS admin_staff (
+    id CHAR(36) PRIMARY KEY,
+    user_id CHAR(36) NOT NULL,
+    title VARCHAR(120) NOT NULL DEFAULT 'Soporte DoorDrop',
+    permissions_json JSON NOT NULL,
+    created_by CHAR(36) NULL,
+    last_login_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_admin_staff_user (user_id),
+    INDEX idx_admin_staff_created (created_at),
+    CONSTRAINT fk_admin_staff_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_admin_staff_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
   // The active wallet balance is always stored in users.currency. Keep every
   // currency change auditable without rewriting historical wallet movements.
   await pool.query(`CREATE TABLE IF NOT EXISTS wallet_currency_conversions (

@@ -6020,6 +6020,73 @@ const requireSuperAdmin = (req: any, res: any, next: any) => {
   next();
 };
 
+const STAFF_PERMISSION_KEYS = [
+  'clients.read',
+  'shipments.read',
+  'shipments.manage',
+  'tickets.read',
+  'tickets.manage',
+  'webmail.read',
+  'webmail.send',
+  'reports.read'
+] as const;
+
+const DEFAULT_STAFF_PERMISSIONS = ['clients.read', 'shipments.read', 'tickets.read', 'tickets.manage', 'webmail.read'];
+
+function normalizeStaffPermissions(value: any, fallback = DEFAULT_STAFF_PERMISSIONS): string[] {
+  const source = Array.isArray(value) ? value : fallback;
+  return Array.from(new Set(source.map((item: any) => String(item || '').trim()).filter((item: string) => (STAFF_PERMISSION_KEYS as readonly string[]).includes(item))));
+}
+
+function normalizeStaffEmail(value: any): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function isValidStaffEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function publicStaffRow(row: any): any {
+  return {
+    id: row.staff_id || row.id,
+    userId: row.user_id,
+    name: String(row.name || ''),
+    email: String(row.email || ''),
+    phone: String(row.phone || ''),
+    title: String(row.title || 'Soporte DoorDrop'),
+    role: 'support',
+    status: String(row.status || 'active'),
+    permissions: normalizeStaffPermissions(safeJsonParse(row.permissions_json, DEFAULT_STAFF_PERMISSIONS)),
+    lastLoginAt: row.last_login_at || null,
+    createdAt: row.staff_created_at || row.created_at || null,
+    updatedAt: row.staff_updated_at || row.updated_at || null
+  };
+}
+
+async function getAdminStaffById(staffId: string, conn: any = pool): Promise<any | null> {
+  const [rows]: any = await conn.query(
+    `SELECT s.id AS staff_id, s.user_id, s.title, s.permissions_json, s.last_login_at,
+            s.created_at AS staff_created_at, s.updated_at AS staff_updated_at,
+            u.name, u.email, u.phone, u.role, u.status, u.created_at, u.updated_at
+       FROM admin_staff s
+       INNER JOIN users u ON u.id = s.user_id
+      WHERE s.id = ? AND u.role = 'support'
+      LIMIT 1`,
+    [staffId]
+  );
+  return rows[0] || null;
+}
+
+async function writeAdminStaffLog(actionType: string, requestPayload: any, responsePayload: any, httpStatus = 200) {
+  try {
+    await pool.query(
+      `INSERT INTO provider_logs (id, provider_code, action_type, request_payload, response_payload, http_status)
+       VALUES (?, 'admin_staff', ?, ?, ?, ?)`,
+      [generateId('log_'), actionType, JSON.stringify(requestPayload || {}), JSON.stringify(responsePayload || {}), httpStatus]
+    );
+  } catch {}
+}
+
 // --- RUTAS DE API ---
 
 // 1. Registro de usuarios
@@ -6210,6 +6277,10 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (user.role !== 'super_admin' && user.status && user.status !== 'active') {
       return res.status(403).json({ error: 'Cuenta no disponible temporalmente.' });
+    }
+
+    if (user.role === 'support') {
+      await pool.query('UPDATE admin_staff SET last_login_at = NOW() WHERE user_id = ?', [user.id]).catch(() => null);
     }
 
     const token = generateToken({ userId: user.id, role: user.role, authTokenVersion: Number(user.auth_token_version || 1) });
@@ -11341,7 +11412,7 @@ app.get('/api/admin/stats', authMiddleware, requireSuperAdmin, async (req: any, 
     const allStores = await StoreRepo.getAll();
     
     res.json({
-      totalUsers: allUsers.filter(u => u.role !== 'super_admin').length,
+      totalUsers: allUsers.filter(u => u.role === 'customer').length,
       totalShipments: allShipments.length,
       activeStores: allStores.length,
       recentShipments: allShipments.slice(0, 5).map(s => ({
@@ -11356,7 +11427,156 @@ app.get('/api/admin/stats', authMiddleware, requireSuperAdmin, async (req: any, 
   }
 });
 
+// Admin: Equipo interno / Staff
+app.get('/api/admin/staff', authMiddleware, requireSuperAdmin, async (_req: any, res: any) => {
+  try {
+    const [rows]: any = await pool.query(
+      `SELECT s.id AS staff_id, s.user_id, s.title, s.permissions_json, s.last_login_at,
+              s.created_at AS staff_created_at, s.updated_at AS staff_updated_at,
+              u.name, u.email, u.phone, u.role, u.status, u.created_at, u.updated_at
+         FROM admin_staff s
+         INNER JOIN users u ON u.id = s.user_id
+        WHERE u.role = 'support'
+        ORDER BY CASE WHEN u.status = 'active' THEN 0 ELSE 1 END, u.created_at DESC`
+    );
+    res.json({ success: true, staff: rows.map(publicStaffRow) });
+  } catch (error) {
+    console.error('[Admin Staff] Error listing staff:', error);
+    res.status(500).json({ error: 'No se pudo cargar el equipo interno.' });
+  }
+});
+
+app.post('/api/admin/staff', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  const conn = await pool.getConnection();
+  try {
+    const name = String(req.body?.name || '').trim().slice(0, 191);
+    const email = normalizeStaffEmail(req.body?.email);
+    const phone = String(req.body?.phone || '').trim().slice(0, 50);
+    const title = String(req.body?.title || 'Soporte DoorDrop').trim().slice(0, 120) || 'Soporte DoorDrop';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const permissions = normalizeStaffPermissions(req.body?.permissions);
+
+    if (!name || !isValidStaffEmail(email)) {
+      return res.status(400).json({ error: 'El nombre y un correo válido son obligatorios.' });
+    }
+    if (password.length < 12) {
+      return res.status(400).json({ error: 'La contraseña del equipo debe tener al menos 12 caracteres.' });
+    }
+
+    await conn.beginTransaction();
+    const [existing]: any = await conn.query('SELECT id FROM users WHERE email = ? LIMIT 1', [email]);
+    if (existing.length > 0) {
+      await conn.rollback();
+      return res.status(409).json({ error: 'Ese correo ya está registrado en DoorDrop.' });
+    }
+
+    const userId = generateId('usr_');
+    const staffId = generateId('stf_');
+    await conn.query(
+      `INSERT INTO users (id, email, password_hash, name, phone, country, currency, role, business_type, balance, status)
+       VALUES (?, ?, ?, ?, ?, 'ES', 'EUR', 'support', 'DoorDrop Staff', 0.00, 'active')`,
+      [userId, email, hashPassword(password), name, phone]
+    );
+    await conn.query(
+      `INSERT INTO admin_staff (id, user_id, title, permissions_json, created_by)
+       VALUES (?, ?, ?, ?, ?)`,
+      [staffId, userId, title, JSON.stringify(permissions), req.user.id]
+    );
+    await conn.commit();
+
+    const created = await getAdminStaffById(staffId);
+    await writeAdminStaffLog('staff_created', { adminId: req.user.id, staffId, userId, email, permissions }, { success: true });
+    res.status(201).json({ success: true, message: 'Miembro del equipo creado correctamente.', staff: publicStaffRow(created) });
+  } catch (error: any) {
+    try { await conn.rollback(); } catch {}
+    if (error?.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Ese correo ya está registrado en DoorDrop.' });
+    console.error('[Admin Staff] Error creating staff:', error);
+    res.status(500).json({ error: 'No se pudo crear el miembro del equipo.' });
+  } finally {
+    conn.release();
+  }
+});
+
+app.put('/api/admin/staff/:id', authMiddleware, requireSuperAdmin, async (req: any, res: any) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const current = await getAdminStaffById(String(req.params.id || ''), conn);
+    if (!current) {
+      await conn.rollback();
+      return res.status(404).json({ error: 'Miembro del equipo no encontrado.' });
+    }
+
+    const name = req.body?.name === undefined ? String(current.name || '') : String(req.body.name || '').trim().slice(0, 191);
+    const email = req.body?.email === undefined ? String(current.email || '') : normalizeStaffEmail(req.body.email);
+    const phone = req.body?.phone === undefined ? String(current.phone || '') : String(req.body.phone || '').trim().slice(0, 50);
+    const title = req.body?.title === undefined ? String(current.title || 'Soporte DoorDrop') : String(req.body.title || '').trim().slice(0, 120);
+    const status = req.body?.status === undefined ? String(current.status || 'active') : String(req.body.status || '').trim().toLowerCase();
+    const permissions = req.body?.permissions === undefined
+      ? normalizeStaffPermissions(safeJsonParse(current.permissions_json, DEFAULT_STAFF_PERMISSIONS), DEFAULT_STAFF_PERMISSIONS)
+      : normalizeStaffPermissions(req.body.permissions, []);
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+    if (!name || !isValidStaffEmail(email)) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'El nombre y un correo válido son obligatorios.' });
+    }
+    if (!['active', 'suspended', 'closed'].includes(status)) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'Selecciona un estado válido.' });
+    }
+    if (password && password.length < 12) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'La contraseña del equipo debe tener al menos 12 caracteres.' });
+    }
+
+    if (email !== String(current.email || '').toLowerCase()) {
+      const [existing]: any = await conn.query('SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1', [email, current.user_id]);
+      if (existing.length > 0) {
+        await conn.rollback();
+        return res.status(409).json({ error: 'Ese correo ya está registrado en DoorDrop.' });
+      }
+    }
+
+    const statusChanged = status !== String(current.status || 'active');
+    const userFields = ['name = ?', 'email = ?', 'phone = ?', 'status = ?'];
+    const userValues: any[] = [name, email, phone, status];
+    if (password) {
+      userFields.push('password_hash = ?', 'auth_token_version = COALESCE(auth_token_version, 1) + 1');
+      userValues.push(hashPassword(password));
+    } else if (statusChanged) {
+      userFields.push('auth_token_version = COALESCE(auth_token_version, 1) + 1');
+    }
+    userValues.push(current.user_id);
+
+    await conn.query(`UPDATE users SET ${userFields.join(', ')} WHERE id = ? AND role = 'support'`, userValues);
+    await conn.query(
+      `UPDATE admin_staff SET title = ?, permissions_json = ?, updated_at = NOW() WHERE id = ?`,
+      [title || 'Soporte DoorDrop', JSON.stringify(permissions), req.params.id]
+    );
+    await conn.commit();
+
+    const updated = await getAdminStaffById(String(req.params.id));
+    const changed = ['name', 'email', 'phone', 'title', 'permissions'];
+    if (password) changed.push('password');
+    if (statusChanged) changed.push('status');
+    await writeAdminStaffLog('staff_updated', { adminId: req.user.id, staffId: req.params.id, changed }, { success: true });
+    res.json({ success: true, message: 'Miembro del equipo actualizado correctamente.', staff: publicStaffRow(updated) });
+  } catch (error: any) {
+    try { await conn.rollback(); } catch {}
+    if (error?.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Ese correo ya está registrado en DoorDrop.' });
+    console.error('[Admin Staff] Error updating staff:', error);
+    res.status(500).json({ error: 'No se pudo actualizar el miembro del equipo.' });
+  } finally {
+    conn.release();
+  }
+});
+
 // Admin: Clientes
+function isDoorDropClient(user: any): boolean {
+  return Boolean(user && user.role === 'customer');
+}
+
 function normalizeClientForAdmin(u: any) {
   const cardDetails = safeJsonParse(u.card_details_json, null);
   return {
@@ -11383,7 +11603,7 @@ app.get('/api/admin/clients', authMiddleware, requireSuperAdmin, async (_req: an
   try {
     const allUsers = await UserRepo.getAll();
     const clients = allUsers
-      .filter(u => u.role !== 'super_admin')
+      .filter(isDoorDropClient)
       .map(normalizeClientForAdmin)
       .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
     res.json({ clients });
@@ -11395,7 +11615,7 @@ app.get('/api/admin/clients', authMiddleware, requireSuperAdmin, async (_req: an
 app.get('/api/admin/clients/:id', authMiddleware, requireSuperAdmin, async (req: any, res) => {
   try {
     const user = await UserRepo.getById(req.params.id);
-    if (!user || user.role === 'super_admin') {
+    if (!isDoorDropClient(user)) {
       return res.status(404).json({ error: 'Cliente no encontrado.' });
     }
 
@@ -11426,7 +11646,7 @@ app.post('/api/admin/clients/:id/status', authMiddleware, requireSuperAdmin, asy
     }
 
     const user = await UserRepo.getById(req.params.id);
-    if (!user || user.role === 'super_admin') {
+    if (!isDoorDropClient(user)) {
       return res.status(404).json({ error: 'Cliente no encontrado.' });
     }
 
@@ -11457,7 +11677,7 @@ app.post('/api/admin/clients/:id/recharge', authMiddleware, requireSuperAdmin, a
     }
 
     const user = await UserRepo.getById(req.params.id);
-    if (!user || user.role === 'super_admin') {
+    if (!isDoorDropClient(user)) {
       return res.status(404).json({ error: 'Cliente no encontrado.' });
     }
 
@@ -11510,7 +11730,7 @@ app.post('/api/admin/clients/:id/clear-debt', authMiddleware, requireSuperAdmin,
     const note = String(req.body?.note || '').trim().slice(0, 160);
     await conn.beginTransaction();
     const user = await lockedWalletUser(conn, req.params.id);
-    if (!user || user.role === 'super_admin') {
+    if (!isDoorDropClient(user)) {
       await conn.rollback();
       return res.status(404).json({ error: 'Cliente no encontrado.' });
     }
@@ -11554,7 +11774,7 @@ app.post('/api/admin/clients/:id/clear-debt', authMiddleware, requireSuperAdmin,
 app.post('/api/admin/clients/:id/remove-card', authMiddleware, requireSuperAdmin, async (req: any, res) => {
   try {
     const user = await UserRepo.getById(req.params.id);
-    if (!user || user.role === 'super_admin') {
+    if (!isDoorDropClient(user)) {
       return res.status(404).json({ error: 'Cliente no encontrado.' });
     }
 
@@ -11571,7 +11791,7 @@ app.post('/api/admin/clients/:id/remove-card', authMiddleware, requireSuperAdmin
 app.post('/api/admin/clients/:id/impersonate', authMiddleware, requireSuperAdmin, async (req: any, res) => {
   try {
     const user = await UserRepo.getById(req.params.id);
-    if (!user || user.role === 'super_admin') {
+    if (!isDoorDropClient(user)) {
       return res.status(404).json({ error: 'Cliente no encontrado.' });
     }
 
