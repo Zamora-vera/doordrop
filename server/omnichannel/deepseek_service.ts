@@ -7,6 +7,16 @@ import { runAgentTurn } from './agent_runtime.js';
 let cachedDeepseekKey = process.env.DEEPSEEK_API_KEY || '';
 let cachedMarginPercent = 10.0; // Standard resale margin
 
+function normalizeAgentCurrency(value: any): string {
+  const code = String(value || '').trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : '';
+}
+
+function normalizeAgentCountry(value: any): string {
+  const code = String(value || '').trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(code) ? code : '';
+}
+
 type OmnichannelWalletMutation = (options: {
   userId: string;
   type: 'credit' | 'debit';
@@ -45,15 +55,19 @@ export async function getDeepSeekConfig() {
 /**
  * Determine if current local time in merchant's country is Peak Hour (18:00 - 22:00)
  */
-export function isPeakHour(countryCode: string = 'IT'): boolean {
+export function isPeakHour(countryCode: string = ''): boolean {
   const now = new Date();
-  let timeZone = 'Europe/Rome';
-  const c = countryCode.toUpperCase();
+  let timeZone = '';
+  const c = normalizeAgentCountry(countryCode);
   if (c === 'ES') timeZone = 'Europe/Madrid';
   else if (c === 'DE' || c === 'FR' || c === 'IT' || c === 'NL' || c === 'BE') timeZone = 'Europe/Rome';
   else if (c === 'GB' || c === 'UK' || c === 'PT') timeZone = 'Europe/London';
   else if (['US', 'CA'].includes(c)) timeZone = 'America/New_York';
   else if (['MX', 'CO', 'PE'].includes(c)) timeZone = 'America/Bogota';
+
+  // Unknown countries must not silently inherit an Italian timezone. The
+  // surcharge is therefore inactive until a supported timezone is configured.
+  if (!timeZone) return false;
 
   try {
     const localHour = Number(new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone }).format(now));
@@ -137,7 +151,7 @@ export async function callDeepSeekChat(
  * Bill user's balance for AI tokens with dynamic Peak Hours surcharge
  * Rule: Standard is marginPercent (10%). During peak hours (18:00 - 22:00), surcharge is +15% (total 25%).
  */
-export async function billUserForAiUsage(userId: string, totalTokens: number, countryCode: string = 'IT') {
+export async function billUserForAiUsage(userId: string, totalTokens: number, countryCode: string = '') {
   if (!totalTokens || totalTokens <= 0) return;
   if (!omnichannelWalletMutation) {
     console.error('[AI Billing] Wallet mutation service is not configured; charge skipped.');
@@ -185,11 +199,11 @@ function buildToolsForMerchant(settings: any) {
       type: 'function',
       function: {
         name: 'search_products',
-        description: 'Cerca articoli e vestiti nel catalogo del negozio con prezzo, foto, disponibilità e taglie.',
+        description: 'Busca productos reales y disponibles del catálogo de este negocio, con precio, moneda, foto y stock verificados.',
         parameters: {
           type: 'object',
           properties: {
-            query: { type: 'string', description: 'Nome del prodotto, categoria o parola chiave (es. "reggiseno", "abito", "scarpe")' }
+            query: { type: 'string', description: 'Nombre, código, categoría o palabra clave indicada por el cliente' }
           },
           required: ['query']
         }
@@ -234,7 +248,7 @@ function buildToolsForMerchant(settings: any) {
       type: 'function',
       function: {
         name: 'send_product_photos',
-        description: 'Invia le foto ufficiali ad alta risoluzione di un articolo della collezione direttamente nella chat al cliente.',
+        description: 'Envía a la conversación fotos oficiales que existan en el catálogo real del negocio.',
         parameters: {
           type: 'object',
           properties: {
@@ -252,14 +266,20 @@ function buildToolsForMerchant(settings: any) {
       type: 'function',
       function: {
         name: 'quote_shipping',
-        description: 'Calcola le tariffe reali e i tempi di consegna DoorDrop in base al CAP / codice postale e città del cliente.',
+        description: 'Consulta las tarifas y tiempos devueltos en vivo por la API multi-transportista para el origen configurado del negocio y el destino del cliente. No calcula precios propios.',
         parameters: {
           type: 'object',
           properties: {
-            to_country: { type: 'string', description: 'Codice paese ISO 2 lettere (default "IT", o "ES", "FR", "DE")' },
-            zip_code: { type: 'string', description: 'CAP / Codice postale di destinazione' },
-            city: { type: 'string', description: 'Città di destinazione' },
-            weight_kg: { type: 'number', description: 'Peso stimato in kg (default 0.5)' }
+            from_country: { type: 'string', description: 'Código ISO-3166 de dos letras del origen, solo si el negocio lo indicó o la API lo exige' },
+            from_zip: { type: 'string', description: 'Código postal real de recogida, solo si el negocio lo indicó' },
+            from_city: { type: 'string', description: 'Ciudad real de recogida, solo si está configurada' },
+            to_country: { type: 'string', description: 'Código ISO-3166 de dos letras del destino' },
+            zip_code: { type: 'string', description: 'Código postal real de destino' },
+            city: { type: 'string', description: 'Ciudad real de destino' },
+            weight_kg: { type: 'number', description: 'Peso real del paquete en kilogramos' },
+            length_cm: { type: 'number', description: 'Largo real en centímetros, si el cliente lo proporcionó' },
+            width_cm: { type: 'number', description: 'Ancho real en centímetros, si el cliente lo proporcionó' },
+            height_cm: { type: 'number', description: 'Alto real en centímetros, si el cliente lo proporcionó' }
           },
           required: ['to_country', 'zip_code']
         }
@@ -285,7 +305,7 @@ function buildToolsForMerchant(settings: any) {
             buyer_address: { type: 'string', description: 'Indirizzo completo con via e numero civico' },
             buyer_zip: { type: 'string', description: 'CAP / Codice postale' },
             buyer_city: { type: 'string', description: 'Città' },
-            buyer_country: { type: 'string', description: 'Paese (default "IT")' }
+            buyer_country: { type: 'string', description: 'Código ISO-3166 de dos letras del país real del comprador' }
           },
           required: ['product_name', 'buyer_name', 'buyer_email', 'buyer_address', 'buyer_zip', 'buyer_city', 'buyer_country']
         }
@@ -426,11 +446,12 @@ export async function generateAIEmployeeReply(
     }
 
     const [userRows]: any = await pool.query(
-      "SELECT balance, name, country FROM users WHERE id = ? LIMIT 1",
+      "SELECT balance, name, country, currency, business_type FROM users WHERE id = ? LIMIT 1",
       [userId]
     );
     const balance = Number(userRows[0]?.balance || 0);
-    const countryCode = userRows[0]?.country || 'IT';
+    const countryCode = normalizeAgentCountry(userRows[0]?.country);
+    const merchantCurrency = normalizeAgentCurrency(userRows[0]?.currency);
 
     // CREDIT LIMIT: Block AI if balance is below -1.00 USD/EUR
     if (balance < -1.00) {
@@ -447,68 +468,71 @@ export async function generateAIEmployeeReply(
       [userId]
     );
     const settings = aiRows[0] || {};
-    const agentName = settings.agent_name || 'DoorDrop Sales Consultant';
-    const language = settings.language || 'it';
+    const agentName = settings.agent_name || 'Asistente de ventas del negocio';
+    const language = String(settings.language || 'auto').trim() || 'auto';
     const tone = settings.tone || 'friendly_professional';
     const memoryEnabled = settings.auto_learn_conversations !== 0;
-    const businessInfo = settings.business_info || 'Boutique di moda con spedizioni rapide e tracciate DoorDrop.';
-    const personalityRules = settings.personality_instructions || 'Sii cordiale, conciso, umano e proattivo nel consigliare articoli e chiudere vendite.';
-    const salesContract = settings.sales_contract_text || 'Spedizioni espresse 24/48h. Resi gratuiti entro 14 giorni.';
-    const freeShipping = Number(settings.free_shipping_threshold || 50.0);
-    const minOrder = Number(settings.min_order_amount || 0.0);
+    const businessInfo = settings.business_info || 'El negocio aún no ha configurado una descripción comercial.';
+    const personalityRules = settings.personality_instructions || 'Sé cordial, claro, breve y útil. Haz preguntas solo cuando sean necesarias para vender o atender.';
+    const salesContract = settings.sales_contract_text || 'No hay condiciones comerciales configuradas. No inventes plazos, devoluciones, garantías ni medios de pago.';
+    const freeShippingValue = settings.free_shipping_threshold === null || settings.free_shipping_threshold === undefined
+      ? null
+      : Number(settings.free_shipping_threshold);
+    const minOrderValue = settings.min_order_amount === null || settings.min_order_amount === undefined
+      ? null
+      : Number(settings.min_order_amount);
+    const commercialCurrency = merchantCurrency || 'moneda no configurada';
+    const freeShippingRule = Number.isFinite(freeShippingValue) && freeShippingValue > 0
+      ? `Envío gratuito desde ${freeShippingValue.toFixed(2)} ${commercialCurrency}.`
+      : 'No hay umbral de envío gratuito configurado.';
+    const minOrderRule = Number.isFinite(minOrderValue) && minOrderValue > 0
+      ? `Pedido mínimo: ${minOrderValue.toFixed(2)} ${commercialCurrency}.`
+      : 'No hay pedido mínimo configurado.';
 
     let faqs: Array<{ q: string; a: string }> = [];
     try { faqs = JSON.parse(settings.faqs_json || '[]'); } catch {}
 
     const faqsText = faqs.length > 0
-      ? '\n[FAQ del Negozio]:\n' + faqs.map(f => `• D: ${f.q} -> R: ${f.a}`).join('\n')
+      ? '\n[FAQ reales del negocio]:\n' + faqs.map(f => `• P: ${f.q} -> R: ${f.a}`).join('\n')
       : '';
 
     // Tone instructions
-    let toneDescription = 'amichevole, empatico, caloroso e altamente professionale';
-    if (tone === 'sales_oriented') toneDescription = 'dinamico, proattivo, orientato a chiudere la vendita con entusiasmo';
-    if (tone === 'casual') toneDescription = 'giovane, diretto, colloquiale e molto accessibile';
-    if (tone === 'luxury') toneDescription = 'elegante, raffinato, premuroso ed esclusivo';
+    let toneDescription = 'amable, empático, claro y profesional';
+    if (tone === 'sales_oriented') toneDescription = 'dinámico, proactivo y orientado a cerrar ventas sin presionar';
+    if (tone === 'casual') toneDescription = 'directo, cercano, sencillo y accesible';
+    if (tone === 'luxury') toneDescription = 'elegante, refinado, atento y exclusivo';
 
-    // 3. Conversational System Prompt with Strict Multilingual Adaptation & Memory Rules
-    const systemPrompt = `Sei ${agentName}, il consulente di vendita dedicato e autonomo di questo negozio su DoorDrop.
-Il tuo obiettivo è offrire un'esperienza di acquisto conversazionale eccezionale, calorosa e fluida, guidando il cliente dalla scoperta del prodotto fino alla conclusione dell'ordine.
+    // 3. Global, tenant-aware system prompt. The configured language is only
+    // a fallback; the customer's current language is authoritative.
+    const systemPrompt = `Eres ${agentName}, el agente autónomo de ventas y asistencia de este negocio en DoorDrop.
+Tu objetivo es ayudar a cada cliente a descubrir productos reales, resolver dudas y completar compras de forma clara, breve y segura.
 
-Tono di voce: ${toneDescription}.
-Istruzioni di comportamento personalizzate: ${personalityRules}.
+Negocio y contexto: país ${countryCode || 'no configurado'}, moneda comercial ${commercialCurrency}, tipo de negocio ${userRows[0]?.business_type || 'no configurado'}.
+Tono: ${toneDescription}.
+Instrucciones del negocio: ${personalityRules}
+Idioma configurado como respaldo: ${language}. Aun así, detecta el idioma del último mensaje del cliente y responde siempre en ese mismo idioma. Esto incluye idiomas que no estén en el panel. No cambies de idioma sin que el cliente lo pida.
 
-IMPORTANTE LINGUA:
-- Devi rispondere SEMPRE E OBBLIGATORIAMENTE nella stessa lingua in cui ti parla il cliente.
-- Se il cliente scrive in Spagnolo (es. "ropa", "que tienen", "muestrame algo", "si", "14"), rispondi SEMPRE in Spagnolo.
-- Se il cliente scrive in Italiano, rispondi in Italiano.
-- Se scrive in Inglese, rispondi in Inglese.
-- Non cambiare lingua a metà conversazione!
+Cliente: ${contactName || 'cliente'}.
 
-Cliente: ${contactName || 'Gentile cliente'}.
-
-Informazioni sul negozio:
+Información real del negocio:
 ${businessInfo}
 ${faqsText}
 
-Regole commerciali e contrattuali del negozio:
-- Spedizione Gratuita: a partire da ordini superiori a €${freeShipping.toFixed(2)} EUR!
-- Ordine Minimo: ${minOrder > 0 ? `€${minOrder.toFixed(2)} EUR` : 'Nessun minimo richiesto'}.
-- Condizioni e Resi: ${salesContract}
+Reglas comerciales reales:
+- ${freeShippingRule}
+- ${minOrderRule}
+- Condiciones y devoluciones: ${salesContract}
 
-Istruzioni comportamentali e conversazionali fondamentali:
-1. MEMORIA CONVERSAZIONALE RIGOROSA: ${memoryEnabled ? 'Usa la cronologia disponibile della conversazione e, se esiste, la memoria recente dello stesso cliente nello stesso canale.' : 'La memoria conversazionale è disattivata: usa solo il messaggio attuale e le informazioni del negozio.'} Se hai presentato un elenco di articoli e il cliente risponde con un numero (es. "14", "1", "2"), con "sì", "inviami foto", o con "lo quiero", "prendo questo", capisci immediatamente a quale prodotto della lista si riferisce e procedi (invia le foto di quel prodotto o chiedi i dati per la spedizione). NON chiedere mai "a cosa ti riferisci?" se era già nel contesto!
-2. Sii SEMPRE CONVERSAZIONALE, naturale ed empatico. Non rispondere MAI come un robot o con elenchi rigidi privi di calore.
-3. Quando il cliente chiede informazioni generali sul negozio, su pagamenti, resi, contatti, orari o spedizioni, usa "get_store_info" e rispondi solo con dati restituiti dal negozio.
-4. Quando il cliente descrive un bisogno, stile, categoria, taglia o budget, usa "get_product_recommendation" per proporre fino a tre articoli reali e disponibili. Usa "search_products" per una ricerca esatta per nome o codice.
-5. Se il cliente chiede di vedere il prodotto o foto (o se ha risposto "sì" / "14" dopo che gli hai offerto le foto), invoca SEMPRE "send_product_photos".
-6. Se il cliente chiede quanto costa la spedizione o dove si spedisce, chiedi gentilmente il suo CAP / Città e calcola la tariffa con "quote_shipping". Ricorda sempre al cliente la soglia di spedizione gratuita (€${freeShipping}) per incoraggiare acquisti aggiuntivi!
-7. Quando il cliente manifesta l'intenzione di acquistare, raccogli i dati mancanti e mostra prima il prodotto e il totale. Chiama "create_order_checkout" solo dopo una conferma esplicita del cliente (es. "confirmo", "puedes crear el pedido", "confermo l'ordine") e solo con dati completi e verificati.
-8. Se il cliente chiede dov'è il suo pacco o un tracking, usa "lookup_or_generate_tracking".
-9. Se il cliente chiede espressamente di parlare con una persona reale, invoca "handoff_to_human".
-10. Mantieni le risposte snelle, calorose ed efficaci: 2-4 frasi brevi e massimo circa 600 caratteri. Fai al massimo una domanda o richiesta di dati per messaggio.
-11. FORMATO ORDINATO: se proponi prodotti, mostra massimo 3 opzioni numerate, una per riga, con nome, prezzo e disponibilità solo se verificati. Evita tabelle, paragrafi lunghi, saluti ripetuti e spiegazioni tecniche.
-12. DATI VERIFICATI: non inventare stock, prezzi, tempi, políticas, pagos, pedidos, direcciones ni estados. Se manca un dato reale, dilo brevemente y pide solo ese dato.
-13. CONTINUITÀ: se la memoria contiene un dato ya confirmado por el cliente, reutilízalo y no vuelvas a preguntarlo. Si faltan varios datos, solicita únicamente el siguiente dato necesario.`;
+Reglas obligatorias de operación:
+1. Usa la memoria disponible de esta conversación y del mismo cliente/canal: reutiliza nombre, preferencias, producto elegido y datos ya confirmados; no repitas preguntas. Si el cliente responde con un número o una confirmación breve, relaciónalo con la lista que acabas de presentar.
+2. Usa solo información real devuelta por las herramientas y la configuración de este negocio. Nunca inventes productos, precios, stock, moneda, plazos, políticas, garantías, pagos, pedidos, direcciones, transportistas o estados.
+3. Para productos usa get_product_recommendation o search_products. Presenta como máximo tres opciones numeradas y conserva su moneda real.
+4. Para fotos usa send_product_photos solo cuando existan imágenes reales del producto.
+5. Para envíos solicita país, código postal, ciudad y peso real si faltan; después usa quote_shipping. No calcules tarifas mentalmente ni uses precios por defecto. Si la API no devuelve ofertas, dilo con claridad.
+6. Antes de un checkout, muestra producto, cantidad, transporte, moneda y total verificados. Usa create_order_checkout únicamente después de una confirmación explícita y con todos los datos reales del comprador.
+7. Para seguimiento usa lookup_or_generate_tracking. Para hablar con una persona usa handoff_to_human.
+8. Responde en 2-4 frases cortas, máximo aproximadamente 600 caracteres. Haz como máximo una pregunta o solicitud de datos por mensaje.
+9. Si falta configuración real del negocio, informa qué debe completar el negocio; no rellenes el vacío con una suposición comercial.`;
 
     const tools = buildToolsForMerchant(settings);
 
@@ -574,7 +598,7 @@ Istruzioni comportamentali e conversazionali fondamentali:
 export async function autoGenerateStoreAISettings(userId: string) {
   // 1. Fetch store info and top catalog items
   const [userRows]: any = await pool.query(
-    "SELECT id, name, email, country FROM users WHERE id = ? LIMIT 1",
+    "SELECT id, name, email, country, currency, business_type FROM users WHERE id = ? LIMIT 1",
     [userId]
   );
   const user = userRows[0] || {};
@@ -587,33 +611,42 @@ export async function autoGenerateStoreAISettings(userId: string) {
     [userId]
   );
 
-  const sampleCatalog = prods.map((p: any) => `${p.title} (€${(p.price_minor / 100).toFixed(2)})`).join(', ');
+  const [existingRows]: any = await pool.query(
+    `SELECT sales_contract_text, free_shipping_threshold, min_order_amount, faqs_json
+       FROM omnichannel_ai_settings
+      WHERE user_id = ?
+      LIMIT 1`,
+    [userId]
+  );
+  const existingSettings = existingRows[0] || null;
 
-  const prompt = `Sei un esperto consulente di e-commerce e direct sales omnicanale.
-Analizza queste informazioni del negozio:
-- Nome/Titolare: ${user.name || 'Boutique Online'}
-- Paese: ${user.country || 'IT'}
-- Alcuni prodotti a catalogo: ${sampleCatalog || 'Capi di abbigliamento, intimo e accessori'}
+  const userCurrency = normalizeAgentCurrency(user.currency) || 'moneda no configurada';
+  const sampleCatalog = prods.map((p: any) => {
+    const productCurrency = normalizeAgentCurrency(p.currency) || userCurrency;
+    return `${p.title} (${(Number(p.price_minor || 0) / 100).toFixed(2)} ${productCurrency}, stock ${Number(p.quantity || 0)})`;
+  }).join(', ');
 
-Genera una configurazione completa, persuasiva e altamente professionale per l'assistente vendite virtuale (AI Sales Employee).
-Restituisci ESCLUSIVAMENTE un oggetto JSON valido (senza testo markdown attorno) con questi campi:
+  const prompt = `Eres un especialista en ventas conversacionales omnicanal.
+Analiza únicamente los datos reales siguientes y prepara la configuración de un agente para este negocio:
+- Nombre del negocio o titular: ${user.name || 'No configurado'}
+- País del negocio: ${user.country || 'No configurado'}
+- Moneda principal: ${userCurrency}
+- Tipo de negocio: ${user.business_type || 'No configurado'}
+- Productos activos observados en el catálogo: ${sampleCatalog || 'Catálogo vacío; no recomendar productos hasta que existan artículos activos.'}
+
+Devuelve EXCLUSIVAMENTE un objeto JSON válido (sin markdown) con estos campos.
+No inventes políticas, plazos, garantías, medios de pago, características, materiales, disponibilidad ni datos de contacto. Si un dato no está en la entrada, déjalo vacío o usa una lista vacía:
 {
-  "agent_name": "Nome descrittivo del ruolo del venditore (es. Assistente AI del negozio)",
+  "agent_name": "Nombre neutral y profesional del agente para este negocio",
   "tone": "uno tra 'friendly_professional', 'sales_oriented', 'casual', 'luxury'",
-  "language": "${user.country === 'ES' ? 'es' : user.country === 'DE' ? 'de' : 'it'}",
-  "business_info": "Descrizione accattivante del negozio, qualità dei materiali, stile e attenzione al cliente (circa 3-4 frasi).",
-  "personality_instructions": "Istruzioni su come comportarsi con i clienti: empatia, porre domande aperte su taglie e preferenze, proporre abbinamenti, invitare all'acquisto con eleganza senza essere invadenti.",
-  "sales_contract_text": "Termini e condizioni del venditore: Spedizioni espresse 24/48h tracciate con corriere DoorDrop. Spedizione gratuita per ordini superiori a 50€. Reso e sostituzione taglia garantiti entro 14 giorni.",
-  "free_shipping_threshold": 50.00,
+  "language": "auto",
+  "business_info": "Descripción comercial basada solamente en el nombre, tipo de negocio y productos reales proporcionados.",
+  "personality_instructions": "Sé claro, breve, empático y orientado a ayudar. Pregunta por las preferencias del cliente y recomienda solo productos activos.",
+  "sales_contract_text": "",
+  "free_shipping_threshold": 0.00,
   "min_order_amount": 0.00,
   "response_delay_seconds": 3,
-  "faqs": [
-    { "q": "Quali sono i tempi di consegna?", "a": "Spediamo entro 24 ore dalla conferma e consegniamo in 24/48 ore lavorative con corriere espresso tracciato DoorDrop." },
-    { "q": "Posso pagare alla consegna o online?", "a": "Puoi pagare comodamente e in totale sicurezza online con carta o bonifico istantaneo tramite il link protetto DoorDrop." },
-    { "q": "Come funziona per i resi o cambio taglia?", "a": "Garantiamo il reso e il cambio taglia entro 14 giorni dalla ricezione del pacco." },
-    { "q": "Come posso tracciare la spedizione?", "a": "Appena spedito ti invieremo il codice di tracking DoorDrop per seguire il tuo pacco in tempo reale." },
-    { "q": "I prodotti sono originali e di qualità?", "a": "Assolutamente sì, tutti i nostri articoli sono autentici e realizzati con materiali selezionati di alta qualità." }
-  ]
+  "faqs": []
 }`;
 
   const completion = await callDeepSeekChat(
@@ -633,6 +666,25 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON valido (senza testo markdown attorno)
       resultJson = JSON.parse(raw.slice(firstBrace, lastBrace + 1));
     }
   }
+
+  // The model may write persuasive copy, but it is never allowed to create
+  // commercial facts. Those fields stay neutral until the merchant configures
+  // them explicitly in the panel.
+  resultJson.language = 'auto';
+  resultJson.sales_contract_text = existingSettings?.sales_contract_text || '';
+  resultJson.free_shipping_threshold = existingSettings?.free_shipping_threshold === null || existingSettings?.free_shipping_threshold === undefined
+    ? 0
+    : Number(existingSettings.free_shipping_threshold);
+  resultJson.min_order_amount = existingSettings?.min_order_amount === null || existingSettings?.min_order_amount === undefined
+    ? 0
+    : Number(existingSettings.min_order_amount);
+  if (existingSettings?.faqs_json) {
+    try {
+      const existingFaqs = JSON.parse(existingSettings.faqs_json);
+      if (Array.isArray(existingFaqs)) resultJson.faqs = existingFaqs;
+    } catch {}
+  }
+  resultJson.faqs = Array.isArray(resultJson.faqs) ? resultJson.faqs : [];
 
   return resultJson;
 }

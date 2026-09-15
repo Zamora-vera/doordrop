@@ -2,6 +2,235 @@ import { pool } from '../db/connection.js';
 import crypto from 'crypto';
 import { sendNotificationEvent } from '../services/emailService.js';
 
+const INTERNAL_DOORDROP_URL = String(
+  process.env.DOORDROP_INTERNAL_URL || process.env.INTERNAL_API_URL || 'http://127.0.0.1:3000'
+).replace(/\/+$/, '');
+const LIVE_QUOTE_TIMEOUT_MS = 12000;
+const LIVE_FX_TIMEOUT_MS = 6000;
+
+type MerchantContext = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  country: string;
+  currency: string;
+  businessType: string | null;
+  origin: { country: string; zipCode: string; city: string } | null;
+};
+
+function normalizeIsoCountry(value: any): string {
+  const code = String(value || '').trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(code) ? code : '';
+}
+
+function normalizeCurrency(value: any): string {
+  const code = String(value || '').trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : '';
+}
+
+function finitePositiveNumber(value: any): number | null {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+async function requestInternalJson(path: string, init: RequestInit = {}, timeoutMs = LIVE_QUOTE_TIMEOUT_MS): Promise<any> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${INTERNAL_DOORDROP_URL}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', ...(init.headers || {}) }
+    });
+    let body: any = null;
+    try { body = await response.json(); } catch { body = null; }
+    if (!response.ok) {
+      throw new Error(`DoorDrop API HTTP ${response.status}`);
+    }
+    return body;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function getMerchantContext(userId: string): Promise<MerchantContext | null> {
+  const [userRows]: any = await pool.query(
+    `SELECT id, name, email, country, currency, business_type
+       FROM users
+      WHERE id = ?
+      LIMIT 1`,
+    [userId]
+  );
+  const user = userRows[0];
+  if (!user) return null;
+
+  let address: any = null;
+  try {
+    const [pickupRows]: any = await pool.query(
+      `SELECT city, zip_code, country
+         FROM pickup_addresses
+        WHERE user_id = ?
+        ORDER BY is_default DESC, updated_at DESC
+        LIMIT 1`,
+      [userId]
+    );
+    address = pickupRows[0] || null;
+  } catch {
+    // Older installations may not have pickup_addresses yet; continue to the
+    // next real address source instead of inventing an origin.
+  }
+
+  if (!address) {
+    try {
+      const [companyRows]: any = await pool.query(
+        `SELECT city, zip_code, country
+           FROM companies
+          WHERE user_id = ?
+          ORDER BY updated_at DESC
+          LIMIT 1`,
+        [userId]
+      );
+      address = companyRows[0] || null;
+    } catch {
+      // Continue to the real sender address book below.
+    }
+  }
+
+  if (!address) {
+    try {
+      const [senderRows]: any = await pool.query(
+        `SELECT city, zip_code, country
+           FROM address_book
+          WHERE user_id = ? AND type = 'sender'
+          ORDER BY is_default DESC, updated_at DESC
+          LIMIT 1`,
+        [userId]
+      );
+      address = senderRows[0] || null;
+    } catch {
+      // No configured sender address. The caller will return a clear action.
+    }
+  }
+
+  const userCountry = normalizeIsoCountry(user.country);
+  const userCurrency = normalizeCurrency(user.currency);
+  const addressCountry = normalizeIsoCountry(address?.country);
+  const addressZip = String(address?.zip_code || '').trim();
+  const addressCity = String(address?.city || '').trim();
+
+  return {
+    id: String(user.id),
+    name: user.name ? String(user.name) : null,
+    email: user.email ? String(user.email) : null,
+    country: userCountry,
+    currency: userCurrency,
+    businessType: user.business_type ? String(user.business_type) : null,
+    origin: address && addressCountry && addressZip
+      ? { country: addressCountry, zipCode: addressZip, city: addressCity }
+      : null
+  };
+}
+
+async function requestLiveShippingQuotes(sellerUserId: string, args: any, currencyOverride?: string) {
+  const merchant = await getMerchantContext(sellerUserId);
+  if (!merchant) return { success: false, error: 'No se encontró el negocio vendedor.' };
+
+  const originCountry = normalizeIsoCountry(args.from_country || args.origin_country || merchant.origin?.country);
+  const originZip = String(args.from_zip || args.origin_zip || merchant.origin?.zipCode || '').trim();
+  const originCity = String(args.from_city || args.origin_city || merchant.origin?.city || '').trim();
+  const destinationCountry = normalizeIsoCountry(args.to_country || args.dest_country || args.country);
+  const destinationZip = String(args.zip_code || args.to_zip || args.dest_zip || args.zip || args.cap || '').trim();
+  const destinationCity = String(args.city || args.to_city || args.dest_city || '').trim();
+  const weightKg = finitePositiveNumber(args.weight_kg || args.weightKg || args.weight);
+  const currency = normalizeCurrency(currencyOverride || args.currency || merchant.currency);
+
+  if (!originCountry || !originZip) {
+    return { success: false, error: 'El negocio debe configurar un país y código postal de recogida reales antes de cotizar.' };
+  }
+  if (!destinationCountry || !destinationZip) {
+    return { success: false, error: 'Faltan el país y el código postal reales de destino.' };
+  }
+  if (!weightKg) {
+    return { success: false, error: 'Falta el peso real del paquete en kilogramos.' };
+  }
+  if (!currency) {
+    return { success: false, error: 'El negocio no tiene una moneda válida configurada.' };
+  }
+
+  const packageData: any = {
+    weight: weightKg,
+    qty: Math.max(1, Number(args.quantity || args.qty || 1))
+  };
+  for (const [source, target] of [['length_cm', 'length'], ['width_cm', 'width'], ['height_cm', 'height']] as const) {
+    const value = finitePositiveNumber(args[source]);
+    if (value) packageData[target] = value;
+  }
+
+  try {
+    const payload = await requestInternalJson('/api/shipments/quote', {
+      method: 'POST',
+      body: JSON.stringify({
+        originCountry,
+        originZip,
+        originCity,
+        destCountry: destinationCountry,
+        destZip: destinationZip,
+        destCity: destinationCity,
+        currency,
+        packages: [packageData],
+        persistQuotes: false
+      })
+    });
+    const offers = Array.isArray(payload?.quotes) ? payload.quotes : [];
+    return {
+      success: true,
+      merchant,
+      origin: { country: originCountry, zip_code: originZip, city: originCity },
+      destination: { country: destinationCountry, zip_code: destinationZip, city: destinationCity },
+      weight_kg: weightKg,
+      currency,
+      offers: offers
+        .filter((offer: any) => Number(offer?.customerPrice ?? offer?.total ?? offer?.price) > 0)
+        .slice(0, 6)
+        .map((offer: any) => ({
+          id: offer.id || null,
+          provider: offer.providerDisplayName || offer.provider || null,
+          provider_code: offer.providerCode || null,
+          carrier: offer.carrierName || null,
+          service: offer.service || null,
+          rate: Number(offer.customerPrice ?? offer.total ?? offer.price),
+          currency: normalizeCurrency(offer.currency) || currency,
+          delivery_time: offer.deliveryText || null,
+          estimated_days: offer.estimatedDays ?? null
+        }))
+    };
+  } catch (error: any) {
+    console.error('[AI Sales Agent] Live quote error:', error?.message || 'unknown');
+    return { success: false, error: 'No se pudo consultar la cotización multi-transportista en vivo.' };
+  }
+}
+
+async function getLiveFxRates(): Promise<Record<string, number>> {
+  const payload = await requestInternalJson('/api/currencies', {}, LIVE_FX_TIMEOUT_MS);
+  const rates = payload?.rates;
+  if (!rates || typeof rates !== 'object') throw new Error('Tasas FX no disponibles.');
+  return rates;
+}
+
+function convertViaEur(amount: number, fromCurrency: string, toCurrency: string, rates: Record<string, number>): number {
+  const from = normalizeCurrency(fromCurrency);
+  const to = normalizeCurrency(toCurrency);
+  const sourceAmount = Number(amount);
+  if (!from || !to || !Number.isFinite(sourceAmount)) throw new Error('Moneda o importe no válido.');
+  if (from === to) return Number(sourceAmount.toFixed(2));
+  const fromRate = Number(rates[from]);
+  const toRate = Number(rates[to]);
+  if (!Number.isFinite(fromRate) || fromRate <= 0 || !Number.isFinite(toRate) || toRate <= 0) {
+    throw new Error('No hay tasa FX para convertir este importe.');
+  }
+  return Number(((sourceAmount / fromRate) * toRate).toFixed(2));
+}
+
 /**
  * Autonomous Sales Tools for DoorDrop AI Employee:
  * 1. search_products: Find products by name or category with photos, prices, descriptions
@@ -36,7 +265,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
             id: p.id,
             title: p.title,
             price: Number((p.price_minor / 100).toFixed(2)),
-            currency: p.currency || 'EUR',
+            currency: normalizeCurrency(p.currency) || null,
             stock: p.quantity,
             weight_grams: p.weight_grams || 300,
             description: p.description?.slice(0, 180) || '',
@@ -49,18 +278,25 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
         const category = String(args.category || '').trim();
         const requirements = String(args.customer_requirements || args.query || '').trim();
         const maxPrice = Number(args.max_price);
-        const searchText = [category, requirements].filter(Boolean).join(' ').trim();
-        const term = searchText ? `%${searchText}%` : '%';
-        const categoryTerm = category ? `%${category}%` : '%';
         const priceLimit = Number.isFinite(maxPrice) && maxPrice > 0 ? maxPrice * 100 : null;
+        const terms = Array.from(new Set(
+          [category, requirements]
+            .join(' ')
+            .toLowerCase()
+            .split(/[^\p{L}\p{N}]+/u)
+            .filter((term: string) => term.length >= 2)
+        )).slice(0, 8);
 
         const conditions = [
           '(l.seller_id = ? OR ? = \'\')',
           "l.status = 'active'",
-          'COALESCE(l.quantity, 0) > 0',
-          '(l.title LIKE ? OR l.description LIKE ? OR l.category_id IN (SELECT id FROM marketplace_categories WHERE name LIKE ?))'
+          'COALESCE(l.quantity, 0) > 0'
         ];
-        const params: any[] = [sellerUserId, sellerUserId, term, term, categoryTerm];
+        const params: any[] = [sellerUserId, sellerUserId];
+        if (terms.length > 0) {
+          conditions.push(`(${terms.map(() => '(l.title LIKE ? OR l.description LIKE ? OR l.category_id IN (SELECT id FROM marketplace_categories WHERE name LIKE ?))').join(' OR ')})`);
+          for (const term of terms) params.push(`%${term}%`, `%${term}%`, `%${term}%`);
+        }
         if (priceLimit !== null) {
           conditions.push('l.price_minor <= ?');
           params.push(Math.round(priceLimit));
@@ -71,9 +307,9 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
                   (SELECT img.url FROM marketplace_listing_images img WHERE img.listing_id = l.id ORDER BY img.is_cover DESC, img.sort_order ASC LIMIT 1) AS cover_image
              FROM marketplace_listings l
             WHERE ${conditions.join(' AND ')}
-            ORDER BY CASE WHEN l.title LIKE ? THEN 0 WHEN l.description LIKE ? THEN 1 ELSE 2 END, l.updated_at DESC
+            ORDER BY l.updated_at DESC
             LIMIT 3`,
-          [...params, term, term]
+          params
         );
 
         return {
@@ -84,7 +320,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
             id: p.id,
             title: p.title,
             price: Number((Number(p.price_minor || 0) / 100).toFixed(2)),
-            currency: String(p.currency || 'EUR').toUpperCase(),
+            currency: normalizeCurrency(p.currency) || null,
             stock: Number(p.quantity || 0),
             description: String(p.description || '').slice(0, 240),
             primary_image: p.cover_image ? String(p.cover_image).replace(/^http:\/\//i, 'https://') : null
@@ -111,6 +347,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
         );
         const store = storeRows[0];
         const settings = settingsRows[0] || {};
+        const merchantContext = await getMerchantContext(sellerUserId);
         return {
           found: true,
           store: {
@@ -118,11 +355,12 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
             email: store.email || null,
             phone: store.phone || null,
             country: store.country || null,
-            currency: String(store.currency || 'EUR').toUpperCase(),
+            currency: normalizeCurrency(store.currency) || null,
             business_type: store.business_type || null,
             status: store.status || null,
             website_url: settings.website_url || null,
-            business_info: settings.business_info || null
+            business_info: settings.business_info || null,
+            fulfillment_origin: merchantContext?.origin || null
           },
           policies: {
             sales_contract: settings.sales_contract_text || null,
@@ -189,66 +427,46 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
           product_id: product.id,
           title: product.title,
           price,
-          currency: product.currency || 'EUR',
+          currency: normalizeCurrency(product.currency) || null,
           images,
           media_attachment_url: primaryImage,
-          message: `Foto trovate per ${product.title} (€${price} EUR): ${primaryImage}`
+          message: `Fotos oficiales encontradas para ${product.title} (${price.toFixed(2)} ${normalizeCurrency(product.currency) || 'moneda del producto'}): ${primaryImage}`
         };
       }
 
       case 'quote_shipping': {
-        const fromCountry = 'IT';
-        const toCountry = String(args.to_country || args.country || 'IT').toUpperCase().trim();
-        const zipCode = String(args.zip_code || args.zip || args.cap || '').trim();
-        const city = String(args.city || '').trim();
-        const weightKg = Number(args.weight_kg) || 0.5;
+        const liveQuote = await requestLiveShippingQuotes(sellerUserId, args);
+        if (!liveQuote.success) return liveQuote;
 
-        // Check seller settings for free shipping threshold
         const [aiSettings]: any = await pool.query(
-          "SELECT free_shipping_threshold, min_order_amount FROM omnichannel_ai_settings WHERE user_id = ? LIMIT 1",
+          'SELECT free_shipping_threshold FROM omnichannel_ai_settings WHERE user_id = ? LIMIT 1',
           [sellerUserId]
         );
-        const freeThreshold = Number(aiSettings[0]?.free_shipping_threshold || 50.0);
+        const configuredThreshold = aiSettings[0]?.free_shipping_threshold;
+        const freeThreshold = configuredThreshold === null || configuredThreshold === undefined
+          ? null
+          : Number(configuredThreshold);
 
-        let rate = 7.50;
-        let carrier = 'DoorDrop Italia Express';
-        let deliveryTime = '24/48 ore lavorative';
-
-        if (toCountry === 'IT') {
-          // Italian domestic rates
-          const isIsland = zipCode.startsWith('9') || zipCode.startsWith('07') || zipCode.startsWith('08');
-          rate = isIsland
-            ? 8.90
-            : 7.50 + Math.max(0, (weightKg - 1) * 1.50);
-          carrier = isIsland ? 'DoorDrop Isole Express' : 'DoorDrop Italia Express';
-          deliveryTime = isIsland ? '48/72 ore' : '24/48 ore';
-        } else if (['ES', 'FR', 'DE', 'AT', 'BE', 'NL', 'PT'].includes(toCountry)) {
-          rate = 12.90 + Math.max(0, (weightKg - 1) * 2.50);
-          carrier = 'DoorDrop EuroExpress';
-          deliveryTime = '3-4 giorni lavorativi';
-        } else {
-          rate = 22.00 + Math.max(0, (weightKg - 1) * 5.00);
-          carrier = 'DoorDrop Global Courier';
-          deliveryTime = '4-6 giorni lavorativi';
-        }
-
-        const finalRate = Number(rate.toFixed(2));
         return {
-          origin: fromCountry,
-          destination: { country: toCountry, zip_code: zipCode, city },
-          weight_kg: weightKg,
-          rate: finalRate,
-          currency: 'EUR',
-          carrier,
-          delivery_time: deliveryTime,
-          free_shipping_applicable_from: freeThreshold,
-          summary: `Spedizione per ${city || toCountry} (CAP: ${zipCode || 'standard'}) con ${carrier}: €${finalRate} EUR (${deliveryTime}). Gratuita a partire da €${freeThreshold}!`
+          live: true,
+          source: 'DoorDrop multi-carrier API',
+          origin: liveQuote.origin,
+          destination: liveQuote.destination,
+          weight_kg: liveQuote.weight_kg,
+          currency: liveQuote.currency,
+          offers: liveQuote.offers,
+          free_shipping_currency: liveQuote.merchant.currency || null,
+          free_shipping_applicable_from: Number.isFinite(freeThreshold) && freeThreshold > 0 ? freeThreshold : null,
+          summary: liveQuote.offers.length > 0
+            ? `Se encontraron ${liveQuote.offers.length} opciones reales de transporte en ${liveQuote.currency}.`
+            : 'No hay ofertas reales disponibles para esta ruta, peso y configuración.'
         };
       }
 
       case 'create_order_checkout': {
         const productName = String(args.product_name || args.product_title || '').trim();
-        const quantity = Math.max(1, Number(args.quantity) || 1);
+        const requestedQuantity = Number(args.quantity);
+        const quantity = Number.isFinite(requestedQuantity) ? Math.max(1, Math.floor(requestedQuantity)) : 1;
         const buyerName = String(args.buyer_name || args.customer_name || '').trim();
         const buyerEmail = String(args.buyer_email || args.customer_email || args.email || '').trim().toLowerCase();
         const buyerPhone = String(args.buyer_phone || args.phone || '').trim();
@@ -266,7 +484,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
         let prods: any[] = [];
 
         const [exactProds]: any = await pool.query(
-          `SELECT id, title, price_minor, currency, quantity, weight_grams
+          `SELECT id, slug, title, price_minor, currency, quantity, weight_grams, city, country_code, postal_code
            FROM marketplace_listings
            WHERE (seller_id = ? OR ? = '')
              AND (title LIKE ? OR id = ?)
@@ -283,7 +501,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
           for (const w of searchWords) params.push(`%${w}%`, `%${w}%`);
 
           const [matchProds]: any = await pool.query(
-            `SELECT id, title, price_minor, currency, quantity, weight_grams
+            `SELECT id, slug, title, price_minor, currency, quantity, weight_grams, city, country_code, postal_code
              FROM marketplace_listings
              WHERE (seller_id = ? OR ? = '')
                AND (${likeClauses})
@@ -298,30 +516,84 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
           return { success: false, error: `Articolo "${productName}" non trovato a catalogo o non disponibile.` };
         }
         const prod = prods[0];
+        const availableQuantity = Number(prod.quantity || 0);
+        if (availableQuantity < quantity) {
+          return { success: false, error: 'La cantidad solicitada ya no está disponible en el catálogo.' };
+        }
 
-        // 2. Check seller business rules
+        const merchant = await getMerchantContext(sellerUserId);
+        if (!merchant) {
+          return { success: false, error: 'No se encontró el negocio vendedor.' };
+        }
+        const productCurrency = normalizeCurrency(prod.currency) || merchant.currency;
+        if (!productCurrency) {
+          return { success: false, error: 'El producto no tiene una moneda válida configurada.' };
+        }
+
+        // 2. Check seller business rules. Amounts configured in AI settings
+        // belong to the merchant wallet currency, while listings may use a
+        // different currency. Convert with the live DoorDrop FX endpoint.
         const [aiSettings]: any = await pool.query(
           "SELECT min_order_amount, free_shipping_threshold FROM omnichannel_ai_settings WHERE user_id = ? LIMIT 1",
           [sellerUserId]
         );
-        const minOrder = Number(aiSettings[0]?.min_order_amount || 0);
-        const freeThreshold = Number(aiSettings[0]?.free_shipping_threshold || 50.0);
+        const configuredMinOrder = aiSettings[0]?.min_order_amount;
+        const configuredFreeThreshold = aiSettings[0]?.free_shipping_threshold;
+        const rulesCurrency = merchant.currency || productCurrency;
+        const minOrder = configuredMinOrder === null || configuredMinOrder === undefined
+          ? null
+          : Number(configuredMinOrder);
+        const freeThreshold = configuredFreeThreshold === null || configuredFreeThreshold === undefined
+          ? null
+          : Number(configuredFreeThreshold);
 
         const unitPrice = prod.price_minor / 100;
         const productTotal = unitPrice * quantity;
+        let productTotalInRulesCurrency = productTotal;
+        if (rulesCurrency !== productCurrency && (minOrder !== null || freeThreshold !== null)) {
+          try {
+            const fxRates = await getLiveFxRates();
+            productTotalInRulesCurrency = convertViaEur(productTotal, productCurrency, rulesCurrency, fxRates);
+          } catch (error: any) {
+            return { success: false, error: 'No se pudo validar el importe con la tasa de cambio vigente.' };
+          }
+        }
 
-        if (minOrder > 0 && productTotal < minOrder) {
+        if (minOrder !== null && Number.isFinite(minOrder) && minOrder > 0 && productTotalInRulesCurrency < minOrder) {
           return {
             success: false,
-            error: `L'importo minimo per effettuare un ordine con questo venditore è di €${minOrder.toFixed(2)} EUR (totale attuale: €${productTotal.toFixed(2)}).`
+            error: `El pedido mínimo es ${minOrder.toFixed(2)} ${rulesCurrency}; el total actual equivale a ${productTotalInRulesCurrency.toFixed(2)} ${rulesCurrency}.`
           };
         }
 
-        // Calculate shipping
-        let shippingRate = (buyerCountry === 'IT') ? 7.50 : 12.90;
-        if (freeThreshold > 0 && productTotal >= freeThreshold) {
-          shippingRate = 0.00;
+        // Calculate shipping only from active, connected DoorDrop providers.
+        // There is intentionally no country-based or EUR fallback here.
+        const liveQuote = await requestLiveShippingQuotes(sellerUserId, {
+          from_country: merchant.origin?.country || prod.country_code,
+          from_zip: merchant.origin?.zipCode || prod.postal_code,
+          from_city: merchant.origin?.city || prod.city,
+          to_country: buyerCountry,
+          zip_code: buyerZip,
+          city: buyerCity,
+          weight_kg: (Number(prod.weight_grams) > 0 ? Number(prod.weight_grams) / 1000 : null),
+          quantity,
+          currency: productCurrency
+        }, productCurrency);
+        if (!liveQuote.success) return liveQuote;
+
+        const shippingOffer = liveQuote.offers[0];
+        if (!shippingOffer) {
+          return { success: false, error: 'No hay una opción real de transporte disponible para este destino.' };
         }
+        let shippingRate = Number(shippingOffer.rate);
+        if (!Number.isFinite(shippingRate) || shippingRate <= 0) {
+          return { success: false, error: 'La cotización del transporte no devolvió un importe válido.' };
+        }
+        const freeShippingApplies = freeThreshold !== null
+          && Number.isFinite(freeThreshold)
+          && freeThreshold > 0
+          && productTotalInRulesCurrency >= freeThreshold;
+        if (freeShippingApplies) shippingRate = 0;
 
         const totalAmount = Number((productTotal + shippingRate).toFixed(2));
         const orderId = crypto.randomUUID();
@@ -338,9 +610,9 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
 
         // 3. Insert into marketplace_orders
         await pool.query(
-          `INSERT INTO marketplace_orders 
+          `INSERT INTO marketplace_orders
             (id, order_number, listing_id, buyer_id, seller_id, product_amount_minor, shipping_amount_minor, total_amount_minor, currency, status, payment_method, buyer_address_json, shipping_service_name)
-           VALUES (?, ?, ?, 'usr_guest_omnichannel', ?, ?, ?, ?, 'EUR', 'pending_payment', 'online_checkout', ?, 'DoorDrop Express')`,
+           VALUES (?, ?, ?, 'usr_guest_omnichannel', ?, ?, ?, ?, ?, 'pending_payment', 'online_checkout', ?, ?)`,
           [
             orderId,
             orderNumber,
@@ -349,11 +621,16 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
             Math.round(productTotal * 100),
             Math.round(shippingRate * 100),
             Math.round(totalAmount * 100),
-            buyerAddressJson
+            productCurrency,
+            buyerAddressJson,
+            shippingOffer.service || shippingOffer.carrier || shippingOffer.provider || 'Servicio de transporte'
           ]
         );
 
-        const checkoutUrl = `https://doordrop.lat/marketplace/order/${orderId}/checkout`;
+        // The marketplace listing is the real authenticated checkout entry
+        // point. Do not return the former non-existent order checkout route.
+        const appUrl = String(process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '');
+        const checkoutUrl = `${appUrl}/marketplace/listing/${encodeURIComponent(String(prod.slug || prod.id))}`;
 
         return {
           success: true,
@@ -363,11 +640,13 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
           quantity,
           product_price: unitPrice,
           shipping_rate: shippingRate,
-          free_shipping: shippingRate === 0,
+          free_shipping: freeShippingApplies,
+          shipping_provider: shippingOffer.provider,
+          shipping_service: shippingOffer.service,
           total_amount: totalAmount,
-          currency: 'EUR',
+          currency: productCurrency,
           checkout_url: checkoutUrl,
-          message: `Ordine #${orderNumber} pronto! Prodotto: ${prod.title}. Totale: €${totalAmount} EUR (${shippingRate === 0 ? 'Spedizione Gratuita!' : `Spedizione €${shippingRate}`}). Link pagamento sicuro: ${checkoutUrl}`
+          message: `Pedido #${orderNumber} preparado. Producto: ${prod.title}. Total: ${totalAmount.toFixed(2)} ${productCurrency} (${freeShippingApplies ? 'envío gratuito' : `transporte ${shippingRate.toFixed(2)} ${productCurrency}`}). Enlace de pago: ${checkoutUrl}`
         };
       }
 
@@ -394,7 +673,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
             tracking_pending: true,
             order_number: o.order_number,
             status: o.status || 'pending_payment',
-            service: o.shipping_service_name || 'DoorDrop Express',
+            service: o.shipping_service_name || null,
             message: 'El pedido existe, pero todavía no tiene una guía real asignada por el transportista.'
           };
         }
@@ -403,7 +682,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
           found: true,
           order_number: o.order_number,
           tracking_code: tracking,
-          service: o.shipping_service_name || 'DoorDrop Express',
+          service: o.shipping_service_name || null,
           tracking_url: `https://doordrop.lat/tracking?code=${encodeURIComponent(tracking)}`,
           status: o.status || 'in_transit'
         };
@@ -415,10 +694,13 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
           [sellerUserId]
         );
         const s = settings[0] || {};
+        const merchant = await getMerchantContext(sellerUserId);
         return {
-          min_order_amount: Number(s.min_order_amount || 0),
-          free_shipping_threshold: Number(s.free_shipping_threshold || 50.0),
-          contract_conditions: s.sales_contract_text || 'Spedizioni espresse 24/48 ore con DoorDrop. Resi garantiti entro 14 giorni.'
+          min_order_amount: s.min_order_amount === null || s.min_order_amount === undefined ? null : Number(s.min_order_amount),
+          free_shipping_threshold: s.free_shipping_threshold === null || s.free_shipping_threshold === undefined ? null : Number(s.free_shipping_threshold),
+          currency: merchant?.currency || null,
+          contract_conditions: s.sales_contract_text || null,
+          source: 'Configuración comercial real del negocio; no se aplican políticas por defecto.'
         };
       }
 

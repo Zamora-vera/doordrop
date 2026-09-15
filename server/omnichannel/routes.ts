@@ -707,7 +707,7 @@ export function setupOmnichannelRoutes(app: any, options: {
         [userId]
       );
       const userBalance = Number(userRows[0]?.balance || 0);
-      const userCountry = userRows[0]?.country || 'IT';
+      const userCountry = String(userRows[0]?.country || '').toUpperCase();
       const peakActive = isPeakHour(userCountry);
       const isCreditBlocked = userBalance < -1.00;
 
@@ -724,7 +724,7 @@ export function setupOmnichannelRoutes(app: any, options: {
           ai_employee: aiSettings[0] || null,
           wallet: {
             balance: userBalance,
-            currency: userRows[0]?.currency || 'EUR',
+            currency: userRows[0]?.currency || null,
             is_blocked: isCreditBlocked,
             limit: -1.00
           },
@@ -1324,23 +1324,28 @@ export function setupOmnichannelRoutes(app: any, options: {
 
       let settings = rows[0];
       if (!settings) {
+        const [profileRows]: any = await pool.query(
+          "SELECT name, country, currency, business_type FROM users WHERE id = ? LIMIT 1",
+          [userId]
+        );
+        const profile = profileRows[0] || {};
         const defaultSettings = {
           user_id: userId,
-          agent_name: 'DoorDrop AI Employee',
+          agent_name: 'Asistente de ventas del negocio',
           tone: 'friendly_professional',
-          language: 'it',
-          system_prompt: 'Sei il consulente virtuale DoorDrop dedicato a questo negozio. Rispondi con cortesia, precisione e rapidità ai clienti.',
-          business_info: 'Negozio online con spedizioni tracciate e garantite DoorDrop.',
-          faqs_json: JSON.stringify([
-            { q: 'Quali sono i tempi di spedizione?', a: 'Spediamo in 24/48 ore lavorative in tutta Italia con corriere espresso tracciato.' },
-            { q: 'Come posso tracciare il mio pacco?', a: 'Puoi comunicarci il numero d\'ordine o codice di tracciamento e controllerò immediatamente lo stato.' }
-          ]),
-          website_url: 'https://doordrop.lat',
+          language: 'auto',
+          system_prompt: 'Responde en el idioma del cliente y utiliza únicamente el catálogo, las políticas, la moneda y los datos reales configurados por este negocio.',
+          business_info: '',
+          faqs_json: JSON.stringify([]),
+          website_url: '',
           can_lookup_orders: 1,
           can_lookup_tracking: 1,
           can_quote_shipping: 1,
           can_search_products: 1,
-          can_handoff_human: 1
+          can_handoff_human: 1,
+          merchant_country: profile.country || null,
+          merchant_currency: profile.currency || null,
+          business_type: profile.business_type || null
         };
 
         const [insertRes]: any = await pool.query(
@@ -1428,7 +1433,7 @@ export function setupOmnichannelRoutes(app: any, options: {
           userId,
           agent_name || 'DoorDrop AI Employee',
           tone || 'friendly_professional',
-          language || 'it',
+          language || 'auto',
           system_prompt || '',
           business_info || '',
           faqsJson,
