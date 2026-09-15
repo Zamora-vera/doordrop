@@ -630,7 +630,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
         // The marketplace listing is the real authenticated checkout entry
         // point. Do not return the former non-existent order checkout route.
         const appUrl = String(process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '');
-        const checkoutUrl = `${appUrl}/marketplace/listing/${encodeURIComponent(String(prod.slug || prod.id))}`;
+        const checkoutUrl = `${appUrl}/marketplace/producto/${encodeURIComponent(String(prod.slug || prod.id))}`;
 
         return {
           success: true,

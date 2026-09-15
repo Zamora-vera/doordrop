@@ -624,7 +624,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
 
   const handleSendProduct = async (item: any) => {
     if (!selectedConv) return;
-    const productUrl = `https://doordrop.lat/marketplace/listing/${item.slug || item.id}`;
+    const productUrl = `https://doordrop.lat/marketplace/producto/${item.slug || item.id}`;
     const text = `🛍️ *${item.title}*\n💰 Precio: ${item.price} ${item.currency}\n📦 Envío Express disponible por DoorDrop\n🔗 Ver producto y comprar: ${productUrl}`;
     setShowCatalogModal(false);
     try {
@@ -639,7 +639,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
 
   const handleSendCheckout = async (item: any) => {
     if (!selectedConv) return;
-    const checkoutUrl = `https://doordrop.lat/marketplace/listing/${item.slug || item.id}`;
+    const checkoutUrl = `https://doordrop.lat/marketplace/producto/${item.slug || item.id}`;
     const text = `💳 *Orden de Pago Seguro DoorDrop SafePay*\n📦 Producto: ${item.title}\n💵 Total a pagar: ${item.price} ${item.currency}\n🔒 Transacción protegida con garantía SafePay DoorDrop.\n👉 Pagar ahora: ${checkoutUrl}`;
     setShowCatalogModal(false);
     try {
@@ -1416,7 +1416,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                           )}
 
                           {/* Interactive SafePay Product Card if message contains listing link */}
-                          {(message.text_content || '').includes('marketplace/listing') && (
+                          {(message.text_content || '').includes('marketplace/producto') && (
                             <div className="mt-2.5 p-3 rounded-2xl bg-black/10 dark:bg-white/5 border border-white/15 backdrop-blur-xs space-y-2 text-left">
                               <div className="flex items-center justify-between text-[11px] font-bold">
                                 <span className="flex items-center space-x-1 text-emerald-300">
@@ -1429,7 +1429,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                                 Transacción protegida con entrega asegurada o reembolso completo.
                               </p>
                               {(() => {
-                                const match = (message.text_content || '').match(/https?:\/\/[^\s]+\/marketplace\/listing\/[a-zA-Z0-9_-]+/);
+                                const match = (message.text_content || '').match(/https?:\/\/[^\s]+\/marketplace\/producto\/[a-zA-Z0-9_-]+/);
                                 const url = match ? match[0] : '#';
                                 return (
                                   <a
