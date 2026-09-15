@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useI18n } from '../lib/i18n';
 import { api } from '../lib/api';
+import { getSupportWhatsAppUrl, SUPPORT_WHATSAPP_NUMBER } from '../lib/supportContact';
 import {
   ArrowLeft,
   CheckCircle,
@@ -19,12 +20,12 @@ import {
   User
 } from 'lucide-react';
 
-const supportChannels = [
+const supportChannels = (language: string) => [
   {
     id: 'whatsapp',
     titleKey: 'tickets.channels.whatsapp.title',
-    subtitleKey: 'tickets.channels.whatsapp.subtitle',
-    href: 'https://wa.me/13402000271',
+    subtitle: SUPPORT_WHATSAPP_NUMBER,
+    href: getSupportWhatsAppUrl(language),
     icon: MessageCircle,
     cardClass: 'from-emerald-500 to-green-600 shadow-emerald-500/20'
   }
@@ -256,7 +257,7 @@ export function CustomerTickets() {
         </div>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {supportChannels.map((channel) => {
+          {supportChannels(language).map((channel) => {
             const Icon = channel.icon;
             return (
               <a
@@ -273,7 +274,7 @@ export function CustomerTickets() {
                   </span>
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-black text-slate-900 dark:text-white">{t(channel.titleKey)}</span>
-                    <span className="mt-0.5 block truncate text-xs font-semibold text-slate-500 dark:text-slate-400">{t(channel.subtitleKey)}</span>
+                    <span className="mt-0.5 block truncate text-xs font-semibold text-slate-500 dark:text-slate-400">{channel.subtitle}</span>
                   </span>
                 </span>
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-blue-600 shadow-sm transition-colors group-hover:bg-blue-600 group-hover:text-white dark:bg-slate-950 dark:text-cyan-300 dark:group-hover:bg-cyan-300 dark:group-hover:text-slate-950">

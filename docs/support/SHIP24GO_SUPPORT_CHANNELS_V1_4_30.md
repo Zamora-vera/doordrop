@@ -10,7 +10,7 @@ Ruta:
 
 ## Canales visibles
 
-- WhatsApp: +1 340 200 0271
+- WhatsApp: +39 352 076 4335
 - Facebook Global: https://www.facebook.com/ship24go/
 - Facebook Italia: https://www.facebook.com/ship4goitaly/
 - Facebook Estados Unidos: https://www.facebook.com/ship24gous

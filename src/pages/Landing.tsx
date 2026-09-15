@@ -11,11 +11,13 @@ import { BrandMark, useBrand } from '../lib/brand';
 import { useCurrency } from '../lib/currency';
 import { CarrierLogo, resolveCarrierName } from '../lib/carrierBrand';
 import { saveGuestQuoteSession } from '../lib/guestQuoteSession';
+import { getSupportWhatsAppUrl } from '../lib/supportContact';
 
 export const Landing = () => {
   const { t, language, setLanguage } = useI18n();
   const navigate = useNavigate();
   const { brand } = useBrand();
+  const supportWhatsAppHref = getSupportWhatsAppUrl(language);
   
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   
@@ -185,7 +187,7 @@ export const Landing = () => {
             <Link to="/marketplace" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors font-bold text-blue-600 dark:text-neon-cyan">Marketplace</Link>
             <Link to="/tracking" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_tracking') || 'Seguimiento'}</Link>
             <a href="#" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_companies') || 'Empresas'}</a>
-            <a href="#" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_support') || 'Soporte'}</a>
+            <a href={supportWhatsAppHref} target="_blank" rel="noreferrer" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_support') || 'Soporte'}</a>
           </nav>
 
           <div className="flex items-center gap-4">
@@ -669,7 +671,7 @@ export const Landing = () => {
                 <li><a href="#" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('footer_about') || 'Sobre Nosotros'}</a></li>
                 <li><a href="#" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('footer_careers') || 'Carreras'}</a></li>
                 <li><a href="#" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('footer_blog') || 'Blog'}</a></li>
-                <li><a href="#" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('footer_contact') || 'Contacto'}</a></li>
+                <li><a href={supportWhatsAppHref} target="_blank" rel="noreferrer" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('footer_contact') || 'Contacto'}</a></li>
               </ul>
             </div>
 

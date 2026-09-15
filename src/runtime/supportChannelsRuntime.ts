@@ -1,4 +1,6 @@
-type Lang = 'es' | 'en' | 'it' | 'fr' | 'de' | 'zh';
+import { normalizeSupportLanguage, SUPPORT_WHATSAPP_NUMBER, getSupportWhatsAppUrl } from '../lib/supportContact';
+
+type Lang = 'es' | 'en' | 'it' | 'fr';
 
 const getLang = (): Lang => {
   const raw = String(
@@ -12,9 +14,7 @@ const getLang = (): Lang => {
   if (raw.startsWith('en')) return 'en';
   if (raw.startsWith('it')) return 'it';
   if (raw.startsWith('fr')) return 'fr';
-  if (raw.startsWith('de')) return 'de';
-  if (raw.startsWith('zh')) return 'zh';
-  return 'es';
+  return normalizeSupportLanguage(raw);
 };
 
 const labels: Record<Lang, any> = {
@@ -65,30 +65,6 @@ const labels: Record<Lang, any> = {
     instagram: 'Instagram officiel',
     open: 'Ouvrir',
     whatsappText: 'Bonjour DoorDrop, j’ai besoin d’aide avec un envoi.'
-  },
-  de: {
-    title: 'Offizielle Support-Kanäle',
-    desc: 'Du kannst uns auch per WhatsApp oder über die offiziellen sozialen Kanäle deines Landes kontaktieren.',
-    whatsapp: 'WhatsApp-Support',
-    global: 'Globales Facebook',
-    italy: 'Facebook Italien',
-    usa: 'Facebook USA',
-    spain: 'Facebook Spanien',
-    instagram: 'Offizielles Instagram',
-    open: 'Öffnen',
-    whatsappText: 'Hallo DoorDrop, ich brauche Hilfe mit einer Sendung.'
-  },
-  zh: {
-    title: '官方支持渠道',
-    desc: '你也可以通过 WhatsApp 或所在国家的官方社交渠道联系我们。',
-    whatsapp: 'WhatsApp 支持',
-    global: '全球 Facebook',
-    italy: '意大利 Facebook',
-    usa: '美国 Facebook',
-    spain: '西班牙 Facebook',
-    instagram: '官方 Instagram',
-    open: '打开',
-    whatsappText: '你好 DoorDrop，我需要运单帮助。'
   }
 };
 
@@ -96,8 +72,8 @@ const channels = (l: any) => [
   {
     icon: '💬',
     title: l.whatsapp,
-    subtitle: '+1 340 200 0271',
-    href: 'https://wa.me/13402000271?text=' + encodeURIComponent(l.whatsappText),
+    subtitle: SUPPORT_WHATSAPP_NUMBER,
+    href: getSupportWhatsAppUrl(getLang()),
     className: 'from-emerald-500 to-green-600'
   }
 ];

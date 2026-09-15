@@ -16,7 +16,7 @@ The existing Ship24Go panel shell remains unchanged. The customer sidebar, heade
 - Dark mode compatible styling.
 - Professional empty state when the customer has no tickets.
 - Official support channel cards:
-  - WhatsApp Customer Service: `+1 340 200 0271`
+  - WhatsApp Customer Service: `+39 352 076 4335`
   - Facebook Global
   - Facebook Italy
   - Facebook United States
