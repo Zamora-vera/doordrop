@@ -162,7 +162,7 @@ const copy: Record<MarketingLanguage, {
     faqTitle: 'Todo claro antes de comenzar',
     faq: [
       { question: '¿Tengo que contratar todos los canales?', answer: 'No. Puedes empezar con el plan que mejor encaje con tu operación y ampliar canales más adelante desde el panel.' },
-      { question: '¿La página permite pagar directamente?', answer: 'La página muestra el catálogo real. Para contratar, primero debes crear una cuenta o iniciar sesión; después el checkout recurrente se completa de forma segura con Polar.' },
+      { question: '¿La página permite pagar directamente?', answer: 'La página muestra el catálogo real. Para contratar, primero debes crear una cuenta o iniciar sesión; después completarás la suscripción de forma segura.' },
       { question: '¿El AI reemplaza a mi equipo?', answer: 'No. El AI acelera las respuestas y puede transferir la conversación a un agente humano con el contexto completo.' },
       { question: '¿Puedo conectarlo con mis productos y envíos?', answer: 'Sí. El flujo omnicanal está diseñado para trabajar con el Marketplace, las cotizaciones y las operaciones de envío de DoorDrop.' },
     ],
@@ -228,7 +228,7 @@ const copy: Record<MarketingLanguage, {
     faqTitle: 'Tutto chiaro prima di iniziare',
     faq: [
       { question: 'Devo attivare tutti i canali?', answer: 'No. Inizia con il piano più adatto alla tua attività e aggiungi altri canali dal pannello quando ne avrai bisogno.' },
-      { question: 'Posso pagare direttamente da questa pagina?', answer: 'Qui mostriamo il catalogo reale. Per acquistare devi creare un account o accedere; il checkout ricorrente viene completato in sicurezza con Polar.' },
+      { question: 'Posso pagare direttamente da questa pagina?', answer: 'Qui mostriamo il catalogo reale. Per acquistare devi creare un account o accedere; l’abbonamento viene completato in sicurezza.' },
       { question: 'L’AI sostituisce il mio team?', answer: 'No. L’AI accelera le risposte e può trasferire la conversazione a un operatore umano con tutto il contesto.' },
       { question: 'Posso collegarlo a prodotti e spedizioni?', answer: 'Sì. Il flusso omnicanale è pensato per lavorare con Marketplace, preventivi e spedizioni DoorDrop.' },
     ],
@@ -294,7 +294,7 @@ const copy: Record<MarketingLanguage, {
     faqTitle: 'Everything clear before you start',
     faq: [
       { question: 'Do I need to activate every channel?', answer: 'No. Start with the plan that fits your operation and add more channels later from the panel.' },
-      { question: 'Can I pay directly from this page?', answer: 'This page shows the real catalog. To subscribe, create an account or sign in; the recurring checkout is then completed securely with Polar.' },
+      { question: 'Can I pay directly from this page?', answer: 'This page shows the real catalog. To subscribe, create an account or sign in; the subscription is then completed securely.' },
       { question: 'Does AI replace my team?', answer: 'No. AI speeds up replies and can hand the conversation to a human agent with the full context.' },
       { question: 'Can I connect it to products and shipments?', answer: 'Yes. The omnichannel flow is designed to work with the DoorDrop Marketplace, quotes and shipping operations.' },
     ],
@@ -360,7 +360,7 @@ const copy: Record<MarketingLanguage, {
     faqTitle: 'Tout comprendre avant de commencer',
     faq: [
       { question: 'Dois-je activer tous les canaux ?', answer: 'Non. Commencez avec l’offre adaptée à votre activité et ajoutez d’autres canaux depuis le panneau lorsque vous en avez besoin.' },
-      { question: 'Puis-je payer directement depuis cette page ?', answer: 'Cette page affiche le catalogue réel. Pour souscrire, créez un compte ou connectez-vous ; le paiement récurrent est ensuite finalisé en toute sécurité avec Polar.' },
+      { question: 'Puis-je payer directement depuis cette page ?', answer: 'Cette page affiche le catalogue réel. Pour souscrire, créez un compte ou connectez-vous ; l’abonnement est ensuite finalisé en toute sécurité.' },
       { question: 'L’IA remplace-t-elle mon équipe ?', answer: 'Non. L’IA accélère les réponses et peut transférer la conversation à un agent humain avec tout le contexte.' },
       { question: 'Puis-je le relier aux produits et aux expéditions ?', answer: 'Oui. Le parcours omnicanal est conçu pour fonctionner avec le Marketplace, les devis et les opérations d’expédition DoorDrop.' },
     ],
