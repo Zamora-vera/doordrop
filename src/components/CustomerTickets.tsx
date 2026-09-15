@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useI18n } from '../lib/i18n';
 import { api } from '../lib/api';
-import { getSupportWhatsAppUrl, SUPPORT_WHATSAPP_NUMBER } from '../lib/supportContact';
+import {
+  getSupportWhatsAppUrl,
+  SUPPORT_FACEBOOK_URL,
+  SUPPORT_WHATSAPP_NUMBER
+} from '../lib/supportContact';
 import {
   ArrowLeft,
   CheckCircle,
   ChevronRight,
   Clock,
   ExternalLink,
+  Globe2,
   HelpCircle,
   Inbox,
   LifeBuoy,
@@ -28,6 +33,14 @@ const supportChannels = (language: string) => [
     href: getSupportWhatsAppUrl(language),
     icon: MessageCircle,
     cardClass: 'from-emerald-500 to-green-600 shadow-emerald-500/20'
+  },
+  {
+    id: 'facebook',
+    titleKey: 'tickets.channels.facebook_global.title',
+    subtitle: 'facebook.com/profile.php?id=61594130048080',
+    href: SUPPORT_FACEBOOK_URL,
+    icon: Globe2,
+    cardClass: 'from-blue-600 to-indigo-600 shadow-blue-500/20'
   }
 ];
 

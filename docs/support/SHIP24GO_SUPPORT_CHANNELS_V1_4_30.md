@@ -11,6 +11,7 @@ Ruta:
 ## Canales visibles
 
 - WhatsApp: +39 352 076 4335
+- Facebook oficial: https://www.facebook.com/profile.php?id=61594130048080
 - Facebook Global: https://www.facebook.com/ship24go/
 - Facebook Italia: https://www.facebook.com/ship4goitaly/
 - Facebook Estados Unidos: https://www.facebook.com/ship24gous

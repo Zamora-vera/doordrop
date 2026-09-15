@@ -3,6 +3,7 @@ export type SupportLanguage = 'es' | 'it' | 'en' | 'fr';
 /** Official DoorDrop assistance number in display and WhatsApp formats. */
 export const SUPPORT_WHATSAPP_NUMBER = '+39 352 076 4335';
 export const SUPPORT_WHATSAPP_E164 = '393520764335';
+export const SUPPORT_FACEBOOK_URL = 'https://www.facebook.com/profile.php?id=61594130048080';
 
 const SUPPORT_WHATSAPP_MESSAGES: Record<SupportLanguage, string> = {
   es: 'Hola DoorDrop, necesito asistencia.',
@@ -22,4 +23,3 @@ export const getSupportWhatsAppMessage = (language: string | null | undefined): 
 
 export const getSupportWhatsAppUrl = (language: string | null | undefined): string =>
   `https://wa.me/${SUPPORT_WHATSAPP_E164}?text=${encodeURIComponent(getSupportWhatsAppMessage(language))}`;
-
