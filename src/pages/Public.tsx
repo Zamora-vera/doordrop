@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { LanguageSelector } from '../components/LanguageSelector';
 import { Landing } from './Landing';
+import OmnichannelSales from './OmnichannelSales';
 import { BrandMark, useBrand } from '../lib/brand';
 
 const Navbar = () => {
@@ -193,6 +194,7 @@ export default function PublicPages() {
     <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/tracking" element={<Tracking />} />
+      <Route path="/omnichannel" element={<OmnichannelSales />} />
     </Routes>
   );
 }

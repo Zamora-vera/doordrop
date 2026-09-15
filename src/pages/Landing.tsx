@@ -183,10 +183,10 @@ export const Landing = () => {
 
           {/* Nav Desktop */}
           <nav className="hidden md:flex space-x-8 font-medium text-sm text-gray-600 dark:text-gray-300">
-            <a href="#" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_services') || 'Servicios'}</a>
+            <Link to="/omnichannel" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_services') || 'Servicios'}</Link>
             <Link to="/marketplace" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors font-bold text-blue-600 dark:text-neon-cyan">Marketplace</Link>
             <Link to="/tracking" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_tracking') || 'Seguimiento'}</Link>
-            <a href="#" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_companies') || 'Empresas'}</a>
+            <Link to="/omnichannel#plans" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_companies') || 'Empresas'}</Link>
             <a href={supportWhatsAppHref} target="_blank" rel="noreferrer" className="hover:text-blue-600 dark:hover:text-neon-cyan transition-colors">{t('nav_support') || 'Soporte'}</a>
           </nav>
 

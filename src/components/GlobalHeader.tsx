@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Store,
   Truck,
@@ -32,7 +32,10 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   const { t, language } = useI18n();
   const { brand } = useBrand();
   const navigate = useNavigate();
+  const location = useLocation();
   const isLoggedIn = Boolean(getAuthToken());
+  const isMarketplaceRoute = location.pathname.startsWith('/marketplace');
+  const isOmnichannelRoute = location.pathname.startsWith('/omnichannel');
   const [searchValue, setSearchValue] = useState(initialSearch);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -80,9 +83,12 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
             <Link to="/tracking" className="px-3 py-1.5 rounded-lg hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
               {t('header_tracking') || 'Tracciamento'}
             </Link>
-            <Link to="/marketplace" className="px-3 py-1.5 rounded-lg text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-black flex items-center gap-1.5 shadow-sm">
+            <Link to="/marketplace" className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors ${isMarketplaceRoute ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-black shadow-sm' : 'hover:text-blue-600 dark:hover:text-blue-400'}`}>
               <Store className="w-3.5 h-3.5" />
               <span>{t('header_marketplace') || 'Marketplace'}</span>
+            </Link>
+            <Link to="/omnichannel" className={`px-3 py-1.5 rounded-lg transition-colors ${isOmnichannelRoute ? 'text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-950/50 font-black' : 'hover:text-blue-600 dark:hover:text-blue-400'}`}>
+              {language === 'it' ? 'Omnicanale' : language === 'fr' ? 'Omnicanal' : language === 'en' ? 'Omnichannel' : 'Omnicanal'}
             </Link>
           </div>
         </div>
@@ -187,6 +193,14 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
             >
               <Package className="w-4 h-4 text-indigo-600" />
               <span>{t('header_tracking') || 'Tracciamento'}</span>
+            </Link>
+            <Link
+              to="/omnichannel"
+              onClick={() => setMobileMenuOpen(false)}
+              className="p-3 rounded-xl bg-cyan-50 dark:bg-cyan-950/50 text-cyan-700 dark:text-cyan-300 flex items-center gap-2"
+            >
+              <Sparkles className="w-4 h-4 text-cyan-600" />
+              <span>{language === 'it' ? 'Omnicanale + AI' : language === 'fr' ? 'Omnicanal + IA' : language === 'en' ? 'Omnichannel + AI' : 'Omnicanal + AI'}</span>
             </Link>
             <Link
               to="/panel/marketplace"

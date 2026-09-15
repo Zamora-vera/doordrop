@@ -111,6 +111,7 @@ export const GlobalFooter: React.FC = () => {
               <li><Link to="/tracking" className="hover:text-blue-600">{language === 'it' ? 'Traccia Pacco' : 'Seguimiento de Envíos'}</Link></li>
               <li><Link to="/panel/shipments" className="hover:text-blue-600">{language === 'it' ? 'Storico Spedizioni' : 'Historial de Envíos'}</Link></li>
               <li><Link to="/panel/stores" className="hover:text-blue-600">{language === 'it' ? 'Integrazione E-commerce' : 'Integración E-commerce'}</Link></li>
+              <li><Link to="/omnichannel" className="hover:text-blue-600">{language === 'it' ? 'Omnicanale + AI' : language === 'fr' ? 'Omnicanal + IA' : language === 'en' ? 'Omnichannel + AI' : 'Omnicanal + AI'}</Link></li>
             </ul>
           </div>
 
