@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Package,
   Layers,
+  MessageCircle,
   Sparkles,
   Menu,
   X
@@ -39,8 +40,13 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   const [searchValue, setSearchValue] = useState(initialSearch);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Dynamic welcome translation according to current detected language (IP / Choice)
-  const welcomeText = t('welcome_user') || (language === 'it' ? 'Benvenuto su DoorDrop' : 'Bienvenido a DoorDrop');
+  const headerLanguage = language.startsWith('it') ? 'it' : language.startsWith('en') ? 'en' : language.startsWith('fr') ? 'fr' : 'es';
+  const omnichannelAnnouncement = {
+    es: { badge: 'NUEVO', label: 'Omnicanal + AI', text: 'WhatsApp, Instagram, Facebook y Telegram en un solo lugar.', cta: 'Descubrir' },
+    it: { badge: 'NOVITÀ', label: 'Omnicanale + AI', text: 'WhatsApp, Instagram, Facebook e Telegram in un unico spazio.', cta: 'Scopri' },
+    en: { badge: 'NEW', label: 'Omnichannel + AI', text: 'WhatsApp, Instagram, Facebook and Telegram in one place.', cta: 'Discover' },
+    fr: { badge: 'NOUVEAU', label: 'Omnicanal + IA', text: 'WhatsApp, Instagram, Facebook et Telegram au même endroit.', cta: 'Découvrir' }
+  }[headerLanguage];
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,15 +59,21 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
 
   return (
     <header className="sticky top-0 z-50 bg-white/95 dark:bg-dark-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800">
-      {/* Top micro announcement bar */}
-      <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-blue-900 text-white text-[11px] py-1.5 px-4 font-bold flex items-center justify-between">
+      {/* Animated omnichannel announcement */}
+      <div className="bg-gradient-to-r from-slate-950 via-blue-900 to-cyan-800 text-white text-[11px] px-4 font-bold">
         <div className="max-w-7xl mx-auto w-full flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="bg-amber-400 text-slate-900 px-1.5 py-0.2 rounded text-[9px] uppercase font-black">
-              {language === 'it' ? 'Novità' : 'Nuevo'}
+          <Link to="/omnichannel" className="group flex min-h-11 min-w-0 items-center gap-2.5 py-1.5 hover:text-cyan-100" aria-label={`${omnichannelAnnouncement.label}: ${omnichannelAnnouncement.cta}`}>
+            <span className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/20 transition-transform duration-300 group-hover:scale-110">
+              <MessageCircle className="h-4 w-4 text-cyan-200" aria-hidden="true" />
+              <Sparkles className="absolute -right-1 -top-1 h-3.5 w-3.5 animate-pulse text-amber-300" aria-hidden="true" />
             </span>
-            <span>{welcomeText} — {t('marketplace_single_account_tip') || 'Un solo account per acquistare, vendere e gestire le tue spedizioni.'}</span>
-          </div>
+            <span className="shrink-0 rounded-full bg-gradient-to-r from-amber-300 to-yellow-400 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-slate-950 shadow-sm shadow-amber-400/30 animate-pulse">
+              {omnichannelAnnouncement.badge}
+            </span>
+            <span className="truncate text-[11px] font-black sm:text-xs">{omnichannelAnnouncement.label}</span>
+            <span className="hidden truncate font-semibold text-blue-100 md:inline">— {omnichannelAnnouncement.text}</span>
+            <span className="ml-auto hidden shrink-0 items-center gap-1 rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-black text-white transition-colors group-hover:bg-white/20 sm:inline-flex">{omnichannelAnnouncement.cta} <span aria-hidden="true">→</span></span>
+          </Link>
           <div className="hidden md:flex items-center gap-4 text-[10px] text-blue-200">
             <span className="flex items-center gap-1"><ShieldCheck className="w-3 h-3 text-emerald-400" /> {t('marketplace_buyer_protection') || 'Protezione acquirente'}</span>
             <span className="flex items-center gap-1"><Truck className="w-3 h-3 text-blue-300" /> Corrieri Express 24-48h</span>
@@ -87,8 +99,10 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
               <Store className="w-3.5 h-3.5" />
               <span>{t('header_marketplace') || 'Marketplace'}</span>
             </Link>
-            <Link to="/omnichannel" className={`px-3 py-1.5 rounded-lg transition-colors ${isOmnichannelRoute ? 'text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-950/50 font-black' : 'hover:text-blue-600 dark:hover:text-blue-400'}`}>
-              {language === 'it' ? 'Omnicanale' : language === 'fr' ? 'Omnicanal' : language === 'en' ? 'Omnichannel' : 'Omnicanal'}
+            <Link to="/omnichannel" className={`group relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors ${isOmnichannelRoute ? 'text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-950/50 font-black' : 'hover:text-blue-600 dark:hover:text-blue-400'}`}>
+              <Sparkles className="h-3.5 w-3.5 text-cyan-500 transition-transform group-hover:rotate-12" aria-hidden="true" />
+              <span>{omnichannelAnnouncement.label.replace(' + AI', '').replace(' + IA', '')}</span>
+              <span className="rounded-full bg-cyan-100 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-cyan-700 dark:bg-cyan-950/70 dark:text-cyan-300 animate-pulse">{omnichannelAnnouncement.badge}</span>
             </Link>
           </div>
         </div>
