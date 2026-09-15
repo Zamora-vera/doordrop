@@ -20,7 +20,10 @@ async function request(endpoint: string, options: RequestInit = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(data.error || data.message || 'Error en la solicitud.');
+    const error: any = new Error(data.error || data.message || 'Error en la solicitud.');
+    error.code = data.code;
+    error.readiness = data.readiness;
+    throw error;
   }
   return data;
 }
@@ -28,6 +31,7 @@ async function request(endpoint: string, options: RequestInit = {}) {
 export const omnichannelApi = {
   // Client Dashboard & Channels
   getDashboard: () => request('/omnichannel/dashboard'),
+  getReadiness: () => request('/omnichannel/readiness'),
   getChannels: () => request('/omnichannel/channels'),
   getConnectUrl: (platform: string) => request('/omnichannel/channels/connect-url', {
     method: 'POST',

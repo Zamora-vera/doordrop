@@ -407,7 +407,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
   const [aiSettings, setAiSettings] = useState<any>({
     agent_name: 'DoorDrop Sales Consultant',
     tone: 'friendly_professional',
-    language: lang,
+    language: 'auto',
     system_prompt: '',
     business_info: '',
     faqs: [],
@@ -421,10 +421,10 @@ export function OmnichannelApp({ profile }: { profile: any }) {
     can_create_orders: true,
     can_generate_tracking: true,
     min_order_amount: '0.00',
-    free_shipping_threshold: '50.00',
-    sales_contract_text: 'Spedizioni espresse 24/48h tracciate con corriere DoorDrop. Spedizione gratuita per ordini superiori a 50€. Reso e sostituzione taglia garantiti entro 14 giorni dalla ricezione del pacco.',
+    free_shipping_threshold: '0.00',
+    sales_contract_text: '',
     response_delay_seconds: 3,
-    personality_instructions: 'Sii sempre accogliente, cordiale ed empatico. Guida il cliente nella scelta della taglia corretta, proponi abbinamenti eleganti e concludi la vendita fornendo risposte chiare e trasparenti.',
+    personality_instructions: 'Sii chiaro, breve, empatico e orientato ad aiutare. Usa solo dati reali configurati dal negozio.',
     auto_learn_conversations: true
   });
   const [faqQ, setFaqQ] = useState('');
@@ -435,6 +435,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const prevMsgCountRef = useRef<number>(0);
   const [toolTestResult, setToolTestResult] = useState<any>(null);
+  const [aiReadiness, setAiReadiness] = useState<any>(null);
 
   // Comments State
   const [comments, setComments] = useState<any[]>([]);
@@ -457,6 +458,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
     try {
       const res = await omnichannelApi.getDashboard();
       setData(res);
+      setAiReadiness(res.metrics?.ai_readiness || null);
     } catch (err: any) {
       setError(err.message || 'Error al obtener datos del panel Omnicanal.');
     } finally {
@@ -676,7 +678,10 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       setSelectedConv({ ...selectedConv, ai_active: nextVal ? 1 : 0 });
       setConversations(conversations.map(c => c.id === selectedConv.id ? { ...c, ai_active: nextVal ? 1 : 0 } : c));
     } catch (e: any) {
-      alert('Error cambiando estado de AI');
+      const blockers = Array.isArray(e.readiness?.blockers)
+        ? e.readiness.blockers.map((item: any) => `• ${item.message}`).join('\n')
+        : '';
+      alert([e.message || 'Error cambiando estado de AI', blockers].filter(Boolean).join('\n'));
     }
   };
 
@@ -724,6 +729,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
           personality_instructions: res.ai_settings.personality_instructions || '',
           auto_learn_conversations: res.ai_settings.auto_learn_conversations !== 0
         });
+        setAiReadiness(res.readiness || null);
       }
     } catch (e) {
       console.error(e);
@@ -764,7 +770,8 @@ export function OmnichannelApp({ profile }: { profile: any }) {
   const handleSaveAi = async () => {
     setSavingAi(true);
     try {
-      await omnichannelApi.saveAiSettings(aiSettings);
+      const saved = await omnichannelApi.saveAiSettings(aiSettings);
+      setAiReadiness(saved.readiness || aiReadiness);
       setSuccessMsg(t.savedSuccess);
       setTimeout(() => setSuccessMsg(null), 3500);
     } catch (e: any) {
@@ -2649,10 +2656,37 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                   {autofillingAi ? 'Analisi catalogo e generazione...' : '✨ Auto-completa con IA'}
                 </button>
                 <div className="hidden sm:flex items-center gap-2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 px-3.5 py-2 rounded-xl text-xs font-semibold border border-emerald-200 dark:border-emerald-800">
-                  <Sparkles className="w-4 h-4 text-emerald-500 animate-pulse" /> DeepSeek V3 Attivo
+                  <Sparkles className="w-4 h-4 text-emerald-500 animate-pulse" />
+                  {aiReadiness?.checks?.ai?.deepseekConfigured ? 'DeepSeek configurado' : 'DeepSeek pendiente'}
                 </div>
               </div>
             </div>
+
+            {aiReadiness && (
+              <div className={`rounded-xl border p-4 ${aiReadiness.ready
+                ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/60 dark:bg-emerald-950/30'
+                : 'border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/30'}`}>
+                <div className="flex items-start gap-3">
+                  <span className={`mt-1 h-2.5 w-2.5 rounded-full shrink-0 ${aiReadiness.ready ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-gray-900 dark:text-white">
+                      {aiReadiness.ready ? 'Agente listo para vender' : 'Agente bloqueado hasta completar la configuración'}
+                    </p>
+                    {aiReadiness.ready ? (
+                      <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
+                        Suscripción, canales, catálogo, transporte, origen y permisos verificados por el servidor.
+                      </p>
+                    ) : (
+                      <ul className="mt-2 space-y-1 text-xs text-amber-800 dark:text-amber-200">
+                        {(aiReadiness.blockers || []).map((item: any) => (
+                          <li key={item.code}>• {item.message} {item.action}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Profile & Tone */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

@@ -10,6 +10,7 @@ import {
   hasActiveOmnichannelSubscription,
   parseCatalogJson
 } from './entitlements';
+import { getOmnichannelReadiness } from './readiness';
 
 type NormalizedInboundMessage = {
   conversationId: string | null;
@@ -147,7 +148,7 @@ function normalizeInboundMessage(payload: any, eventId: string): NormalizedInbou
   };
 }
 
-async function persistInboundMessage(pool: any, userId: string, eventId: string, message: NormalizedInboundMessage) {
+async function persistInboundMessage(pool: any, userId: string, eventId: string, message: NormalizedInboundMessage, aiReady: boolean) {
   if (!message.conversationId) {
     throw new Error('El webhook no contiene un identificador de conversación.');
   }
@@ -166,7 +167,7 @@ async function persistInboundMessage(pool: any, userId: string, eventId: string,
       await connection.commit();
       return {
         localConversationId: Number(existingMessageRows[0].conversation_id),
-        aiActive: true,
+        aiActive: false,
         duplicate: true
       };
     }
@@ -177,14 +178,16 @@ async function persistInboundMessage(pool: any, userId: string, eventId: string,
     );
 
     let localConversationId = conversationRows[0]?.id || null;
-    const aiActive = conversationRows.length > 0 ? Number(conversationRows[0].ai_active) === 1 : true;
+    const aiActive = conversationRows.length > 0
+      ? Number(conversationRows[0].ai_active) === 1 && aiReady
+      : aiReady;
     const isNewConversation = !localConversationId;
 
     if (isNewConversation) {
       const [insertedConversation]: any = await connection.query(
         `INSERT INTO omnichannel_conversations
           (user_id, platform, account_id, zernio_conversation_id, contact_id, contact_name, contact_avatar, contact_phone, last_message, last_message_at, unread_count, ai_active, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1, 1, 'open')`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1, ?, 'open')`,
         [
           userId,
           message.platform,
@@ -194,7 +197,8 @@ async function persistInboundMessage(pool: any, userId: string, eventId: string,
           message.contactName,
           message.contactAvatar,
           message.contactPhone,
-          lastMessage
+          lastMessage,
+          aiReady ? 1 : 0
         ]
       );
       localConversationId = insertedConversation.insertId;
@@ -209,6 +213,7 @@ async function persistInboundMessage(pool: any, userId: string, eventId: string,
                 contact_name = COALESCE(NULLIF(contact_name, ''), ?),
                 contact_avatar = COALESCE(contact_avatar, ?),
                 contact_phone = COALESCE(contact_phone, ?),
+                ai_active = CASE WHEN ? = 1 THEN ai_active ELSE 0 END,
                 last_message = ?,
                 last_message_at = NOW(),
                 unread_count = unread_count + 1
@@ -220,6 +225,7 @@ async function persistInboundMessage(pool: any, userId: string, eventId: string,
           message.contactName,
           message.contactAvatar,
           message.contactPhone,
+          aiReady ? 1 : 0,
           lastMessage,
           localConversationId,
           userId
@@ -394,6 +400,19 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   }
 
+  async function ensureAIReady(userId: string, res: Response): Promise<boolean> {
+    const readiness = await getOmnichannelReadiness(userId);
+    if (!readiness.ready) {
+      res.status(409).json({
+        error: 'El agente AI no puede activarse porque faltan requisitos reales de operación.',
+        code: 'AI_NOT_READY',
+        readiness
+      });
+      return false;
+    }
+    return true;
+  }
+
   // ---------------------------------------------------------------------------
   // 1. Central Webhook (/api/webhooks/zernio)
   // ---------------------------------------------------------------------------
@@ -477,7 +496,11 @@ export function setupOmnichannelRoutes(app: any, options: {
             return res.status(202).json({ status: 'unmatched_account_ignored' });
           }
 
-          const persisted = await persistInboundMessage(pool, userId, eventId, inbound);
+          const readiness = await getOmnichannelReadiness(userId);
+          if (!readiness.ready) {
+            console.warn(`[Omnichannel Webhook] AI bloqueada para ${userId}: ${readiness.blockers.map(item => item.code).join(',')}`);
+          }
+          const persisted = await persistInboundMessage(pool, userId, eventId, inbound, readiness.ready);
           const localConvId = persisted.localConversationId;
           const aiActive = persisted.aiActive;
           if (persisted.duplicate) break;
@@ -665,6 +688,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     try {
       const userId = String(req.user.id || req.user.userId);
       const subscription = await getUserOmnichannelSubscription(userId);
+      const aiReadiness = await getOmnichannelReadiness(userId);
 
       const [accounts]: any = await pool.query(
         "SELECT id, platform, account_name, username, phone_number, status, avatar_url, updated_at FROM omnichannel_accounts WHERE user_id = ? ORDER BY id DESC",
@@ -722,6 +746,7 @@ export function setupOmnichannelRoutes(app: any, options: {
           messages: msgStats[0] || { total_messages: 0, inbound_messages: 0, outbound_messages: 0 },
           comments: commentStats[0] || { total_comments: 0, pending_replies: 0 },
           ai_employee: aiSettings[0] || null,
+          ai_readiness: aiReadiness,
           wallet: {
             balance: userBalance,
             currency: userRows[0]?.currency || null,
@@ -741,6 +766,16 @@ export function setupOmnichannelRoutes(app: any, options: {
     } catch (err: any) {
       console.error('[Omnichannel] Dashboard error:', err);
       res.status(500).json({ error: 'Error al obtener datos del panel Omnicanal.' });
+    }
+  });
+
+  router.get('/readiness', authMiddleware, async (req: any, res: Response) => {
+    try {
+      const userId = String(req.user.id || req.user.userId);
+      res.json({ success: true, readiness: await getOmnichannelReadiness(userId) });
+    } catch (err: any) {
+      console.error('[Omnichannel] Readiness error:', err?.message || err);
+      res.status(503).json({ error: 'No se pudo validar la preparación del agente AI.' });
     }
   });
 
@@ -835,6 +870,7 @@ export function setupOmnichannelRoutes(app: any, options: {
   router.post('/conversations', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
+      if (!await ensureAIReady(userId, res)) return;
       const { contact_name, contact_phone, platform, initial_message } = req.body;
       const cleanPlatform = ['whatsapp', 'instagram', 'messenger', 'telegram', 'web'].includes(platform) ? platform : 'whatsapp';
       const cleanName = (contact_name || 'Cliente').trim();
@@ -1015,10 +1051,13 @@ export function setupOmnichannelRoutes(app: any, options: {
       const convId = Number(req.params.id);
       const { ai_active } = req.body;
 
-      await pool.query(
+      if (ai_active && !await ensureAIReady(userId, res)) return;
+
+      const [updateResult]: any = await pool.query(
         "UPDATE omnichannel_conversations SET ai_active = ? WHERE id = ? AND user_id = ?",
         [ai_active ? 1 : 0, convId, userId]
       );
+      if (!updateResult?.affectedRows) return res.status(404).json({ error: 'Conversación no encontrada.' });
       res.json({ success: true, ai_active: !!ai_active });
     } catch (err: any) {
       console.error('[Omnichannel] Toggle AI error:', err);
@@ -1133,6 +1172,8 @@ export function setupOmnichannelRoutes(app: any, options: {
       );
       if (!conversationRows.length) return res.status(404).json({ error: 'Conversación no encontrada.' });
       const conversation = conversationRows[0];
+
+      if (isAi && !await ensureAIReady(userId, res)) return;
 
       await pool.query(
         `UPDATE omnichannel_conversations 
@@ -1363,7 +1404,7 @@ export function setupOmnichannelRoutes(app: any, options: {
       }
 
       try { settings.faqs = JSON.parse(settings.faqs_json || '[]'); } catch { settings.faqs = []; }
-      res.json({ success: true, ai_settings: settings });
+      res.json({ success: true, ai_settings: settings, readiness: await getOmnichannelReadiness(userId) });
     } catch (err: any) {
       console.error('[Omnichannel] Get AI settings error:', err);
       res.status(500).json({ error: 'Error al consultar configuración de AI.' });
@@ -1455,7 +1496,11 @@ export function setupOmnichannelRoutes(app: any, options: {
         ]
       );
 
-      res.json({ success: true, message: 'Configuración del empleado AI guardada exitosamente.' });
+      res.json({
+        success: true,
+        message: 'Configuración del empleado AI guardada exitosamente.',
+        readiness: await getOmnichannelReadiness(userId)
+      });
     } catch (err: any) {
       console.error('[Omnichannel] Save AI settings error:', err);
       res.status(500).json({ error: 'Error al guardar configuración de AI.' });
@@ -1467,6 +1512,7 @@ export function setupOmnichannelRoutes(app: any, options: {
       const userId = String(req.user.id || req.user.userId);
       const { tool, args } = req.body;
       if (!tool) return res.status(400).json({ error: 'Herramienta requerida.' });
+      if (!await ensureAIReady(userId, res)) return;
 
       const result = await handleAIToolCall(tool, args || {}, userId);
       res.json({ success: true, tool, result });

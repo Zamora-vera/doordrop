@@ -3,6 +3,7 @@ import { pool } from '../db/connection.js';
 import { handleAIToolCall } from './ai_sales_tools.js';
 import { getUserOmnichannelSubscription, hasActiveOmnichannelSubscription } from './entitlements.js';
 import { runAgentTurn } from './agent_runtime.js';
+import { getOmnichannelReadiness } from './readiness.js';
 
 let cachedDeepseekKey = process.env.DEEPSEEK_API_KEY || '';
 let cachedMarginPercent = 10.0; // Standard resale margin
@@ -442,6 +443,11 @@ export async function generateAIEmployeeReply(
     // 1. Subscription & credit limit check. Access is granted only by Polar.
     const subscription = await getUserOmnichannelSubscription(userId);
     if (!hasActiveOmnichannelSubscription(subscription) || !subscription.ai_enabled) {
+      return null;
+    }
+    const readiness = await getOmnichannelReadiness(userId);
+    if (!readiness.ready) {
+      console.warn(`[AI Sales Agent] User ${userId} blocked by readiness: ${readiness.blockers.map(item => item.code).join(',')}`);
       return null;
     }
 

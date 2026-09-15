@@ -53,7 +53,7 @@ async function requestInternalJson(path: string, init: RequestInit = {}, timeout
   }
 }
 
-async function getMerchantContext(userId: string): Promise<MerchantContext | null> {
+export async function getMerchantContext(userId: string): Promise<MerchantContext | null> {
   const [userRows]: any = await pool.query(
     `SELECT id, name, email, country, currency, business_type
        FROM users
