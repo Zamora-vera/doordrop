@@ -916,7 +916,7 @@ const commercialFallbacks: Record<string, Partial<typeof translations.es>> = {
     days: 'Tage', chooseService: 'Service auswählen', myShipments: 'Meine Sendungen', newShipment: 'Neue Sendung',
     createFirstShipment: 'Keine Daten zum Anzeigen. Erstelle deine erste Sendung.', date: 'Datum', clients: 'Kunden', totalShipments: 'Sendungen gesamt',
     providers: 'Anbieter', reports: 'Berichte', settings: 'Einstellungen', noData: 'Derzeit keine Daten verfügbar.', language: 'Sprache',
-    tickets_support: 'Support et tickets', ai_copilot: 'KI-Assistent'
+    tickets_support: 'Support et tickets', ticket_category_ai: 'KI-Copilot-Unterstützung', ai_copilot: 'KI-Assistent'
   },
   zh: {
     home: '首页', tracking: '包裹追踪', login: '登录', register: '免费开始', heroTitle: '所有物流操作，一个平台完成。',
@@ -928,7 +928,7 @@ const commercialFallbacks: Record<string, Partial<typeof translations.es>> = {
     country: '国家', city: '城市', address: '完整地址', zip: '邮政编码', searchRates: '搜索价格', availableOptions: '可用选项',
     estimatedDelivery: '预计送达', days: '天', chooseService: '选择服务', myShipments: '我的运单', newShipment: '新运单',
     createFirstShipment: '暂无数据。创建你的第一票运单。', date: '日期', clients: '客户', totalShipments: '运单总数', providers: '供应商',
-    reports: '报表', settings: '设置', noData: '当前没有可显示的数据。', language: '语言', tickets_support: '支持工单', ai_copilot: 'AI 助手'
+    reports: '报表', settings: '设置', noData: '当前没有可显示的数据。', language: '语言', tickets_support: '支持工单', ticket_category_ai: 'AI 助手协助', ai_copilot: 'AI 助手'
   },
   ht: {
     home: 'Akèy', tracking: 'Swivi pakè', login: 'Konekte', register: 'Kòmanse gratis',
