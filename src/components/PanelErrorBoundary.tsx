@@ -25,10 +25,10 @@ export class PanelErrorBoundary extends React.Component<Props, State> {
             </p>
             <button
               type="button"
-              onClick={() => window.location.assign('/panel/quote?fresh=' + Date.now())}
+              onClick={() => window.location.reload()}
               className="px-6 py-3 rounded-full font-bold text-white bg-gradient-to-r from-blue-600 to-cyan-500"
             >
-              Reintentar cotizador
+              Reintentar panel
             </button>
           </div>
         </div>

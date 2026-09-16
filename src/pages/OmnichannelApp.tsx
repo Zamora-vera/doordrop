@@ -116,8 +116,13 @@ function renderPlatformLogo(platform: string, size = "w-4 h-4") {
 }
 
 export function OmnichannelApp({ profile }: { profile: any }) {
-  const { language } = useI18n();
-  const lang = (language?.startsWith('it') ? 'it' : language?.startsWith('en') ? 'en' : language?.startsWith('de') ? 'de' : 'es');
+  const { language, t: translate } = useI18n();
+  const lang = (
+    language?.startsWith('it') ? 'it' :
+      language?.startsWith('en') ? 'en' :
+        language?.startsWith('de') ? 'de' :
+          language?.startsWith('fr') ? 'fr' : 'es'
+  );
 
   // Multi-language text dictionary
   const t = {
@@ -296,6 +301,50 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       walletPay: 'Mit Guthaben bezahlen',
       currentPlanBadge: 'IHR AKTUELLER PLAN',
       upgradePlan: 'Zu diesem Plan wechseln'
+    },
+    fr: {
+      badge: 'DoorDrop Omnicanal + Employé IA',
+      title: 'Assistance omnicanale et employé IA 24 h/24, 7 j/7',
+      desc: 'Connectez WhatsApp, Instagram, Facebook et Telegram. Automatisez les ventes, les devis d’expédition et les réponses aux clients.',
+      tabDashboard: 'Vue d’ensemble',
+      tabChannels: 'Canaux connectés',
+      tabInbox: 'Boîte unifiée',
+      tabComments: 'Commentaires et messages privés',
+      tabAi: 'Employé IA',
+      tabPublishing: 'Publication automatique',
+      tabTeam: 'Équipe et collaborateurs',
+      tabPlans: 'Forfaits et tarifs',
+      managePlans: 'Gérer les forfaits',
+      activePlan: 'Forfait actif',
+      activeChannels: 'Canaux actifs',
+      conversations: 'Conversations',
+      processedMessages: 'Messages traités',
+      aiEmployee: 'Employé IA',
+      unlimited: 'Illimité inclus',
+      noChannels: 'Aucun canal connecté pour le moment',
+      noChannelsDesc: 'Connectez WhatsApp Business, Instagram ou Messenger pour gérer vos clients depuis une seule boîte de réception.',
+      connectFirst: 'Connecter mon premier canal',
+      connectChannel: 'Connecter un canal',
+      connected: 'Connecté',
+      disconnect: 'Déconnecter',
+      aiActive: 'Réponse IA active',
+      humanHandoff: 'Transfert à un agent',
+      selectConv: 'Sélectionnez une conversation dans la liste',
+      writeMsg: 'Écrivez un message...',
+      send: 'Envoyer',
+      aiConfigTitle: 'Configuration de l’employé IA DoorDrop',
+      aiConfigDesc: 'Propulsé par l’IA avec les informations de votre catalogue et le calcul des expéditions DoorDrop en temps réel.',
+      assistantName: 'Nom de l’assistant',
+      tone: 'Ton de communication',
+      mainLang: 'Langue principale',
+      businessKnowledge: 'Informations et politiques de l’entreprise',
+      faqs: 'Questions fréquentes (FAQ)',
+      saveAi: 'Enregistrer la configuration IA',
+      savedSuccess: 'Configuration enregistrée avec succès.',
+      polarCheckout: 'S’abonner en toute sécurité',
+      walletPay: 'Payer avec le solde DoorDrop',
+      currentPlanBadge: 'VOTRE FORFAIT ACTUEL',
+      upgradePlan: 'Passer à ce forfait'
     }
   }[lang];
 
@@ -2122,9 +2171,9 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                     <AlertCircle className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="text-xs font-bold uppercase tracking-wider opacity-75">{t('ai_peak_notice_title')}</div>
+                    <div className="text-xs font-bold uppercase tracking-wider opacity-75">{translate('ai_peak_notice_title')}</div>
                     <p className="mt-1 text-sm font-semibold leading-6">
-                      {t('ai_peak_notice_body')}
+                      {translate('ai_peak_notice_body')}
                     </p>
                   </div>
                 </div>
