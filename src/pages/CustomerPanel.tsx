@@ -2,7 +2,7 @@ import { OmnichannelApp } from './OmnichannelApp';
 /* ship24go-cache-bust-1789141438 */
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
-import { BookOpen, Bot, MessageSquare, Users, LayoutDashboard, Package, Calculator, Store, Settings, LogOut, Plus, Search, Moon, Sun, Wallet, ChartPie, Plug, Box, Globe, ChevronDown, ChevronLeft, ChevronRight, Menu, X, CheckCircle, Code, LifeBuoy, Sparkles, CreditCard, Crown, ShieldCheck, Trash2, Truck, ArrowLeft, User, MapPin, Pencil, Download, RotateCw, Clock, Eye, FileText, Info, Percent, ChevronUp } from 'lucide-react';
+import { BookOpen, Bot, MessageSquare, Users, LayoutDashboard, Package, Calculator, Store, Settings, LogOut, Plus, Search, Moon, Sun, Wallet, ChartPie, Plug, Box, Globe, ChevronDown, ChevronLeft, ChevronRight, Menu, X, CheckCircle, Code, LifeBuoy, Sparkles, CreditCard, Crown, ShieldCheck, Trash2, Truck, ArrowLeft, User, MapPin, Pencil, Download, RotateCw, Clock, Eye, FileText, Info, Percent, ChevronUp, Filter } from 'lucide-react';
 import { api, removeAuthToken, getAuthToken, setAuthToken } from '../lib/api';
 import { loadGuestQuoteSession, clearGuestQuoteSession, guestSessionToPanelState } from '../lib/guestQuoteSession';
 import { useI18n } from '../lib/i18n';
@@ -3114,6 +3114,7 @@ const CustomerBilling = () => {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState<'pdf' | 'csv' | ''>('');
   const [error, setError] = useState('');
+  const [filters, setFilters] = useState({ from: '', to: '', status: 'all', type: 'all' });
 
   const uiLanguage = String(language || 'es').slice(0, 2);
 
@@ -3121,7 +3122,7 @@ const CustomerBilling = () => {
     setLoading(true);
     setError('');
     try {
-      const result = await api.getUserBilling({ page, pageSize: 25, lang: uiLanguage });
+      const result = await api.getUserBilling({ page, pageSize: 25, lang: uiLanguage, ...filters });
       setData(result);
     } catch (e: any) {
       setError(e?.message || t('billing_load_error'));
@@ -3130,13 +3131,23 @@ const CustomerBilling = () => {
     }
   };
 
-  useEffect(() => { load(); }, [page, uiLanguage]);
+  useEffect(() => { load(); }, [page, uiLanguage, filters.from, filters.to, filters.status, filters.type]);
+
+  const updateFilter = (key: keyof typeof filters, value: string) => {
+    setFilters((current) => ({ ...current, [key]: value }));
+    if (page !== 1) setPage(1);
+  };
+
+  const resetFilters = () => {
+    setFilters({ from: '', to: '', status: 'all', type: 'all' });
+    setPage(1);
+  };
 
   const download = async (format: 'pdf' | 'csv') => {
     setExporting(format);
     setError('');
     try {
-      const result = await api.downloadUserBillingExport(format, uiLanguage);
+      const result = await api.downloadUserBillingExport(format, uiLanguage, filters);
       const url = URL.createObjectURL(result.blob);
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -3158,6 +3169,44 @@ const CustomerBilling = () => {
   const entries = Array.isArray(data?.entries) ? data.entries : [];
   const subscriptions = Array.isArray(data?.subscriptions) ? data.subscriptions : [];
   const accountCurrency = String(account.currency || 'EUR').toUpperCase();
+  const costs = Array.isArray(data?.analytics?.costs) ? data.analytics.costs : [];
+  const totalCosts = Number(data?.analytics?.totalCosts || 0);
+  const hasActiveFilters = Object.entries(filters).some(([key, value]) => key === 'status' || key === 'type' ? value !== 'all' : Boolean(value));
+
+  const costChartData = useMemo(() => ({
+    labels: costs.map((item: any) => `${item.reason}${item.currency && item.currency !== accountCurrency ? ` · ${item.currency}` : ''}`),
+    datasets: [{
+      label: t('billing_costs_recorded'),
+      data: costs.map((item: any) => Number(item.amount || 0)),
+      backgroundColor: ['#2563eb', '#06b6d4', '#14b8a6', '#8b5cf6', '#f59e0b', '#f97316', '#ec4899', '#64748b'],
+      borderRadius: 10,
+      borderSkipped: false,
+      barThickness: 18,
+      maxBarThickness: 22
+    }]
+  }), [costs, accountCurrency, t]);
+
+  const costChartOptions: any = useMemo(() => ({
+    indexAxis: 'y',
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 650, easing: 'easeOutQuart' },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: (context: any) => {
+            const item = costs[context.dataIndex];
+            return ` ${format(Number(context.raw || 0), String(item?.currency || accountCurrency).toUpperCase())}`;
+          }
+        }
+      }
+    },
+    scales: {
+      x: { beginAtZero: true, grid: { color: 'rgba(148, 163, 184, 0.18)' }, ticks: { color: '#64748b', font: { weight: 700 } } },
+      y: { grid: { display: false }, ticks: { color: '#475569', font: { weight: 700 } } }
+    }
+  }), [accountCurrency, costs, format, t]);
 
   const formatDate = (value: any) => {
     if (!value) return '—';
@@ -3196,9 +3245,28 @@ const CustomerBilling = () => {
 
       {error && <div className="flex items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300"><span>{error}</span><button type="button" onClick={load} className="inline-flex items-center gap-1 underline"><RotateCw className="w-4 h-4" /> {t('billing_retry')}</button></div>}
 
+      <section className="glass-panel rounded-3xl border border-gray-200 dark:border-gray-800 p-5 md:p-6">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-neon-cyan"><Filter className="w-5 h-5" /></div>
+            <div>
+              <h2 className="text-lg font-black text-gray-900 dark:text-white">{t('billing_filters_title')}</h2>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{t('billing_filters_desc')}</p>
+            </div>
+          </div>
+          {hasActiveFilters && <button type="button" onClick={resetFilters} className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-black text-gray-700 transition hover:border-blue-300 hover:text-blue-600 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-200 dark:hover:border-neon-cyan/50"><X className="w-3.5 h-3.5" /> {t('billing_filter_reset')}</button>}
+        </div>
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+          <label className="space-y-1.5 text-xs font-black text-gray-500 dark:text-gray-400"><span>{t('billing_filter_from')}</span><input type="date" value={filters.from} onChange={(event) => updateFilter('from', event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-100 dark:focus:border-neon-cyan dark:focus:ring-neon-cyan/10" /></label>
+          <label className="space-y-1.5 text-xs font-black text-gray-500 dark:text-gray-400"><span>{t('billing_filter_to')}</span><input type="date" value={filters.to} onChange={(event) => updateFilter('to', event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-100 dark:focus:border-neon-cyan dark:focus:ring-neon-cyan/10" /></label>
+          <label className="space-y-1.5 text-xs font-black text-gray-500 dark:text-gray-400"><span>{t('billing_filter_status')}</span><select value={filters.status} onChange={(event) => updateFilter('status', event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-100 dark:focus:border-neon-cyan dark:focus:ring-neon-cyan/10"><option value="all">{t('billing_filter_all')}</option><option value="pending">{t('billing_status_pending')}</option><option value="completed">{t('billing_status_completed')}</option><option value="paid">{t('billing_status_paid')}</option><option value="failed">{t('billing_status_failed')}</option><option value="refunded">{t('billing_status_refunded')}</option><option value="cancelled">{t('billing_status_cancelled')}</option></select></label>
+          <label className="space-y-1.5 text-xs font-black text-gray-500 dark:text-gray-400"><span>{t('billing_filter_type')}</span><select value={filters.type} onChange={(event) => updateFilter('type', event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-100 dark:focus:border-neon-cyan dark:focus:ring-neon-cyan/10"><option value="all">{t('billing_filter_all')}</option><option value="topup">{t('billing_filter_topup')}</option><option value="subscription">{t('billing_filter_subscription')}</option><option value="payment">{t('billing_filter_payment')}</option><option value="wallet">{t('billing_filter_wallet')}</option><option value="incoming">{t('billing_filter_incoming')}</option><option value="outgoing">{t('billing_filter_outgoing')}</option></select></label>
+        </div>
+      </section>
+
       {loading ? <div className="glass-panel rounded-3xl p-12 text-center text-gray-500 dark:text-gray-400">{t('billing_loading')}</div> : (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
             <div className="glass-panel rounded-2xl border border-blue-100 dark:border-blue-900/40 p-5">
               <p className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">{t('billing_available_balance')}</p>
               <p className="mt-2 text-2xl font-black text-blue-600 dark:text-neon-cyan">{format(Number(account.balance || 0), accountCurrency)}</p>
@@ -3215,6 +3283,27 @@ const CustomerBilling = () => {
               <p className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">{t('billing_payments_paid')}</p>
               <p className="mt-2 text-2xl font-black text-gray-900 dark:text-white">{Number(summary.paidPayments || 0)}</p>
             </div>
+            <div className="glass-panel rounded-2xl border border-amber-100 bg-gradient-to-br from-amber-50/70 to-orange-50/50 p-5 dark:border-amber-900/40 dark:from-amber-950/20 dark:to-orange-950/20">
+              <p className="text-xs font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">{t('billing_costs_recorded')}</p>
+              <p className="mt-2 text-2xl font-black text-amber-700 dark:text-amber-200">{format(totalCosts, accountCurrency)}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_.65fr] gap-6">
+            <section className="glass-panel rounded-3xl border border-gray-200 dark:border-gray-800 p-5 md:p-6">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-cyan-500 text-white shadow-lg shadow-blue-500/20"><Percent className="w-4 h-4" /></div><h2 className="text-lg font-black text-gray-900 dark:text-white">{t('billing_costs_title')}</h2></div>
+                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{t('billing_costs_desc')}</p>
+                </div>
+                <span className="inline-flex w-fit rounded-full bg-amber-50 px-3 py-1 text-xs font-black text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">{format(totalCosts, accountCurrency)}</span>
+              </div>
+              {costs.length > 0 ? <div className="mt-5 h-72"><Bar options={costChartOptions} data={costChartData} /></div> : <div className="flex min-h-[18rem] flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-gray-50/60 px-6 text-center dark:border-gray-800 dark:bg-dark-800/30"><Percent className="mb-3 h-9 w-9 text-gray-300 dark:text-gray-700" /><p className="text-sm font-black text-gray-700 dark:text-gray-200">{t('billing_costs_empty')}</p><p className="mt-1 max-w-sm text-xs text-gray-500 dark:text-gray-400">{t('billing_costs_empty_desc')}</p></div>}
+            </section>
+            <aside className="glass-panel rounded-3xl border border-gray-200 dark:border-gray-800 p-5 md:p-6">
+              <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">{t('billing_costs_recorded')}</p><p className="mt-1 text-2xl font-black text-gray-900 dark:text-white">{format(totalCosts, accountCurrency)}</p></div><div className="rounded-2xl bg-amber-50 p-3 text-amber-600 dark:bg-amber-950/30 dark:text-amber-300"><Wallet className="h-5 w-5" /></div></div>
+              <div className="mt-5 space-y-3">{costs.length > 0 ? costs.map((item: any) => <div key={`${item.currency}-${item.reason}`} className="flex items-center justify-between gap-3 rounded-2xl border border-gray-100 bg-gray-50/70 px-3.5 py-3 dark:border-gray-800 dark:bg-dark-800/50"><div className="min-w-0"><p className="truncate text-xs font-black text-gray-800 dark:text-gray-100">{item.reason}</p><p className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">{Number(item.count || 0)} · {item.currency}</p></div><span className="shrink-0 text-xs font-black text-amber-700 dark:text-amber-300">{format(Number(item.amount || 0), String(item.currency || accountCurrency).toUpperCase())}</span></div>) : <p className="text-sm text-gray-500 dark:text-gray-400">{t('billing_costs_empty_desc')}</p>}</div>
+            </aside>
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_.65fr] gap-6">
@@ -3224,10 +3313,10 @@ const CustomerBilling = () => {
                   <h2 className="text-xl font-black text-gray-900 dark:text-white">{t('billing_activity_title')}</h2>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('billing_activity_desc')}</p>
                 </div>
-                <Link to="/panel/settings" className="text-xs font-black text-blue-600 dark:text-neon-cyan hover:underline">{t('billing_edit_profile')}</Link>
+                <div className="flex items-center gap-3"><span className="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-black text-blue-700 dark:bg-blue-950/30 dark:text-neon-cyan">{Number(pagination.total || 0)} {t('billing_filtered_results')}</span><Link to="/panel/settings" className="text-xs font-black text-blue-600 dark:text-neon-cyan hover:underline">{t('billing_edit_profile')}</Link></div>
               </div>
 
-              {entries.length === 0 ? <div className="p-12 text-center text-sm text-gray-500 dark:text-gray-400"><FileText className="w-10 h-10 mx-auto mb-3 text-gray-300 dark:text-gray-700" /><p className="font-black text-gray-700 dark:text-gray-200">{t('billing_empty_title')}</p><p className="mt-1">{t('billing_empty_desc')}</p></div> : (
+              {entries.length === 0 ? <div className="p-12 text-center text-sm text-gray-500 dark:text-gray-400"><FileText className="w-10 h-10 mx-auto mb-3 text-gray-300 dark:text-gray-700" /><p className="font-black text-gray-700 dark:text-gray-200">{hasActiveFilters ? t('billing_no_filtered_results') : t('billing_empty_title')}</p><p className="mt-1">{hasActiveFilters ? t('billing_filter_reset') : t('billing_empty_desc')}</p></div> : (
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[720px] text-left">
                     <thead className="bg-gray-50/80 dark:bg-dark-800/70 text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">

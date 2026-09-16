@@ -7530,6 +7530,21 @@ function billingEntrySortDate(value: any) {
   return Number.isFinite(stamp) ? stamp : 0;
 }
 
+function billingEntryMatchesQuery(entry: any, query: any = {}) {
+  const requestedStatus = String(query?.status || '').trim().toLowerCase();
+  const requestedType = String(query?.type || '').trim().toLowerCase();
+  const normalizedRequestedStatus = requestedStatus === 'cancelled' ? 'canceled' : requestedStatus;
+  if (normalizedRequestedStatus && normalizedRequestedStatus !== 'all' && String(entry.status || '').toLowerCase() !== normalizedRequestedStatus) return false;
+  if (!requestedType || requestedType === 'all') return true;
+  if (requestedType === 'topup') return entry.source === 'topup';
+  if (requestedType === 'subscription') return entry.source === 'payment' && entry.type === 'subscription';
+  if (requestedType === 'payment') return entry.source === 'payment' && entry.type !== 'subscription';
+  if (requestedType === 'wallet') return entry.source === 'wallet';
+  if (requestedType === 'incoming') return entry.direction === 'incoming';
+  if (requestedType === 'outgoing') return entry.direction === 'outgoing';
+  return true;
+}
+
 async function loadUserBillingData(userId: string, query: any = {}, includeAll = false) {
   await ensureShip24GoBillingColumns();
   const [userRows]: any = await pool.query(
@@ -7651,20 +7666,39 @@ async function loadUserBillingData(userId: string, query: any = {}, includeAll =
   }
 
   entries.sort((a, b) => billingEntrySortDate(b.createdAt) - billingEntrySortDate(a.createdAt));
-  const totalEntries = entries.length;
+  const filteredEntries = entries.filter((entry) => billingEntryMatchesQuery(entry, query));
+  const totalEntries = filteredEntries.length;
   const offset = includeAll ? 0 : (page - 1) * limit;
-  const visibleEntries = entries.slice(offset, offset + limit);
+  const visibleEntries = filteredEntries.slice(offset, offset + limit);
 
-  const credits = (walletRows || []).reduce((sum: number, row: any) => {
-    const type = String(row.type || '').toLowerCase();
-    return sum + (type === 'credit' || type === 'refund' || type === 'release' ? Number(row.amount || 0) : 0);
+  const credits = filteredEntries.reduce((sum: number, entry: any) => {
+    return sum + (entry.source === 'wallet' && entry.direction === 'incoming' ? Number(entry.amount || 0) : 0);
   }, 0);
-  const debits = (walletRows || []).reduce((sum: number, row: any) => {
-    const type = String(row.type || '').toLowerCase();
-    return sum + (type === 'debit' || type === 'hold' ? Number(row.amount || 0) : 0);
+  const debits = filteredEntries.reduce((sum: number, entry: any) => {
+    return sum + (entry.source === 'wallet' && entry.direction === 'outgoing' ? Number(entry.amount || 0) : 0);
   }, 0);
-  const paidPayments = (paymentRows || []).filter((row: any) => billingEntryStatus(row.status) === 'paid');
-  const completedTopups = (topupRows || []).filter((row: any) => billingEntryStatus(row.status, 'pending') === 'completed');
+  const paidPayments = filteredEntries.filter((entry: any) => entry.source === 'payment' && entry.status === 'paid');
+  const completedTopups = filteredEntries.filter((entry: any) => entry.source === 'topup' && entry.status === 'completed');
+  const ignoredCostStatuses = new Set(['failed', 'cancelled', 'canceled', 'refunded']);
+  const costBuckets = new Map<string, { reason: string; amount: number; currency: string; count: number }>();
+  for (const entry of filteredEntries) {
+    if (entry.direction !== 'outgoing' || ignoredCostStatuses.has(String(entry.status || '').toLowerCase())) continue;
+    const reason = String(entry.title || copy.unknown);
+    const currency = normalizeCurrencyCode(entry.currency || user.currency || 'EUR');
+    const key = `${currency}:${reason}`;
+    const current = costBuckets.get(key) || { reason, amount: 0, currency, count: 0 };
+    current.amount = roundMoney(current.amount + Number(entry.amount || 0));
+    current.count += 1;
+    costBuckets.set(key, current);
+  }
+  const allCosts = Array.from(costBuckets.values())
+    .sort((a, b) => b.amount - a.amount)
+    .map((item) => ({ ...item, amount: roundMoney(item.amount) }));
+  const accountCurrency = normalizeCurrencyCode(user.currency || 'EUR');
+  const totalCosts = roundMoney(allCosts
+    .filter((item) => item.currency === accountCurrency)
+    .reduce((sum, item) => sum + item.amount, 0));
+  const costs = allCosts.slice(0, 8);
 
   return {
     account: {
@@ -7691,6 +7725,10 @@ async function loadUserBillingData(userId: string, query: any = {}, includeAll =
       paidPayments: paidPayments.length,
       completedTopups: completedTopups.length,
       totalEntries
+    },
+    analytics: {
+      totalCosts,
+      costs
     },
     entries: visibleEntries,
     subscriptions: (subscriptionRows || []).map((row: any) => ({
