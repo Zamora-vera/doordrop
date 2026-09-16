@@ -1146,8 +1146,51 @@ async function saveIncomingBrandAssets(req: express.Request, brand: any) {
   return next;
 }
 
+// Subscription periods are provider-owned, but local access and discounts
+// must fail closed when the local period is over or missing. This reconciler
+// is deliberately idempotent and never cancels a provider subscription or
+// mutates wallet balances.
+let subscriptionReconciliationInFlight = false;
+
+async function reconcileExpiredSubscriptions(source = 'runtime'): Promise<void> {
+  if (subscriptionReconciliationInFlight) return;
+  subscriptionReconciliationInFlight = true;
+  try {
+    const [generalResult]: any = await pool.query(
+      `UPDATE subscriptions
+          SET status = 'expired', updated_at = UTC_TIMESTAMP()
+        WHERE status IN ('active', 'trialing')
+          AND (current_period_end IS NULL OR current_period_end <= UTC_TIMESTAMP())`
+    );
+    const [omnichannelResult]: any = await pool.query(
+      `UPDATE omnichannel_subscriptions
+          SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+        WHERE provider = 'polar'
+          AND status IN ('active', 'trialing')
+          AND (COALESCE(current_period_end, renews_at) IS NULL
+               OR COALESCE(current_period_end, renews_at) <= UTC_TIMESTAMP())`
+    );
+    const changed = Number(generalResult?.affectedRows || 0) + Number(omnichannelResult?.affectedRows || 0);
+    if (changed > 0) {
+      console.log(`[Subscriptions] Reconciliación ${source}: ${changed} período(s) local(es) marcado(s) como expired.`);
+    }
+  } catch (error: any) {
+    // The interval retries on the next cycle; do not interrupt API startup or
+    // turn a database maintenance issue into a payment-flow failure.
+    console.error('[Subscriptions] Error en reconciliación de períodos:', error?.message || error);
+  } finally {
+    subscriptionReconciliationInFlight = false;
+  }
+}
+
 // Inicializar base de datos
-initDb().catch(err => {
+initDb().then(() => {
+  void reconcileExpiredSubscriptions('startup');
+  const subscriptionReconciliationTimer = setInterval(() => {
+    void reconcileExpiredSubscriptions('interval');
+  }, 15 * 60 * 1000);
+  subscriptionReconciliationTimer.unref?.();
+}).catch(err => {
   console.error('[MySQL Init] Error crítico:', err);
 });
 
@@ -7208,7 +7251,7 @@ app.get('/api/user/profile', authMiddleware, async (req: any, res) => {
         LEFT JOIN plans pl ON pl.id = sub.plan_id
         WHERE sub.user_id = ?
           AND sub.status IN ('active','trialing')
-          AND (sub.current_period_end IS NULL OR sub.current_period_end > UTC_TIMESTAMP())
+          AND sub.current_period_end > UTC_TIMESTAMP()
         ORDER BY sub.created_at DESC
         LIMIT 1`,
       [req.user.id]
@@ -7595,8 +7638,7 @@ async function loadUserBillingData(userId: string, query: any = {}, includeAll =
     `SELECT sub.id, sub.plan_id, COALESCE(pl.name, sub.plan_id) AS plan_name, sub.provider,
             CASE
               WHEN sub.status IN ('active','trialing')
-                AND sub.current_period_end IS NOT NULL
-                AND sub.current_period_end <= UTC_TIMESTAMP()
+                AND (sub.current_period_end IS NULL OR sub.current_period_end <= UTC_TIMESTAMP())
               THEN 'expired'
               ELSE sub.status
             END AS status,
@@ -10375,7 +10417,7 @@ app.post('/api/shipments/quote', async (req: any, res) => {
             INNER JOIN plans pl ON pl.id = sub.plan_id
             WHERE sub.user_id = ?
               AND sub.status IN ('active','trialing')
-              AND (sub.current_period_end IS NULL OR sub.current_period_end > UTC_TIMESTAMP())
+              AND sub.current_period_end > UTC_TIMESTAMP()
               AND pl.is_active = 1
             ORDER BY COALESCE(pl.discount_percent, 0) DESC, sub.created_at DESC
             LIMIT 1`,
@@ -15095,6 +15137,28 @@ function ship24goParsePayPalMetadata(value: any) {
   }
 }
 
+function ship24goPayPalDateTime(value: any): string | null {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const timestamp = Date.parse(raw);
+  if (!Number.isFinite(timestamp)) return null;
+  return new Date(timestamp).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+function ship24goPayPalSubscriptionPeriod(resource: any) {
+  return {
+    // PayPal exposes the boundary of the paid period as next_billing_time.
+    currentPeriodEnd: ship24goPayPalDateTime(
+      resource?.billing_info?.next_billing_time
+        || resource?.next_billing_time
+        || resource?.current_period_end
+    ),
+    currentPeriodStart: ship24goPayPalDateTime(
+      resource?.current_period_start || resource?.start_time
+    )
+  };
+}
+
 async function ship24goVerifyPayPalWebhook(req: any, keys: any) {
   const webhookId = String(keys?.paypalWebhookId || '').trim();
   const authAlgo = ship24goPayPalHeader(req, 'paypal-auth-algo');
@@ -15153,8 +15217,11 @@ app.post('/api/webhooks/paypal', async (req: any, res) => {
     const payload = req.body || {};
     const eventType = payload.event_type || payload.event || '';
     const resource = payload.resource || {};
-    const reference = String(resource.id || payload.id || '').trim();
+    // PayPal resource IDs (especially subscription IDs) are reused across
+    // lifecycle events. The event ID is the only safe deduplication key.
+    const reference = String(payload.id || resource.id || '').trim();
     if (!reference) return res.status(400).json({ received: false });
+    const paypalPeriod = ship24goPayPalSubscriptionPeriod(resource);
 
     const [existingRows]: any = await pool.query(
       `SELECT id, processed_status FROM webhook_events WHERE provider_code = 'paypal' AND external_id = ? LIMIT 1`,
@@ -15354,7 +15421,7 @@ app.post('/api/webhooks/paypal', async (req: any, res) => {
           const [existingSubscriptions]: any = await pool.query(`SELECT id FROM subscriptions WHERE provider = 'paypal' AND external_subscription_id = ? LIMIT 1`, [externalId]);
           const subId = existingSubscriptions?.[0]?.id || generateId('sub_');
           if (!existingSubscriptions?.length) {
-            await pool.query(`INSERT INTO subscriptions (id, user_id, plan_id, provider, external_subscription_id, status, current_period_start, current_period_end, metadata_json) VALUES (?, ?, ?, 'paypal', ?, 'active', NOW(), DATE_ADD(NOW(), INTERVAL 1 MONTH), ?)`, [subId, userId, planId, externalId, JSON.stringify({ eventType })]);
+            await pool.query(`INSERT INTO subscriptions (id, user_id, plan_id, provider, external_subscription_id, status, current_period_start, current_period_end, metadata_json) VALUES (?, ?, ?, 'paypal', ?, 'active', ?, ?, ?)`, [subId, userId, planId, externalId, paypalPeriod.currentPeriodStart, paypalPeriod.currentPeriodEnd, JSON.stringify({ eventType })]);
             await pool.query(`INSERT INTO payments (id, user_id, provider, external_payment_id, amount, currency, status, plan_id, subscription_id, purpose, raw_payload_json, metadata_json) VALUES (?, ?, 'paypal', ?, ?, ?, 'paid', ?, ?, 'subscription', ?, ?)`, [generateId('pay_'), userId, externalId, Number(plan.price || 0), String(plan.currency || 'EUR').toUpperCase(), planId, subId, JSON.stringify(payload), JSON.stringify({ eventType })]);
           }
         }
@@ -15368,10 +15435,21 @@ app.post('/api/webhooks/paypal', async (req: any, res) => {
         'BILLING.SUBSCRIPTION.CANCELLED': 'canceled',
         'BILLING.SUBSCRIPTION.SUSPENDED': 'suspended',
         'BILLING.SUBSCRIPTION.PAYMENT.FAILED': 'past_due',
+        'BILLING.SUBSCRIPTION.PAYMENT.COMPLETED': 'active',
         'BILLING.SUBSCRIPTION.EXPIRED': 'expired'
       };
       const nextStatus = statusMap[eventType];
-      if (nextStatus) await pool.query(`UPDATE subscriptions SET status = ? WHERE provider = 'paypal' AND external_subscription_id = ?`, [nextStatus, resource.id]);
+      if (nextStatus) {
+        await pool.query(
+          `UPDATE subscriptions
+              SET status = ?,
+                  current_period_start = COALESCE(?, current_period_start),
+                  current_period_end = COALESCE(?, current_period_end),
+                  updated_at = UTC_TIMESTAMP()
+            WHERE provider = 'paypal' AND external_subscription_id = ?`,
+          [nextStatus, paypalPeriod.currentPeriodStart, paypalPeriod.currentPeriodEnd, resource.id]
+        );
+      }
     }
 
     await pool.query(`UPDATE webhook_events SET processed_status = 'processed' WHERE provider_code = 'paypal' AND external_id = ?`, [reference]);
@@ -15544,7 +15622,7 @@ app.get('/api/admin/reports', authMiddleware, requireSuperAdmin, async (req: any
         FROM subscriptions sub
         INNER JOIN plans pl ON pl.id = sub.plan_id
         WHERE sub.status IN ('active','trialing')
-          AND (sub.current_period_end IS NULL OR sub.current_period_end > UTC_TIMESTAMP())
+          AND sub.current_period_end > UTC_TIMESTAMP()
         GROUP BY sub.user_id
       ) plan ON plan.user_id = s.user_id
     `;

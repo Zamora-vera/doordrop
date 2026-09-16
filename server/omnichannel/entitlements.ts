@@ -28,7 +28,10 @@ export type OmnichannelSubscription = {
 };
 
 function isDateInFuture(value: unknown): boolean {
-  if (!value) return true;
+  // A paid entitlement must always have a provider-supplied period boundary.
+  // Missing dates are treated as expired so a malformed webhook cannot grant
+  // access indefinitely.
+  if (!value) return false;
   const time = new Date(String(value)).getTime();
   return Number.isFinite(time) && time > Date.now();
 }
