@@ -6,7 +6,9 @@ import { runAgentTurn } from './agent_runtime.js';
 import { getOmnichannelReadiness } from './readiness.js';
 
 let cachedDeepseekKey = process.env.DEEPSEEK_API_KEY || '';
-let cachedMarginPercent = 10.0; // Standard resale margin
+const AI_STANDARD_MARGIN_PERCENT = 10.0;
+const AI_PEAK_PROVIDER_ADJUSTMENT_PERCENT = 15.0;
+let cachedMarginPercent = AI_STANDARD_MARGIN_PERCENT; // DoorDrop margin in the normal window
 
 function normalizeAgentCurrency(value: any): string {
   const code = String(value || '').trim().toUpperCase();
@@ -42,7 +44,7 @@ export async function getDeepSeekConfig() {
     );
     for (const r of rows) {
       if (r.setting_key === 'deepseek_api_key' && r.setting_value) cachedDeepseekKey = r.setting_value;
-      if (r.setting_key === 'omnichannel_ai_margin_percent' && r.setting_value) cachedMarginPercent = Number(r.setting_value) || 10.0;
+      if (r.setting_key === 'omnichannel_ai_margin_percent' && r.setting_value) cachedMarginPercent = Number(r.setting_value) || AI_STANDARD_MARGIN_PERCENT;
     }
   } catch (e) {
     console.error('[DeepSeek Config] Error loading settings:', e);
@@ -54,7 +56,7 @@ export async function getDeepSeekConfig() {
 }
 
 /**
- * Determine if current local time in merchant's country is Peak Hour (18:00 - 22:00)
+ * Determine if current local time in merchant's country is a high-demand AI window (18:00 - 22:00).
  */
 export function isPeakHour(countryCode: string = ''): boolean {
   const now = new Date();
@@ -149,8 +151,10 @@ export async function callDeepSeekChat(
 }
 
 /**
- * Bill user's balance for AI tokens with dynamic Peak Hours surcharge
- * Rule: Standard is marginPercent (10%). During peak hours (18:00 - 22:00), surcharge is +15% (total 25%).
+ * Bill the user's balance for AI tokens with a transparent high-demand rule.
+ * Normal window: DoorDrop applies the configured standard margin (10% by default).
+ * High-demand window: DoorDrop applies no commercial margin and passes through only
+ * the configured 15% AI-demand adjustment. Shipping quotes are not changed here.
  */
 export async function billUserForAiUsage(userId: string, totalTokens: number, countryCode: string = '') {
   if (!totalTokens || totalTokens <= 0) return;
@@ -161,11 +165,13 @@ export async function billUserForAiUsage(userId: string, totalTokens: number, co
   const { marginPercent } = await getDeepSeekConfig();
 
   const peak = isPeakHour(countryCode);
-  const effectiveMargin = peak ? marginPercent + 15.0 : marginPercent;
 
   // Base cost estimate: 1,000 tokens ≈ $0.0003
   const baseCostUSD = (totalTokens / 1000) * 0.0003;
-  const finalCost = baseCostUSD * (1 + (effectiveMargin / 100));
+  const peakProviderAdjustmentPercent = peak ? AI_PEAK_PROVIDER_ADJUSTMENT_PERCENT : 0;
+  const providerCostUSD = baseCostUSD * (1 + (peakProviderAdjustmentPercent / 100));
+  const doorDropMarginPercent = peak ? 0 : Math.max(0, marginPercent);
+  const finalCost = providerCostUSD * (1 + (doorDropMarginPercent / 100));
   // Wallet balances and wallet_transactions use cents as their accounting precision.
   const roundedCost = Number(finalCost.toFixed(2));
 
@@ -177,12 +183,12 @@ export async function billUserForAiUsage(userId: string, totalTokens: number, co
       type: 'debit',
       amount: roundedCost,
       currency: 'USD',
-      description: `Uso agente IA (${totalTokens} tokens${peak ? ', hora punta' : ''})`,
+      description: `Uso agente IA (${totalTokens} tokens${peak ? ', alta demanda' : ''})`,
       referenceType: 'omnichannel_ai_usage',
       referenceId: `ai:${userId}:${Date.now()}`,
       minimumBalance: -1.00
     });
-    console.log(`[AI Billing] User ${userId} billed ${mutation.walletAmount} ${mutation.walletCurrency} (Tokens: ${totalTokens}, Margin: +${effectiveMargin}% ${peak ? '[PEAK HOUR]' : '[STANDARD]'})`);
+    console.log(`[AI Billing] User ${userId} billed ${mutation.walletAmount} ${mutation.walletCurrency} (Tokens: ${totalTokens}, DoorDrop margin: +${doorDropMarginPercent}%, Demand adjustment: +${peakProviderAdjustmentPercent}% ${peak ? '[HIGH DEMAND]' : '[STANDARD]'})`);
   } catch (err: any) {
     console.error(`[AI Billing] Error deducting balance for user ${userId}:`, err.code || err.message);
   }

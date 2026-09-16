@@ -17,7 +17,6 @@ import {
   Search,
   Filter,
   User,
-  Clock,
   Sparkles,
   ExternalLink,
   ChevronRight,
@@ -2114,39 +2113,22 @@ export function OmnichannelApp({ profile }: { profile: any }) {
               </button>
             </div>
 
-            {/* Peak Hours Dynamic Pricing Badge */}
-            <div className={`p-4 rounded-2xl border flex items-center justify-between ${
-              data?.metrics?.peak_hours?.is_active
-                ? 'bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-100'
-                : 'bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 border-blue-200 dark:border-blue-800 text-blue-950 dark:text-blue-100'
-            }`}>
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white shadow ${
-                  data?.metrics?.peak_hours?.is_active ? 'bg-amber-500' : 'bg-blue-600'
-                }`}>
-                  <Clock className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold uppercase tracking-wider opacity-75">
-                    Tarifa Horaria Inteligente ({data?.metrics?.peak_hours?.country || 'IT'})
+            {/* Show only an actionable, honest notice during the AI high-demand window. */}
+            {data?.metrics?.peak_hours?.is_active && (
+              <div role="status" className="p-4 rounded-2xl border border-amber-300 dark:border-amber-800 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 text-amber-950 dark:text-amber-100">
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white shadow bg-amber-500 shrink-0">
+                    <AlertCircle className="w-5 h-5" />
                   </div>
-                  <div className="text-sm font-black flex items-center gap-1.5">
-                    {data?.metrics?.peak_hours?.is_active ? (
-                      <span className="text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                        🔥 HORA PICO ACTIVA (18:00 - 22:00) • Margen +25%
-                      </span>
-                    ) : (
-                      <span className="text-blue-600 dark:text-blue-400 flex items-center gap-1">
-                        ⚡ HORARIO ESTÁNDAR • Margen +10%
-                      </span>
-                    )}
+                  <div>
+                    <div className="text-xs font-bold uppercase tracking-wider opacity-75">{t('ai_peak_notice_title')}</div>
+                    <p className="mt-1 text-sm font-semibold leading-6">
+                      {t('ai_peak_notice_body')}
+                    </p>
                   </div>
-                  <p className="text-[11px] opacity-70">
-                    Ajuste dinámico según el huso horario local de tu tienda.
-                  </p>
                 </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Dynamic Active Plan Alert */}

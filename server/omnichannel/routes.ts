@@ -756,10 +756,9 @@ export function setupOmnichannelRoutes(app: any, options: {
           peak_hours: {
             is_active: peakActive,
             country: userCountry,
-            standard_margin: 10,
-            peak_margin: 25,
-            current_margin: peakActive ? 25 : 10,
-            surcharge_label: peakActive ? '+15% Ora di Punta (18:00-22:00)' : 'Tariffa Standard (+10%)'
+            window: '18:00-22:00',
+            shipping_price_unchanged: true,
+            notice_code: peakActive ? 'ai_high_demand' : null
           }
         }
       });
