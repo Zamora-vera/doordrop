@@ -1651,7 +1651,7 @@ export function setupOmnichannelRoutes(app: any, options: {
         configured: row.is_secret ? Boolean(row.setting_value) : undefined
       }));
       const [subCount]: any = await pool.query(
-        "SELECT COUNT(*) AS total_clients, COALESCE(SUM(monthly_price), 0) AS mrr FROM omnichannel_subscriptions WHERE status = 'active' AND provider = 'polar'"
+        "SELECT COUNT(*) AS total_clients, COALESCE(SUM(monthly_price), 0) AS mrr FROM omnichannel_subscriptions WHERE status = 'active' AND provider = 'polar' AND (current_period_end IS NULL OR current_period_end > UTC_TIMESTAMP())"
       );
       const [accCount]: any = await pool.query(
         "SELECT COUNT(*) AS total_connected_channels FROM omnichannel_accounts"

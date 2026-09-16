@@ -7208,6 +7208,7 @@ app.get('/api/user/profile', authMiddleware, async (req: any, res) => {
         LEFT JOIN plans pl ON pl.id = sub.plan_id
         WHERE sub.user_id = ?
           AND sub.status IN ('active','trialing')
+          AND (sub.current_period_end IS NULL OR sub.current_period_end > UTC_TIMESTAMP())
         ORDER BY sub.created_at DESC
         LIMIT 1`,
       [req.user.id]
@@ -7591,7 +7592,14 @@ async function loadUserBillingData(userId: string, query: any = {}, includeAll =
     [userId, ...filter.values]
   );
   const [subscriptionRows]: any = await pool.query(
-    `SELECT sub.id, sub.plan_id, COALESCE(pl.name, sub.plan_id) AS plan_name, sub.provider, sub.status,
+    `SELECT sub.id, sub.plan_id, COALESCE(pl.name, sub.plan_id) AS plan_name, sub.provider,
+            CASE
+              WHEN sub.status IN ('active','trialing')
+                AND sub.current_period_end IS NOT NULL
+                AND sub.current_period_end <= UTC_TIMESTAMP()
+              THEN 'expired'
+              ELSE sub.status
+            END AS status,
             sub.current_period_start, sub.current_period_end, sub.created_at
        FROM subscriptions sub
        LEFT JOIN plans pl ON pl.id = sub.plan_id
@@ -10348,6 +10356,7 @@ app.post('/api/shipments/quote', async (req: any, res) => {
             INNER JOIN plans pl ON pl.id = sub.plan_id
             WHERE sub.user_id = ?
               AND sub.status IN ('active','trialing')
+              AND (sub.current_period_end IS NULL OR sub.current_period_end > UTC_TIMESTAMP())
               AND pl.is_active = 1
             ORDER BY COALESCE(pl.discount_percent, 0) DESC, sub.created_at DESC
             LIMIT 1`,
@@ -15507,6 +15516,7 @@ app.get('/api/admin/reports', authMiddleware, requireSuperAdmin, async (req: any
         FROM subscriptions sub
         INNER JOIN plans pl ON pl.id = sub.plan_id
         WHERE sub.status IN ('active','trialing')
+          AND (sub.current_period_end IS NULL OR sub.current_period_end > UTC_TIMESTAMP())
         GROUP BY sub.user_id
       ) plan ON plan.user_id = s.user_id
     `;
