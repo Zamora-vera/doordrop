@@ -612,14 +612,14 @@ const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile, isSidebarCollaps
   const location = useLocation();
 
   const sectionCopy = language === 'it'
-    ? { principal: 'Principale', sales: 'Vendite e canali', account: 'Account e aiuto', collapse: 'Comprimi menu', expand: 'Espandi menu', close: 'Chiudi menu', logout: 'Disconnetti', active: 'Account attivo' }
+    ? { principal: 'Principale', sales: 'Vendite e canali', account: 'Account e aiuto', collapse: 'Comprimi menu', expand: 'Espandi menu', close: 'Chiudi menu', logout: 'Disconnetti', active: 'Account attivo', marketplace: 'Marketplace', omnichannel: 'Omnicanale + AI', liveChat: 'Live Chat Omnicanale', team: 'Team e dipendenti', integrations: 'Integrazioni', apiDocs: 'Documentazione API', activeView: 'Vista cliente attiva', backAdmin: 'Torna al Super Admin', primaryNav: 'Navigazione principale', panelSections: 'Sezioni del pannello', loading: 'Caricamento...' }
     : language.startsWith('en')
-      ? { principal: 'Main', sales: 'Sales & channels', account: 'Account & help', collapse: 'Collapse menu', expand: 'Expand menu', close: 'Close menu', logout: 'Sign out', active: 'Active account' }
+      ? { principal: 'Main', sales: 'Sales & channels', account: 'Account & help', collapse: 'Collapse menu', expand: 'Expand menu', close: 'Close menu', logout: 'Sign out', active: 'Active account', marketplace: 'Marketplace', omnichannel: 'Omnichannel + AI', liveChat: 'Live omnichannel chat', team: 'Team & employees', integrations: 'Integrations', apiDocs: 'API documentation', activeView: 'Active customer view', backAdmin: 'Back to Super Admin', primaryNav: 'Primary navigation', panelSections: 'Dashboard sections', loading: 'Loading...' }
       : language === 'fr'
-        ? { principal: 'Principal', sales: 'Ventes et canaux', account: 'Compte et aide', collapse: 'Réduire le menu', expand: 'Développer le menu', close: 'Fermer le menu', logout: 'Se déconnecter', active: 'Compte actif' }
-        : language === 'de'
-          ? { principal: 'Übersicht', sales: 'Verkauf & Kanäle', account: 'Konto & Hilfe', collapse: 'Menü einklappen', expand: 'Menü ausklappen', close: 'Menü schließen', logout: 'Abmelden', active: 'Aktives Konto' }
-          : { principal: 'Principal', sales: 'Ventas y canales', account: 'Cuenta y ayuda', collapse: 'Contraer menú', expand: 'Expandir menú', close: 'Cerrar menú', logout: 'Cerrar sesión', active: 'Cuenta activa' };
+        ? { principal: 'Principal', sales: 'Ventes et canaux', account: 'Compte et aide', collapse: 'Réduire le menu', expand: 'Développer le menu', close: 'Fermer le menu', logout: 'Se déconnecter', active: 'Compte actif', marketplace: 'Marketplace', omnichannel: 'Omnicanal + IA', liveChat: 'Chat omnicanal en direct', team: 'Équipe et employés', integrations: 'Intégrations', apiDocs: 'Documentation API', activeView: 'Vue client active', backAdmin: 'Retour au Super Admin', primaryNav: 'Navigation principale', panelSections: 'Sections du tableau de bord', loading: 'Chargement...' }
+      : language === 'de'
+          ? { principal: 'Übersicht', sales: 'Verkauf & Kanäle', account: 'Konto & Hilfe', collapse: 'Menü einklappen', expand: 'Menü ausklappen', close: 'Menü schließen', logout: 'Abmelden', active: 'Aktives Konto', marketplace: 'Marketplace', omnichannel: 'Omnichannel + KI', liveChat: 'Live-Chat Omnichannel', team: 'Team & Mitarbeitende', integrations: 'Integrationen', apiDocs: 'API-Dokumentation', activeView: 'Aktive Kundenansicht', backAdmin: 'Zurück zum Super Admin', primaryNav: 'Hauptnavigation', panelSections: 'Dashboard-Bereiche', loading: 'Wird geladen...' }
+          : { principal: 'Principal', sales: 'Ventas y canales', account: 'Cuenta y ayuda', collapse: 'Contraer menú', expand: 'Expandir menú', close: 'Cerrar menú', logout: 'Cerrar sesión', active: 'Cuenta activa', marketplace: 'Marketplace', omnichannel: 'Omnicanal + IA', liveChat: 'Chat omnicanal en vivo', team: 'Equipo y empleados', integrations: 'Integraciones', apiDocs: 'Documentación API', activeView: 'Vista de cliente activa', backAdmin: 'Volver al Super Admin', primaryNav: 'Navegación principal', panelSections: 'Secciones del panel', loading: 'Cargando...' };
 
   const menuSections = [
     {
@@ -634,21 +634,21 @@ const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile, isSidebarCollaps
     {
       title: sectionCopy.sales,
       items: [
-        { name: 'Marketplace', path: '/panel/marketplace', icon: Store },
-        { name: 'Omnicanal + AI', path: '/panel/omnichannel', icon: Bot },
-        { name: 'Live Chat Omnicanal', path: '/panel/omnichannel?tab=inbox', icon: MessageSquare },
-        { name: 'Equipo & Empleados', path: '/panel/omnichannel?tab=team', icon: Users },
+        { name: sectionCopy.marketplace, path: '/panel/marketplace', icon: Store },
+        { name: sectionCopy.omnichannel, path: '/panel/omnichannel', icon: Bot },
+        { name: sectionCopy.liveChat, path: '/panel/omnichannel?tab=inbox', icon: MessageSquare },
+        { name: sectionCopy.team, path: '/panel/omnichannel?tab=team', icon: Users },
       ],
     },
     {
       title: sectionCopy.account,
       items: [
-        { name: 'Integraciones', path: '/panel/stores', icon: Plug },
+        { name: sectionCopy.integrations, path: '/panel/stores', icon: Plug },
         { name: t('billing_nav'), path: '/panel/billing', icon: FileText },
         { name: t('wallet_payments_nav'), path: '/panel/settings', icon: Wallet },
         { name: t('tickets_support'), path: '/panel/tickets', icon: LifeBuoy },
         { name: t('ai_copilot'), path: '/panel/copilot', icon: Sparkles },
-        { name: 'API Docs', path: '/panel/api-docs', icon: BookOpen },
+        { name: sectionCopy.apiDocs, path: '/panel/api-docs', icon: BookOpen },
       ],
     },
   ];
@@ -665,7 +665,7 @@ const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile, isSidebarCollaps
         />
       )}
       <aside
-        aria-label="Navegación principal"
+        aria-label={sectionCopy.primaryNav}
         className={`fixed inset-y-0 left-0 z-50 flex h-screen shrink-0 transform flex-col border-r border-gray-200 bg-white/95 shadow-2xl backdrop-blur-md transition-[width,transform] duration-300 dark:border-gray-800 dark:bg-dark-900/95 lg:static lg:h-[calc(100dvh-4rem)] lg:translate-x-0 lg:shadow-none ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} w-[min(88vw,20rem)] ${isSidebarCollapsed ? 'lg:w-[4.75rem]' : 'lg:w-72'}`}
       >
           <div className={`flex min-h-[5.25rem] items-center gap-3 border-b border-gray-200 px-3 py-3 dark:border-gray-800/50 ${isSidebarCollapsed ? 'lg:justify-center lg:px-2' : 'justify-between'}`}>
@@ -674,7 +674,7 @@ const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile, isSidebarCollaps
                       {profile?.name ? profile.name.substring(0, 2).toUpperCase() : 'US'}
                   </div>
                   <div className={`min-w-0 ${isSidebarCollapsed ? 'lg:hidden' : ''}`}>
-                      <p className="truncate text-sm font-bold text-gray-900 dark:text-white">{profile?.name || 'Cargando...'}</p>
+                      <p className="truncate text-sm font-bold text-gray-900 dark:text-white">{profile?.name || sectionCopy.loading}</p>
                       <p className="text-xs font-medium text-blue-600 dark:text-neon-cyan">{sectionCopy.active}</p>
                   </div>
               </div>
@@ -697,7 +697,7 @@ const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile, isSidebarCollaps
               </button>
           </div>
 
-          <nav className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-3 sm:p-4" aria-label="Secciones del panel">
+          <nav className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-3 sm:p-4" aria-label={sectionCopy.panelSections}>
               {menuSections.map((section) => (
                 <div key={section.title}>
                   <div className={`mb-1.5 px-3 text-[10px] font-black uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500 ${isSidebarCollapsed ? 'lg:text-center lg:px-0' : ''}`}>
@@ -3386,11 +3386,20 @@ const getLocalizedBankDetailLabel = (translate: (key: string) => string, label: 
   const normalized = String(label || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
   const translationKey = {
     account_type: 'customer_settings_bank_account_type',
+    checking: 'customer_settings_bank_checking',
     routing_number_wire_and_ach: 'customer_settings_bank_routing_number',
     account_number: 'customer_settings_bank_account_number',
     swift_bic: 'customer_settings_bank_swift_bic',
   }[normalized] || '';
   return translationKey ? translate(translationKey) : label;
+};
+
+const getLocalizedBankDetailValue = (translate: (key: string) => string, label: string, value: any) => {
+  const normalized = String(label || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  if (normalized === 'account_type' && String(value || '').trim().toLowerCase() === 'checking') {
+    return translate('customer_settings_bank_checking');
+  }
+  return String(value);
 };
 
 
@@ -3521,7 +3530,7 @@ const CustomerWalletTransfer = () => {
                   <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2 text-sm"><span className="text-gray-500 font-bold">{t('bank_account_holder')}</span><span className="font-black text-gray-900 dark:text-white">{selected.accountHolder}</span></div>
                   <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2 text-sm"><span className="text-gray-500 font-bold">{t('bank_name')}</span><span className="font-black text-gray-900 dark:text-white">{selected.bankName}</span></div>
                   {Object.entries(selected.details || {}).map(([key, value]: any) => (
-                    <div key={key} className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2 text-sm"><span className="text-gray-500 font-bold">{getLocalizedBankDetailLabel(t, key)}</span><span className="font-mono font-black text-gray-900 dark:text-white break-all">{String(value)}</span></div>
+                    <div key={key} className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2 text-sm"><span className="text-gray-500 font-bold">{getLocalizedBankDetailLabel(t, key)}</span><span className="font-mono font-black text-gray-900 dark:text-white break-all">{getLocalizedBankDetailValue(t, key, value)}</span></div>
                   ))}
                   {selected.bankAddress && <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2 text-sm"><span className="text-gray-500 font-bold">{t('customer_settings_bank_address')}</span><span className="text-gray-700 dark:text-gray-300">{selected.bankAddress}</span></div>}
                 </div>
@@ -3922,7 +3931,7 @@ const CustomerSettings = () => {
                   {bankPreview.details && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-4 text-xs">
                       {Object.entries(bankPreview.details).slice(0, 4).map(([key, value]: any) => (
-                        <div key={key} className="rounded-xl bg-white/70 dark:bg-dark-800/60 p-3"><span className="block text-gray-500 font-bold">{getLocalizedBankDetailLabel(t, key)}</span><span className="block text-gray-900 dark:text-white font-mono font-black break-all">{String(value)}</span></div>
+                        <div key={key} className="rounded-xl bg-white/70 dark:bg-dark-800/60 p-3"><span className="block text-gray-500 font-bold">{getLocalizedBankDetailLabel(t, key)}</span><span className="block text-gray-900 dark:text-white font-mono font-black break-all">{getLocalizedBankDetailValue(t, key, value)}</span></div>
                       ))}
                     </div>
                   )}
@@ -4235,6 +4244,7 @@ const CustomerApiDocs = () => {
 
 
 export default function CustomerPanel() {
+  const { language } = useI18n();
   const [isDark, setIsDark] = useState(() => {
     const stored = localStorage.getItem('theme');
     if (stored === 'dark') return true;
@@ -4316,6 +4326,15 @@ export default function CustomerPanel() {
 
   const adminBackupToken = typeof window !== 'undefined' ? localStorage.getItem('ship24go_admin_token_backup') : null;
   const impersonatedClientName = typeof window !== 'undefined' ? localStorage.getItem('ship24go_impersonated_client_name') : '';
+  const customerViewCopy = language === 'it'
+    ? { active: 'Vista cliente attiva', back: 'Torna al Super Admin' }
+    : language.startsWith('en')
+      ? { active: 'Active customer view', back: 'Back to Super Admin' }
+      : language === 'fr'
+        ? { active: 'Vue client active', back: 'Retour au Super Admin' }
+        : language === 'de'
+          ? { active: 'Aktive Kundenansicht', back: 'Zurück zum Super Admin' }
+          : { active: 'Vista de cliente activa', back: 'Volver al Super Admin' };
   const returnToAdmin = () => {
     const token = localStorage.getItem('ship24go_admin_token_backup');
     const returnPath = localStorage.getItem('ship24go_admin_return_path') || '/admin/clients';
@@ -4332,8 +4351,8 @@ export default function CustomerPanel() {
     <div className="min-h-screen bg-slate-50 dark:bg-dark-900 font-sans flex flex-col transition-colors print:min-h-0 print:bg-white">
       {adminBackupToken && (
         <div className="bg-slate-900 text-white px-4 py-2 text-sm font-bold flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 z-[60] print:hidden">
-          <span>Vista de cliente activa{impersonatedClientName ? `: ${impersonatedClientName}` : ''}</span>
-          <button onClick={returnToAdmin} className="px-3 py-1.5 rounded-lg bg-white text-slate-900 text-xs font-black hover:bg-slate-100">Volver al Super Admin</button>
+          <span>{customerViewCopy.active}{impersonatedClientName ? `: ${impersonatedClientName}` : ''}</span>
+          <button onClick={returnToAdmin} className="px-3 py-1.5 rounded-lg bg-white text-slate-900 text-xs font-black hover:bg-slate-100">{customerViewCopy.back}</button>
         </div>
       )}
       <div className="print:hidden"><Header toggleTheme={toggleTheme} isDark={isDark} isMobileMenuOpen={isMobileMenuOpen} toggleMobileMenu={toggleMobileMenu} profile={profile} /></div>
