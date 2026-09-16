@@ -7533,7 +7533,7 @@ function billingEntrySortDate(value: any) {
 async function loadUserBillingData(userId: string, query: any = {}, includeAll = false) {
   await ensureShip24GoBillingColumns();
   const [userRows]: any = await pool.query(
-    'SELECT id, name, email, currency, balance FROM users WHERE id = ? AND role = \'customer\' LIMIT 1',
+    'SELECT id, name, email, currency, balance, language FROM users WHERE id = ? AND role = \'customer\' LIMIT 1',
     [userId]
   );
   const user = userRows?.[0];
@@ -7586,7 +7586,8 @@ async function loadUserBillingData(userId: string, query: any = {}, includeAll =
     [userId, ...filter.values]
   );
 
-  const copy = billingServerCopy[normalizeBillingLanguage(query?.lang)];
+  const billingLanguage = normalizeBillingLanguage(query?.lang || user.language || 'es');
+  const copy = billingServerCopy[billingLanguage];
   const entries: any[] = [];
   for (const row of walletRows || []) {
     const type = String(row.type || '').toLowerCase();
@@ -7671,7 +7672,8 @@ async function loadUserBillingData(userId: string, query: any = {}, includeAll =
       name: String(user.name || ''),
       email: String(user.email || ''),
       currency: normalizeCurrencyCode(user.currency || 'EUR'),
-      balance: roundMoney(Number(user.balance || 0))
+      balance: roundMoney(Number(user.balance || 0)),
+      language: billingLanguage
     },
     billingProfile: companyRows?.[0] ? {
       id: String(companyRows[0].id),
@@ -7740,8 +7742,9 @@ app.get('/api/user/billing/export', authMiddleware, async (req: any, res) => {
   try {
     const format = String(req.query?.format || 'csv').toLowerCase();
     if (format !== 'csv' && format !== 'pdf') return res.status(400).json({ error: 'Formato de exportación no disponible.' });
-    const lang = normalizeBillingLanguage(req.query?.lang);
-    const data = await loadUserBillingData(String(req.user.id), { ...(req.query || {}), lang }, true);
+    const requestedLang = String(req.query?.lang || '').trim();
+    const data = await loadUserBillingData(String(req.user.id), { ...(req.query || {}), lang: requestedLang }, true);
+    const lang = normalizeBillingLanguage(requestedLang || data.account.language || 'es');
     const copy = billingServerCopy[lang];
     const dateStamp = new Date().toISOString().slice(0, 10);
 
