@@ -8869,6 +8869,25 @@ async function ship24goCreatePolarCheckoutSession(params: {
 }) {
   const apiBase = ship24goPolarApiBase(params.polarToken, params.environment);
 
+  // Polar only accepts scalar metadata values. Keep structured application
+  // metadata readable by serializing arrays/objects before sending them.
+  const polarMetadata = Object.entries(
+    params.metadata && typeof params.metadata === 'object' ? params.metadata : {}
+  ).reduce<Record<string, string | number | boolean>>((result, [key, value]) => {
+    if (value === null || value === undefined) return result;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      result[key] = value;
+      return result;
+    }
+    try {
+      const serialized = JSON.stringify(value);
+      if (serialized) result[key] = serialized;
+    } catch {
+      // Ignore a non-serializable optional metadata field.
+    }
+    return result;
+  }, {});
+
   const payload: any = {
     products: params.productIds?.length ? params.productIds : [params.productId],
     success_url: params.successUrl,
@@ -8876,7 +8895,7 @@ async function ship24goCreatePolarCheckoutSession(params: {
     customer_email: params.customerEmail || undefined,
     customer_name: params.customerName || undefined,
     external_customer_id: params.externalCustomerId || undefined,
-    metadata: params.metadata || {}
+    metadata: polarMetadata
   };
 
   if (params.currency) payload.currency = String(params.currency).toLowerCase().slice(0, 3);
@@ -13191,9 +13210,18 @@ app.post('/api/webhooks/polar', async (req: any, res) => {
 
       const periodStart = subscriptionData.current_period_start || subscriptionData.period_start || null;
       const periodEnd = subscriptionData.current_period_end || subscriptionData.period_end || null;
-      const addOnCodes = Array.isArray(metadata.add_ons)
-        ? [...new Set(metadata.add_ons.map((value: any) => String(value || '').trim()).filter(Boolean))]
-        : [];
+      let metadataAddOns: any[] = [];
+      if (Array.isArray(metadata.add_ons)) {
+        metadataAddOns = metadata.add_ons;
+      } else if (typeof metadata.add_ons === 'string') {
+        try {
+          const parsed = JSON.parse(metadata.add_ons);
+          metadataAddOns = Array.isArray(parsed) ? parsed : [metadata.add_ons];
+        } catch {
+          metadataAddOns = metadata.add_ons.split(',');
+        }
+      }
+      const addOnCodes = [...new Set(metadataAddOns.map((value: any) => String(value || '').trim()).filter(Boolean))];
       let addOnTotal = 0;
       let commentAutomation = 0;
       let autoPublish = 0;
