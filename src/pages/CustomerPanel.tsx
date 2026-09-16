@@ -3382,6 +3382,17 @@ const CustomerBilling = () => {
   );
 };
 
+const getLocalizedBankDetailLabel = (translate: (key: string) => string, label: string) => {
+  const normalized = String(label || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const translationKey = {
+    account_type: 'customer_settings_bank_account_type',
+    routing_number_wire_and_ach: 'customer_settings_bank_routing_number',
+    account_number: 'customer_settings_bank_account_number',
+    swift_bic: 'customer_settings_bank_swift_bic',
+  }[normalized] || '';
+  return translationKey ? translate(translationKey) : label;
+};
+
 
 const CustomerWalletTransfer = () => {
   const { t, language } = useI18n();
@@ -3489,7 +3500,7 @@ const CustomerWalletTransfer = () => {
           <div className="glass-panel rounded-3xl border border-gray-200 dark:border-gray-800 p-6 md:p-8">
             <h2 className="text-xl font-black text-gray-900 dark:text-white mb-2">{t('bank_selected_for_currency')}</h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">{selected?.currency || currency}</p>
-            {selected?.currencyMismatch && <p className="mb-5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/50 p-3 text-xs font-bold text-amber-700 dark:text-amber-300">No hay una cuenta bancaria configurada en {currency}. Este ingreso se registrará en {selected.currency} y se convertirá a tu wallet al aprobarse.</p>}
+            {selected?.currencyMismatch && <p className="mb-5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/50 p-3 text-xs font-bold text-amber-700 dark:text-amber-300">{t('customer_settings_bank_currency_mismatch').replace('{currency}', currency).replace('{bankCurrency}', selected.currency)}</p>}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               {accounts.map((account: any) => (
                 <button key={account.id} onClick={() => setSelectedBankId(account.id)} className={`text-left rounded-2xl border p-5 transition-all ${selectedBankId === account.id ? 'border-blue-500 bg-blue-50 dark:bg-neon-cyan/10 dark:border-neon-cyan' : 'border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-dark-800/60 hover:border-blue-300'}`}>
@@ -3510,9 +3521,9 @@ const CustomerWalletTransfer = () => {
                   <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2 text-sm"><span className="text-gray-500 font-bold">{t('bank_account_holder')}</span><span className="font-black text-gray-900 dark:text-white">{selected.accountHolder}</span></div>
                   <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2 text-sm"><span className="text-gray-500 font-bold">{t('bank_name')}</span><span className="font-black text-gray-900 dark:text-white">{selected.bankName}</span></div>
                   {Object.entries(selected.details || {}).map(([key, value]: any) => (
-                    <div key={key} className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2 text-sm"><span className="text-gray-500 font-bold">{key}</span><span className="font-mono font-black text-gray-900 dark:text-white break-all">{String(value)}</span></div>
+                    <div key={key} className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2 text-sm"><span className="text-gray-500 font-bold">{getLocalizedBankDetailLabel(t, key)}</span><span className="font-mono font-black text-gray-900 dark:text-white break-all">{String(value)}</span></div>
                   ))}
-                  {selected.bankAddress && <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2 text-sm"><span className="text-gray-500 font-bold">Dirección</span><span className="text-gray-700 dark:text-gray-300">{selected.bankAddress}</span></div>}
+                  {selected.bankAddress && <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-2 text-sm"><span className="text-gray-500 font-bold">{t('customer_settings_bank_address')}</span><span className="text-gray-700 dark:text-gray-300">{selected.bankAddress}</span></div>}
                 </div>
                 {selected.instruction && <p className="mt-5 rounded-xl bg-blue-50 dark:bg-neon-cyan/10 text-blue-800 dark:text-neon-cyan p-4 text-sm font-bold">{selected.instruction}</p>}
               </div>
@@ -3911,7 +3922,7 @@ const CustomerSettings = () => {
                   {bankPreview.details && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-4 text-xs">
                       {Object.entries(bankPreview.details).slice(0, 4).map(([key, value]: any) => (
-                        <div key={key} className="rounded-xl bg-white/70 dark:bg-dark-800/60 p-3"><span className="block text-gray-500 font-bold">{key}</span><span className="block text-gray-900 dark:text-white font-mono font-black break-all">{String(value)}</span></div>
+                        <div key={key} className="rounded-xl bg-white/70 dark:bg-dark-800/60 p-3"><span className="block text-gray-500 font-bold">{getLocalizedBankDetailLabel(t, key)}</span><span className="block text-gray-900 dark:text-white font-mono font-black break-all">{String(value)}</span></div>
                       ))}
                     </div>
                   )}
