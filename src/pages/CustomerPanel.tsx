@@ -3578,6 +3578,21 @@ const CustomerSettings = () => {
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [bankPreview, setBankPreview] = useState<any>(null);
   const walletCurrency = String(profile?.currency || 'EUR').toUpperCase();
+
+  const copy = (key: string, values: Record<string, string | number> = {}) => {
+    return Object.entries(values).reduce((result, [name, value]) => result.replace(`{${name}}`, String(value)), t(key));
+  };
+
+  const localizedCurrencyName = (currency: any) => {
+    const code = String(currency?.code || '').toUpperCase();
+    const locale = String(language || 'it').split('-')[0];
+    try {
+      const displayNames = new (Intl as any).DisplayNames([locale], { type: 'currency' });
+      const translated = displayNames.of(code);
+      if (translated) return `${translated.charAt(0).toUpperCase()}${translated.slice(1)}`;
+    } catch {}
+    return currency?.name || code;
+  };
   
   const hydrateSettingsForm = (user: any, companyData: any = null) => {
     const accountCurrency = String(user?.currency || 'EUR').toUpperCase();
@@ -3632,7 +3647,7 @@ const CustomerSettings = () => {
   const handleSubscriptionCheckout = async (method: 'wallet' | 'polar' | 'paypal', planId?: string) => {
     const chosenPlanId = planId || selectedPlanId || subscriptionPlans?.[0]?.id;
     if (!chosenPlanId) {
-      setActionError('Selecciona un plan disponible.');
+      setActionError(t('customer_settings_no_plan_selected'));
       return;
     }
     setSelectedSubscriptionMethod(method);
@@ -3651,12 +3666,12 @@ const CustomerSettings = () => {
       }
       if (res.success) {
         if (res.user) setProfile(res.user);
-        setActionSuccess(res.message || 'Suscripción activada correctamente.');
+        setActionSuccess(res.message || t('customer_settings_subscription_success'));
         fetchLatestProfile();
       }
     } catch (e: any) {
       const message = String(e?.message || '').trim();
-      setActionError(/polar/i.test(message) ? 'No se pudo iniciar el pago seguro. Intenta de nuevo o elige otro método de pago.' : (message || 'No se pudo activar la suscripción.'));
+      setActionError(/polar/i.test(message) ? t('customer_settings_payment_error') : (message || t('customer_settings_subscription_error')));
     } finally {
       setSubscribing(false);
     }
@@ -3669,7 +3684,7 @@ const CustomerSettings = () => {
     // Parse query params
     const params = new URLSearchParams(window.location.search);
     if (params.get('payment_success') === 'true') {
-      setSuccessMessage('¡Suscripción procesada con éxito! Disfruta de todos tus beneficios Pro.');
+      setSuccessMessage(t('customer_settings_subscription_processed'));
       // Clean query parameters from URL without reloading
       window.history.replaceState({}, document.title, window.location.pathname);
     }
@@ -3683,10 +3698,10 @@ const CustomerSettings = () => {
       if (res.url) {
         window.location.href = res.url;
       } else {
-        setErrorMessage('No se pudo obtener el enlace de suscripción. Intenta de nuevo o elige otro método de pago.');
+        setErrorMessage(t('customer_settings_payment_error'));
       }
     } catch (e: any) {
-      setErrorMessage('No se pudo iniciar la suscripción. Intenta de nuevo o elige otro método de pago.');
+      setErrorMessage(t('customer_settings_subscription_error'));
     } finally {
       setSubscribing(false);
     }
@@ -3704,11 +3719,11 @@ const CustomerSettings = () => {
       }
       if (res.success) {
         setProfile(res.user);
-        setActionSuccess('Solicitud de recarga creada. Tu saldo se acreditará cuando el pago sea confirmado.');
+        setActionSuccess(t('customer_settings_recharge_success'));
       }
     } catch (e: any) {
       const message = String(e?.message || '').trim();
-      setActionError(/polar/i.test(message) ? 'No se pudo iniciar el pago seguro. Intenta de nuevo o elige otro método de pago.' : (message || 'No se pudo procesar la recarga del monedero.'));
+      setActionError(/polar/i.test(message) ? t('customer_settings_payment_error') : (message || t('customer_settings_recharge_error')));
     } finally {
       setRechargeLoading(false);
     }
@@ -3724,10 +3739,10 @@ const CustomerSettings = () => {
         setProfile(res.user);
         setShowCardModal(false);
         setCardForm({ cardNumber: '', expiryDate: '', cvv: '', cardholderName: '' });
-        setActionSuccess('Tu método de respaldo fue vinculado correctamente para cubrir ajustes logísticos autorizados.');
+        setActionSuccess(t('customer_settings_card_success'));
       }
     } catch (e: any) {
-      setActionError(e.message || 'Ocurrió un error al vincular tu tarjeta de seguridad.');
+      setActionError(e.message || t('customer_settings_card_error'));
     }
   };
 
@@ -3736,10 +3751,10 @@ const CustomerSettings = () => {
     setActionSuccess('');
     try {
       const res = await api.startPaypalLink();
-      if (!res?.url) throw new Error('PayPal no está disponible en este momento.');
+      if (!res?.url) throw new Error(t('customer_settings_paypal_unavailable'));
       window.location.assign(res.url);
     } catch (e: any) {
-      setActionError(e.message || 'Ocurrió un error al vincular tu cuenta de PayPal.');
+      setActionError(e.message || t('customer_settings_paypal_error'));
     }
   };
 
@@ -3769,9 +3784,9 @@ const CustomerSettings = () => {
       setProfile(res.user);
       setCompany(res.company || null);
       hydrateSettingsForm(res.user, res.company || null);
-      setActionSuccess('Configuración guardada correctamente. Las próximas cotizaciones usarán esta moneda y estos datos.');
+      setActionSuccess(t('customer_settings_settings_success'));
     } catch (e: any) {
-      setActionError(e.message || 'No se pudo guardar la configuración.');
+      setActionError(e.message || t('customer_settings_settings_error'));
     } finally {
       setSettingsSaving(false);
     }
@@ -3779,32 +3794,32 @@ const CustomerSettings = () => {
 
   return (
     <div className="py-2 md:py-4">
-      <h1 className="text-3xl font-black text-gray-900 dark:text-white mb-8">Facturación y Wallet</h1>
+      <h1 className="text-3xl font-black text-gray-900 dark:text-white mb-8">{t('customer_settings_title')}</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <div className="glass-panel rounded-2xl p-5 border border-gray-200 dark:border-gray-800">
-          <label className="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Idioma del panel</label>
+          <label className="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_language_label')}</label>
           <select value={language} onChange={(e) => setLanguage(e.target.value as any)} className="input-dynamic font-bold">
             {availableLanguages.map((item) => <option key={item.code} value={item.code}>{item.flag} {item.label}</option>)}
           </select>
-          <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">Se guarda en este dispositivo y se aplica a web, panel y PWA.</p>
+          <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">{t('customer_settings_language_help')}</p>
         </div>
         <div className="glass-panel rounded-2xl p-5 border border-gray-200 dark:border-gray-800">
-          <label className="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Moneda del panel</label>
+          <label className="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_currency_label')}</label>
           <select value={billingForm.currency} onChange={e => { const nextCurrency = e.target.value; setBillingForm({...billingForm, currency: nextCurrency}); loadSubscriptionAndBankOptions(nextCurrency); }} className="input-dynamic font-bold">
-            {availableCurrencies.map(c => <option key={c.code} value={c.code}>{c.code} ({c.symbol}) - {c.name}</option>)}
+            {availableCurrencies.map(c => <option key={c.code} value={c.code}>{c.code} ({c.symbol}) - {localizedCurrencyName(c)}</option>)}
           </select>
-          <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">La cotización y el saldo se muestran en esta moneda.</p>
-          {billingForm.currency !== walletCurrency && <p className="text-[10px] text-amber-600 dark:text-amber-300 mt-1">Al guardar, tu saldo se convertirá de {walletCurrency} a {billingForm.currency} con la tasa vigente.</p>}
+          <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">{t('customer_settings_currency_help')}</p>
+          {billingForm.currency !== walletCurrency && <p className="text-[10px] text-amber-600 dark:text-amber-300 mt-1">{copy('customer_settings_currency_change_notice', { from: walletCurrency, to: billingForm.currency })}</p>}
         </div>
         <div className="glass-panel rounded-2xl p-5 border border-gray-200 dark:border-gray-800">
-          <label className="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Apariencia</label>
+          <label className="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_appearance')}</label>
           <select defaultValue={localStorage.getItem('theme') || 'system'} onChange={(e) => { localStorage.setItem('theme', e.target.value); window.dispatchEvent(new Event('ship24go-theme-change')); }} className="input-dynamic font-bold">
-            <option value="system">Automático</option>
-            <option value="light">Claro</option>
-            <option value="dark">Oscuro</option>
+            <option value="system">{t('customer_settings_appearance_system')}</option>
+            <option value="light">{t('customer_settings_appearance_light')}</option>
+            <option value="dark">{t('customer_settings_appearance_dark')}</option>
           </select>
-          <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">Modo claro, oscuro o según el dispositivo.</p>
+          <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">{t('customer_settings_appearance_help')}</p>
         </div>
       </div>
 
@@ -3831,12 +3846,12 @@ const CustomerSettings = () => {
           <div className="glass-panel p-4 sm:p-6 md:p-8 rounded-3xl border border-gray-200 dark:border-gray-800 flex flex-col justify-between">
               <div>
                   <div className="flex items-center justify-between mb-6">
-                      <h3 className="font-bold text-lg flex items-center gap-2 dark:text-white"><Wallet className="text-blue-500 dark:text-neon-cyan" /> Mi Monedero</h3>
+                      <h3 className="font-bold text-lg flex items-center gap-2 dark:text-white"><Wallet className="text-blue-500 dark:text-neon-cyan" /> {t('customer_settings_wallet_title')}</h3>
                       <span className="text-2xl font-black text-blue-600 dark:text-neon-cyan">
                         {format(Number(profile?.balance || 0), walletCurrency)}
                       </span>
                   </div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Añade fondos para generar etiquetas de forma instantánea. La recarga acredita el saldo solicitado, sin margen ni impuesto adicional.</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">{t('customer_settings_wallet_desc')}</p>
                   
                   <div className="grid grid-cols-3 gap-3 mb-6">
                       <button 
@@ -3868,17 +3883,17 @@ const CustomerSettings = () => {
                   disabled={rechargeLoading}
                   className="w-full flex flex-wrap items-center justify-center gap-2 bg-gradient-to-r from-slate-900 via-blue-700 to-cyan-600 hover:from-slate-950 hover:via-blue-800 hover:to-cyan-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 cursor-pointer"
                 >
-                  <span>{rechargeLoading ? 'Abriendo pago seguro...' : 'Recargar con tarjeta'}</span>
-                  {!rechargeLoading && <PaymentBrandMarks />}
+                  <span>{rechargeLoading ? t('customer_settings_secure_payment_loading') : t('customer_settings_recharge_card')}</span>
+                  {!rechargeLoading && <PaymentBrandMarks label={t('customer_settings_payment_brands')} />}
                 </button>}
                 {subscriptionMethods.paypal && <button
                   onClick={() => handleRecharge(150, 'paypal')}
                   disabled={rechargeLoading}
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 cursor-pointer"
                 >
-                  {rechargeLoading ? 'Abriendo pago seguro...' : 'Recargar con PayPal (EUR)'}
+                  {rechargeLoading ? t('customer_settings_secure_payment_loading') : copy('customer_settings_recharge_paypal', { currency: walletCurrency })}
                 </button>}
-                {!subscriptionMethods.polar && !subscriptionMethods.paypal && <p className="sm:col-span-2 text-sm text-gray-500 dark:text-gray-400 rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-950/20 p-3">Los pagos con tarjeta están temporalmente desactivados.</p>}
+                {!subscriptionMethods.polar && !subscriptionMethods.paypal && <p className="sm:col-span-2 text-sm text-gray-500 dark:text-gray-400 rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-950/20 p-3">{t('customer_settings_card_payments_disabled')}</p>}
                 <Link to="/panel/settings/wallet" className="w-full text-center bg-white dark:bg-dark-800 border border-blue-200 dark:border-neon-cyan/30 text-blue-700 dark:text-neon-cyan font-bold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-transform hover:-translate-y-0.5">
                   {t('bank_open_wallet')}
                 </Link>
@@ -3887,11 +3902,11 @@ const CustomerSettings = () => {
                 <div className="mt-5 rounded-2xl border border-blue-100 dark:border-neon-cyan/20 bg-blue-50/70 dark:bg-neon-cyan/10 p-4 sm:col-span-2">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                     <div>
-                      <p className="text-xs font-black uppercase tracking-wider text-blue-600 dark:text-neon-cyan">Transferencia bancaria disponible</p>
+                      <p className="text-xs font-black uppercase tracking-wider text-blue-600 dark:text-neon-cyan">{t('customer_settings_bank_available')}</p>
                       <p className="font-black text-gray-900 dark:text-white mt-1">{bankPreview.bankName} · {bankPreview.currency}</p>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{bankPreview.accountHolder}</p>
                     </div>
-                    <Link to="/panel/settings/wallet" className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-black text-center hover:bg-blue-700">Ver datos y subir comprobante</Link>
+                    <Link to="/panel/settings/wallet" className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-black text-center hover:bg-blue-700">{t('customer_settings_bank_details')}</Link>
                   </div>
                   {bankPreview.details && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-4 text-xs">
@@ -3909,10 +3924,10 @@ const CustomerSettings = () => {
           <div className="glass-panel p-4 sm:p-6 md:p-8 rounded-3xl border border-gray-200 dark:border-gray-800 flex flex-col justify-between">
               <div>
                   <h3 className="font-bold text-lg mb-2 dark:text-white flex items-center gap-2">
-                    <ShieldCheck className="text-green-500 dark:text-neon-green" /> Métodos de Seguridad de Respaldo
+                    <ShieldCheck className="text-green-500 dark:text-neon-green" /> {t('customer_settings_backup_title')}
                   </h3>
                   <p className="text-xs text-gray-400 dark:text-gray-500 mb-6">
-                    Recomendado para cuentas con volumen frecuente. Ayuda a cubrir ajustes logísticos autorizados y agiliza la aprobación operativa.
+                    {t('customer_settings_backup_desc')}
                   </p>
                   
                   <div className="space-y-4">
@@ -3921,9 +3936,9 @@ const CustomerSettings = () => {
                           <div className="flex items-center gap-3">
                               <CreditCard className="w-5 h-5 text-gray-400 dark:text-gray-500" />
                               <div>
-                                  <p className="text-sm font-bold text-gray-900 dark:text-white">Tarjeta de Seguridad</p>
+                                  <p className="text-sm font-bold text-gray-900 dark:text-white">{t('customer_settings_security_card')}</p>
                                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                                      {profile?.cardConnected ? `Tarjeta vinculada: ${profile.cardDetails?.cardNumber}` : 'Ninguna tarjeta de seguridad vinculada'}
+                                      {profile?.cardConnected ? copy('customer_settings_security_card_connected', { details: profile.cardDetails?.cardNumber || '' }) : t('customer_settings_security_card_none')}
                                   </p>
                               </div>
                           </div>
@@ -3931,7 +3946,7 @@ const CustomerSettings = () => {
                             onClick={() => setShowCardModal(true)}
                             className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${profile?.cardConnected ? 'border-gray-200 hover:bg-gray-100 text-gray-600 dark:border-gray-700 dark:hover:bg-gray-800 dark:text-gray-300' : 'border-pink-500 hover:bg-pink-50 dark:border-neon-pink dark:hover:bg-neon-pink/10 text-pink-600 dark:text-neon-pink'}`}
                           >
-                              {profile?.cardConnected ? 'Cambiar Tarjeta' : 'Vincular Tarjeta'}
+                              {profile?.cardConnected ? t('customer_settings_change_card') : t('customer_settings_link_card')}
                           </button>
                       </div>
 
@@ -3940,9 +3955,9 @@ const CustomerSettings = () => {
                           <div className="flex items-center gap-3">
                               <i className="fa-brands fa-paypal text-blue-500 text-lg"></i>
                               <div>
-                                  <p className="text-sm font-bold text-gray-900 dark:text-white">PayPal de Respaldo</p>
-                                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                                      {profile?.paypalConnected ? `Conectado: ${profile.paypalEmail}` : 'Ninguna cuenta de PayPal vinculada'}
+                                <p className="text-sm font-bold text-gray-900 dark:text-white">{t('customer_settings_backup_paypal')}</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">
+                                      {profile?.paypalConnected ? copy('customer_settings_backup_paypal_connected', { email: profile.paypalEmail || '' }) : t('customer_settings_backup_paypal_none')}
                                   </p>
                               </div>
                           </div>
@@ -3950,7 +3965,7 @@ const CustomerSettings = () => {
                             onClick={handleConnectPaypal}
                             className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${profile?.paypalConnected ? 'border-gray-200 hover:bg-gray-100 text-gray-600 dark:border-gray-700 dark:hover:bg-gray-800 dark:text-gray-300' : 'border-blue-500 hover:bg-blue-50 dark:border-neon-cyan dark:hover:bg-neon-cyan/10 text-blue-600 dark:text-neon-cyan'}`}
                           >
-                              {profile?.paypalConnected ? 'Cambiar Cuenta' : 'Vincular PayPal'}
+                              {profile?.paypalConnected ? t('customer_settings_change_paypal') : t('customer_settings_link_paypal')}
                           </button>
                       </div>
                   </div>
@@ -3959,15 +3974,15 @@ const CustomerSettings = () => {
               {/* Customer-facing subscription summary */}
               <div className="pt-6 border-t border-gray-100 dark:border-gray-800 mt-6 flex items-center justify-between">
                   <div>
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Plan de Suscripción</p>
-                      <p className="text-sm font-black text-pink-500 dark:text-neon-pink uppercase tracking-wide">{String((profile as any)?.subscription?.planName || (profile as any)?.currentPlanName || 'DoorDrop Básico').toUpperCase()} ACTIVO</p>
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">{t('customer_settings_subscription_plan')}</p>
+                      <p className="text-sm font-black text-pink-500 dark:text-neon-pink uppercase tracking-wide">{String((profile as any)?.subscription?.planName || (profile as any)?.currentPlanName || 'DoorDrop').toUpperCase()} {t('customer_settings_active').toUpperCase()}</p>
                   </div>
                   <button 
                     onClick={handlePolarSubscription}
                     disabled={subscribing}
                     className="text-xs font-bold bg-gray-900 dark:bg-white text-white dark:text-gray-900 px-4 py-2 rounded-xl transition-all hover:scale-105"
                   >
-                     {subscribing ? 'Cargando...' : 'Gestionar suscripción'}
+                     {subscribing ? t('customer_settings_loading') : t('customer_settings_manage_subscription')}
                   </button>
               </div>
           </div>
@@ -3978,18 +3993,18 @@ const CustomerSettings = () => {
       <div className="glass-panel p-4 sm:p-6 md:p-8 rounded-3xl border border-gray-200 dark:border-gray-800 mb-8">
         <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-6">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-600 dark:text-neon-cyan mb-2">Suscripción</p>
-            <h3 className="font-black text-2xl text-gray-900 dark:text-white">Planes y métodos de pago</h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-3xl">Activa tu plan con saldo disponible, tarjeta de crédito/débito o PayPal. Elige la opción que prefieras; con el saldo disponible la suscripción queda activa al instante.</p>
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-600 dark:text-neon-cyan mb-2">{t('customer_settings_subscription_eyebrow')}</p>
+            <h3 className="font-black text-2xl text-gray-900 dark:text-white">{t('customer_settings_plans_title')}</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-3xl">{t('customer_settings_plans_desc')}</p>
           </div>
           <div className="rounded-2xl bg-gray-50 dark:bg-dark-800 border border-gray-100 dark:border-gray-800 p-4 min-w-[220px]">
-            <p className="text-xs font-black text-gray-500 uppercase tracking-wider">Saldo disponible</p>
+            <p className="text-xs font-black text-gray-500 uppercase tracking-wider">{t('customer_settings_available_balance')}</p>
             <p className="text-2xl font-black text-blue-600 dark:text-neon-cyan">{format(Number(profile?.balance || 0), walletCurrency)}</p>
           </div>
         </div>
 
         {!subscriptionPlans.length ? (
-          <div className="rounded-2xl bg-gray-50 dark:bg-dark-800/60 border border-gray-100 dark:border-gray-800 p-6 text-center text-gray-500 dark:text-gray-400 font-bold">No hay planes disponibles todavía.</div>
+          <div className="rounded-2xl bg-gray-50 dark:bg-dark-800/60 border border-gray-100 dark:border-gray-800 p-6 text-center text-gray-500 dark:text-gray-400 font-bold">{t('customer_settings_no_plans')}</div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             {subscriptionPlans.map((plan: any) => (
@@ -3997,16 +4012,16 @@ const CustomerSettings = () => {
                 <div className="flex items-start justify-between gap-3 mb-4">
                   <div>
                     <p className="text-lg font-black text-gray-900 dark:text-white">{plan.name}</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Descuento: {Number(plan.discount || 0).toFixed(0)}%</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{copy('customer_settings_discount', { value: Number(plan.discount || 0).toFixed(0) })}</p>
                   </div>
                   <span className="px-3 py-1 rounded-full bg-blue-50 dark:bg-neon-cyan/10 text-blue-700 dark:text-neon-cyan text-xs font-black">{plan.currency}</span>
                 </div>
                 <p className="text-3xl font-black text-gray-900 dark:text-white mb-5">{format(Number(plan.price || 0), plan.currency)}</p>
-                <button onClick={() => setSelectedPlanId(plan.id)} className="w-full mb-4 py-2 rounded-xl border border-gray-200 dark:border-gray-700 font-black text-sm hover:border-blue-500 dark:hover:border-neon-cyan">Seleccionar</button>
+                <button onClick={() => setSelectedPlanId(plan.id)} className="w-full mb-4 py-2 rounded-xl border border-gray-200 dark:border-gray-700 font-black text-sm hover:border-blue-500 dark:hover:border-neon-cyan">{t('customer_settings_select')}</button>
                 <div className="space-y-2">
-                  {subscriptionMethods.wallet && plan.walletEnabled !== false && <button disabled={subscribing} onClick={() => handleSubscriptionCheckout('wallet', plan.id)} className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm disabled:opacity-60">Activar con wallet</button>}
-                  {subscriptionMethods.polar && plan.polarEnabled !== false && <button disabled={subscribing} onClick={() => handleSubscriptionCheckout('polar', plan.id)} className="w-full flex flex-wrap items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-slate-900 via-blue-700 to-cyan-600 hover:from-slate-950 hover:via-blue-800 hover:to-cyan-700 text-white font-black text-sm disabled:opacity-60"><span>Tarjeta de crédito/débito</span><PaymentBrandMarks /></button>}
-                  {subscriptionMethods.paypal && plan.paypalEnabled !== false && <button disabled={subscribing} onClick={() => handleSubscriptionCheckout('paypal', plan.id)} className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-sm disabled:opacity-60">PayPal / crédito / débito</button>}
+                  {subscriptionMethods.wallet && plan.walletEnabled !== false && <button disabled={subscribing} onClick={() => handleSubscriptionCheckout('wallet', plan.id)} className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm disabled:opacity-60">{t('customer_settings_activate_wallet')}</button>}
+                  {subscriptionMethods.polar && plan.polarEnabled !== false && <button disabled={subscribing} onClick={() => handleSubscriptionCheckout('polar', plan.id)} className="w-full flex flex-wrap items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-slate-900 via-blue-700 to-cyan-600 hover:from-slate-950 hover:via-blue-800 hover:to-cyan-700 text-white font-black text-sm disabled:opacity-60"><span>{t('customer_settings_activate_card')}</span><PaymentBrandMarks label={t('customer_settings_payment_brands')} /></button>}
+                  {subscriptionMethods.paypal && plan.paypalEnabled !== false && <button disabled={subscribing} onClick={() => handleSubscriptionCheckout('paypal', plan.id)} className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-sm disabled:opacity-60">{t('customer_settings_activate_paypal')}</button>}
                 </div>
               </div>
             ))}
@@ -4020,8 +4035,8 @@ const CustomerSettings = () => {
           <div className="bg-white dark:bg-dark-900 rounded-3xl border border-gray-200 dark:border-gray-800 shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="p-6 bg-gradient-to-r from-pink-500 to-orange-400 dark:from-neon-pink dark:to-[#9D00FF] text-white flex justify-between items-center">
               <div>
-                <h3 className="font-bold text-lg flex items-center gap-2"><CreditCard /> Vincular Tarjeta de Seguridad</h3>
-                <p className="text-xs text-white/80 mt-1">Permite cubrir ajustes logísticos autorizados por la mensajería.</p>
+                <h3 className="font-bold text-lg flex items-center gap-2"><CreditCard /> {t('customer_settings_card_modal_title')}</h3>
+                <p className="text-xs text-white/80 mt-1">{t('customer_settings_card_modal_desc')}</p>
               </div>
               <button onClick={() => setShowCardModal(false)} className="p-1 rounded-full hover:bg-white/10 text-white transition-colors">
                 <X className="w-5 h-5" />
@@ -4029,32 +4044,32 @@ const CustomerSettings = () => {
             </div>
             <form onSubmit={handleConnectCardSubmit} className="p-6 space-y-4">
               <div>
-                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Nombre del Tarjetahabiente</label>
-                <input required type="text" placeholder="Juan Pérez" value={cardForm.cardholderName} onChange={e => setCardForm({...cardForm, cardholderName: e.target.value})} className="input-dynamic" />
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_cardholder')}</label>
+                <input required type="text" placeholder={t('customer_settings_cardholder_placeholder')} value={cardForm.cardholderName} onChange={e => setCardForm({...cardForm, cardholderName: e.target.value})} className="input-dynamic" />
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Número de Tarjeta</label>
-                <input required type="text" maxLength={16} placeholder="4000 1234 5678 9010" value={cardForm.cardNumber} onChange={e => setCardForm({...cardForm, cardNumber: e.target.value})} className="input-dynamic" />
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_card_number')}</label>
+                <input required type="text" maxLength={16} placeholder={t('customer_settings_card_number_placeholder')} value={cardForm.cardNumber} onChange={e => setCardForm({...cardForm, cardNumber: e.target.value})} className="input-dynamic" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Vencimiento</label>
-                  <input required type="text" maxLength={5} placeholder="MM/AA" value={cardForm.expiryDate} onChange={e => setCardForm({...cardForm, expiryDate: e.target.value})} className="input-dynamic" />
+                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_expiry')}</label>
+                  <input required type="text" maxLength={5} placeholder="MM/YY" value={cardForm.expiryDate} onChange={e => setCardForm({...cardForm, expiryDate: e.target.value})} className="input-dynamic" />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">CVV / Seguridad</label>
-                  <input required type="password" maxLength={3} placeholder="123" value={cardForm.cvv} onChange={e => setCardForm({...cardForm, cvv: e.target.value})} className="input-dynamic" />
+                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_cvv')}</label>
+                  <input required type="password" maxLength={3} placeholder={t('customer_settings_cvv_placeholder')} value={cardForm.cvv} onChange={e => setCardForm({...cardForm, cvv: e.target.value})} className="input-dynamic" />
                 </div>
               </div>
               <p className="text-[10px] text-gray-400 dark:text-gray-500 leading-relaxed">
-                * Tu información se procesa de forma segura bajo estrictos estándares PCI-DSS. No se realizarán cargos inmediatos; solo pre-autorización para verificación de diferencias de peso (kg falso) o daños.
+                * {t('customer_settings_card_security_note')}
               </p>
               <div className="pt-4 flex gap-3">
                 <button type="button" onClick={() => setShowCardModal(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 dark:bg-dark-800 dark:hover:bg-dark-700 text-gray-700 dark:text-gray-300 font-bold rounded-xl transition-all text-sm">
-                  Cancelar
+                  {t('customer_settings_cancel')}
                 </button>
                 <button type="submit" className="flex-1 py-3 bg-gradient-to-r from-pink-500 to-orange-400 dark:from-neon-pink dark:to-[#9D00FF] text-white font-bold rounded-xl shadow hover:opacity-90 transition-all text-sm">
-                  Vincular Tarjeta
+                  {t('customer_settings_link_card')}
                 </button>
               </div>
             </form>
@@ -4066,93 +4081,93 @@ const CustomerSettings = () => {
         <div className="absolute top-[-20%] right-[-10%] w-48 h-48 bg-pink-300/20 dark:bg-neon-pink/10 rounded-full mix-blend-multiply dark:mix-blend-screen filter blur-[60px] pointer-events-none"></div>
         <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2 relative z-10 flex items-center">
           <Settings className="w-5 h-5 mr-2 text-pink-500 dark:text-neon-pink" />
-          Configuración de facturación
+          {t('customer_settings_billing_title')}
         </h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-6 relative z-10">Estos datos se usan en cotizaciones, cargos de envío y documentos comerciales.</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-6 relative z-10">{t('customer_settings_billing_desc')}</p>
         {profile ? (
           <form onSubmit={handleSaveSettings} className="space-y-6 relative z-10">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Nombre comercial</label>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_business_name')}</label>
                 <input type="text" value={billingForm.name} onChange={e => setBillingForm({...billingForm, name: e.target.value})} className="input-dynamic font-medium" />
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Correo de cuenta</label>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_account_email')}</label>
                 <input type="email" readOnly value={profile.email || ''} className="input-dynamic font-medium bg-gray-50 dark:bg-dark-800" />
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Teléfono</label>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_phone')}</label>
                 <input type="text" value={billingForm.phone} onChange={e => setBillingForm({...billingForm, phone: e.target.value})} className="input-dynamic font-medium" />
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">País operativo</label>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_operating_country')}</label>
                 <CountrySelect value={billingForm.country} onChange={(code) => setBillingForm({...billingForm, country: code, billingCountry: billingForm.billingCountry || code})} lang={language || "es"} buttonClassName="input-dynamic flex items-center gap-2 cursor-pointer font-medium text-left" />
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Moneda predeterminada</label>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_default_currency')}</label>
                 <select value={billingForm.currency} onChange={e => { const nextCurrency = e.target.value; setBillingForm({...billingForm, currency: nextCurrency}); loadSubscriptionAndBankOptions(nextCurrency); }} className="input-dynamic font-bold">
-                  {availableCurrencies.map(c => <option key={c.code} value={c.code}>{c.code} ({c.symbol}) - {c.name}</option>)}
+                  {availableCurrencies.map(c => <option key={c.code} value={c.code}>{c.code} ({c.symbol}) - {localizedCurrencyName(c)}</option>)}
                 </select>
-                <p className="text-[10px] text-gray-400 mt-1">El cotizador usará esta moneda automáticamente.</p>
+                <p className="text-[10px] text-gray-400 mt-1">{t('customer_settings_quote_currency_help')}</p>
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Método preferido para envíos</label>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_preferred_shipping_method')}</label>
                 <select value={billingForm.preferredPaymentMethod} onChange={e => setBillingForm({...billingForm, preferredPaymentMethod: e.target.value})} className="input-dynamic font-bold">
-                  <option value="wallet">Wallet / saldo disponible</option>
-                  <option value="card">Tarjeta guardada</option>
-                  <option value="paypal">PayPal guardado</option>
+                  <option value="wallet">{t('customer_settings_wallet_balance')}</option>
+                  <option value="card">{t('customer_settings_saved_card')}</option>
+                  <option value="paypal">{t('customer_settings_saved_paypal')}</option>
                 </select>
-                <p className="text-[10px] text-gray-400 mt-1">Guarda tu preferencia para no repetir datos en cada envío.</p>
+                <p className="text-[10px] text-gray-400 mt-1">{t('customer_settings_shipping_preference_help')}</p>
               </div>
               <div className="md:col-span-2">
-                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Tipo de negocio</label>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_business_type')}</label>
                 <input type="text" value={billingForm.businessType} onChange={e => setBillingForm({...billingForm, businessType: e.target.value})} className="input-dynamic font-medium" />
               </div>
             </div>
 
             <div className="pt-6 border-t border-gray-200 dark:border-gray-800">
-              <h4 className="font-black text-gray-900 dark:text-white mb-4">Datos de facturación</h4>
+              <h4 className="font-black text-gray-900 dark:text-white mb-4">{t('customer_settings_billing_data')}</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Empresa / nombre fiscal</label>
+                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_tax_name')}</label>
                   <input type="text" value={billingForm.companyName} onChange={e => setBillingForm({...billingForm, companyName: e.target.value})} className="input-dynamic font-medium" />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Correo de facturación</label>
+                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_billing_email')}</label>
                   <input type="email" value={billingForm.billingEmail} onChange={e => setBillingForm({...billingForm, billingEmail: e.target.value})} className="input-dynamic font-medium" />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Teléfono de facturación</label>
+                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_billing_phone')}</label>
                   <input type="text" value={billingForm.billingPhone} onChange={e => setBillingForm({...billingForm, billingPhone: e.target.value})} className="input-dynamic font-medium" />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">País de facturación</label>
+                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_billing_country')}</label>
                   <CountrySelect value={billingForm.billingCountry} onChange={(code) => setBillingForm({...billingForm, billingCountry: code})} lang={language || "es"} buttonClassName="input-dynamic flex items-center gap-2 cursor-pointer font-medium text-left" />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Dirección</label>
+                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_address')}</label>
                   <input type="text" value={billingForm.address} onChange={e => setBillingForm({...billingForm, address: e.target.value})} className="input-dynamic font-medium" />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Ciudad</label>
+                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_city')}</label>
                   <input type="text" value={billingForm.city} onChange={e => setBillingForm({...billingForm, city: e.target.value})} className="input-dynamic font-medium" />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Código postal</label>
+                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_postal_code')}</label>
                   <input type="text" value={billingForm.zipCode} onChange={e => setBillingForm({...billingForm, zipCode: e.target.value})} className="input-dynamic font-medium" />
                 </div>
               </div>
             </div>
 
             <div className="pt-4 border-t border-gray-200 dark:border-gray-800 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-               <p className="text-xs text-gray-500 dark:text-gray-400">Saldo actual: <span className="font-black text-gray-900 dark:text-white">{format(Number(profile?.balance || 0), walletCurrency)}</span></p>
+               <p className="text-xs text-gray-500 dark:text-gray-400">{t('customer_settings_current_balance')}: <span className="font-black text-gray-900 dark:text-white">{format(Number(profile?.balance || 0), walletCurrency)}</span></p>
                <button disabled={settingsSaving} className="bg-gray-900 dark:bg-white text-white dark:text-gray-900 px-6 py-2.5 rounded-full font-bold hover:shadow-lg transition-transform hover:-translate-y-1 text-sm disabled:opacity-50">
-                 {settingsSaving ? 'Guardando...' : 'Guardar configuración'}
+                 {settingsSaving ? t('customer_settings_saving') : t('customer_settings_save')}
                </button>
             </div>
           </form>
         ) : (
-          <p className="text-gray-500 dark:text-gray-400">Cargando perfil...</p>
+          <p className="text-gray-500 dark:text-gray-400">{t('customer_settings_loading_profile')}</p>
         )}
       </div>
     </div>
@@ -4160,11 +4175,11 @@ const CustomerSettings = () => {
 };
 
 
-const PaymentBrandMarks = ({ className = '' }: { className?: string }) => (
+const PaymentBrandMarks = ({ className = '', label = 'Visa, Mastercard y Google Pay' }: { className?: string; label?: string }) => (
   <span
     className={`inline-flex items-center gap-1.5 rounded-full bg-white/95 px-2 py-1 text-[10px] leading-none shadow-sm ${className}`}
-    aria-label="Visa, Mastercard y Google Pay"
-    title="Visa, Mastercard y Google Pay"
+    aria-label={label}
+    title={label}
   >
     <span className="font-black tracking-tight text-[#1a1f71]">VISA</span>
     <span className="inline-flex items-center -space-x-1" aria-hidden="true">
