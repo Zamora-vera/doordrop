@@ -5,7 +5,10 @@ import fs from 'fs';
 import { GoogleGenAI } from '@google/genai';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { validateEvent as validatePolarWebhookEvent } from '@polar-sh/sdk/webhooks';
+import {
+  validateEvent as validatePolarWebhookEvent,
+  WebhookVerificationError as PolarWebhookVerificationError
+} from '@polar-sh/sdk/webhooks';
 import { pool } from './server/db/connection';
 
 // Asegurar la carga de variables del archivo .env con override prioritario
@@ -13033,9 +13036,22 @@ app.post('/api/webhooks/polar', async (req: any, res) => {
     let payload: any;
     try {
       payload = validatePolarWebhookEvent(rawBody, req.headers, webhookSecret);
-    } catch {
-      console.warn('[Polar] Webhook rejected: invalid signature.');
-      return res.status(403).json({ received: false });
+    } catch (error: any) {
+      if (error instanceof PolarWebhookVerificationError) {
+        console.warn('[Polar] Webhook rejected: invalid signature.');
+        return res.status(403).json({ received: false });
+      }
+
+      // Signature verification already ran before the SDK schema parser. If
+      // Polar adds a field or event variant before this SDK is updated, keep
+      // the signed event acknowledged instead of causing endless retries.
+      try {
+        payload = JSON.parse(rawBody);
+        console.warn('[Polar] Signed webhook accepted with an unrecognized payload shape.');
+      } catch {
+        console.error('[Polar] Webhook payload could not be parsed after signature verification.');
+        return res.status(400).json({ received: false });
+      }
     }
 
     const eventType = payload.type || payload.event || payload.name || '';
@@ -15430,10 +15446,12 @@ app.post('/api/webhooks/paypal', async (req: any, res) => {
 
     if (eventType.startsWith('BILLING.SUBSCRIPTION.') && resource.id) {
       const statusMap: Record<string, string> = {
-        'BILLING.SUBSCRIPTION.CREATED': 'pending',
+        // The subscriptions.status enum has no pending/suspended values.
+        // Keep those pre-activation or interrupted states fail-closed.
+        'BILLING.SUBSCRIPTION.CREATED': 'past_due',
         'BILLING.SUBSCRIPTION.UPDATED': 'active',
         'BILLING.SUBSCRIPTION.CANCELLED': 'canceled',
-        'BILLING.SUBSCRIPTION.SUSPENDED': 'suspended',
+        'BILLING.SUBSCRIPTION.SUSPENDED': 'past_due',
         'BILLING.SUBSCRIPTION.PAYMENT.FAILED': 'past_due',
         'BILLING.SUBSCRIPTION.PAYMENT.COMPLETED': 'active',
         'BILLING.SUBSCRIPTION.EXPIRED': 'expired'
@@ -15457,7 +15475,7 @@ app.post('/api/webhooks/paypal', async (req: any, res) => {
   } catch (error: any) {
     console.error('[PayPal webhook] error:', error?.message || error);
     try {
-      const reference = String(req.body?.resource?.id || req.body?.id || '').trim();
+      const reference = String(req.body?.id || req.body?.resource?.id || '').trim();
       if (reference) await pool.query(`UPDATE webhook_events SET processed_status = 'failed' WHERE provider_code = 'paypal' AND external_id = ?`, [reference]);
     } catch {}
     res.status(500).json({ received: false });
