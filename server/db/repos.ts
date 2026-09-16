@@ -589,25 +589,49 @@ export const AdminSettingsRepo = {
     const current = await this.get();
     const currentAi = current.ai || {};
     const incoming = ai || {};
+    const requestedProvider = String(incoming.provider || currentAi.provider || '').trim().toLowerCase();
+    const provider = requestedProvider === 'groq' || requestedProvider === 'openai'
+      ? requestedProvider
+      : (incoming.groqApiKey || currentAi.groqApiKey || process.env.GROQ_API_KEY ? 'groq' : 'openai');
+    const providerChanged = provider !== String(currentAi.provider || '').trim().toLowerCase();
+    const defaultModel = provider === 'groq'
+      ? (process.env.GROQ_MODEL || 'openai/gpt-oss-20b')
+      : (process.env.OPENAI_MODEL || 'gpt-5.4-mini');
     const nextAi = {
       enabled: incoming.enabled !== undefined ? Boolean(incoming.enabled) : (currentAi.enabled !== false),
-      model: String(incoming.model || currentAi.model || process.env.OPENAI_MODEL || 'gpt-5.4-mini').trim().slice(0, 80),
+      provider,
+      model: String(incoming.model || (!providerChanged ? currentAi.model : '') || defaultModel).trim().slice(0, 120),
       autoTicket: incoming.autoTicket !== undefined ? Boolean(incoming.autoTicket) : (currentAi.autoTicket !== false),
       maxContextRecords: Math.max(5, Math.min(50, Number(incoming.maxContextRecords || currentAi.maxContextRecords || 20))),
       publicProviderWord: 'courier',
       instructions: String(incoming.instructions || currentAi.instructions || '').slice(0, 4000),
-      openaiApiKey: currentAi.openaiApiKey || ''
+      openaiApiKey: currentAi.openaiApiKey || '',
+      groqApiKey: currentAi.groqApiKey || ''
     };
     const incomingKey = String(incoming.openaiApiKey || incoming.apiKey || '').trim();
     if (incomingKey && !incomingKey.includes('••') && incomingKey !== '********') {
       nextAi.openaiApiKey = incomingKey;
+    }
+    const incomingGroqKey = String(incoming.groqApiKey || '').trim();
+    if (incomingGroqKey && !incomingGroqKey.includes('••') && incomingGroqKey !== '********') {
+      nextAi.groqApiKey = incomingGroqKey;
     }
     const nextSettings = { ...current, ai: nextAi };
     await pool.query(
       `UPDATE admin_settings SET settings_json = ? WHERE id = 1`,
       [JSON.stringify(nextSettings)]
     );
-    return { ...nextAi, openaiApiKey: nextAi.openaiApiKey ? '••••••••' : '', hasKey: Boolean(nextAi.openaiApiKey || process.env.OPENAI_API_KEY) };
+    const activeKey = provider === 'groq'
+      ? (nextAi.groqApiKey || process.env.GROQ_API_KEY || '')
+      : (nextAi.openaiApiKey || process.env.OPENAI_API_KEY || '');
+    return {
+      ...nextAi,
+      openaiApiKey: nextAi.openaiApiKey ? '••••••••' : '',
+      groqApiKey: nextAi.groqApiKey ? '••••••••' : '',
+      hasOpenAIKey: Boolean(nextAi.openaiApiKey || process.env.OPENAI_API_KEY),
+      hasGroqKey: Boolean(nextAi.groqApiKey || process.env.GROQ_API_KEY),
+      hasKey: Boolean(activeKey)
+    };
   },
 
   async ensureDefaultsWithoutRecursion(): Promise<void> {

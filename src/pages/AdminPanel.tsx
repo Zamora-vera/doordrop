@@ -2725,8 +2725,10 @@ const AdminSettings = () => {
   });
   const [aiSettings, setAiSettings] = useState<any>({
     enabled: true,
-    model: 'gpt-5.4-mini',
+    provider: 'groq',
+    model: 'openai/gpt-oss-20b',
     openaiApiKey: '',
+    groqApiKey: '',
     autoTicket: true,
     maxContextRecords: 20,
     instructions: ''
@@ -2754,7 +2756,7 @@ const AdminSettings = () => {
     api.getAdminSettings().then(res => {
       if (res.apiKeys) setApiKeys(res.apiKeys);
       if (res.brand) setBrand(prev => ({ ...prev, ...res.brand, logoDataUrl: '', faviconDataUrl: '' }));
-      if (res.ai) setAiSettings((prev: any) => ({ ...prev, ...res.ai, openaiApiKey: '' }));
+      if (res.ai) setAiSettings((prev: any) => ({ ...prev, ...res.ai, openaiApiKey: '', groqApiKey: '' }));
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
@@ -2840,7 +2842,7 @@ const AdminSettings = () => {
     try {
       const res = await api.updateAdminSettings({ apiKeys, brand, ai: aiSettings });
       if (res.brand) setBrand(prev => ({ ...prev, ...res.brand, logoDataUrl: '', faviconDataUrl: '' }));
-      if (res.ai) setAiSettings((prev: any) => ({ ...prev, ...res.ai, openaiApiKey: '' }));
+      if (res.ai) setAiSettings((prev: any) => ({ ...prev, ...res.ai, openaiApiKey: '', groqApiKey: '' }));
       await refreshBrand();
       alert('Configuración guardada correctamente.');
     } catch (e) {
@@ -3049,11 +3051,27 @@ const AdminSettings = () => {
           </label>
 
           <div>
+            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t('ai_admin_provider')}</label>
+            <select
+              value={aiSettings.provider || 'groq'}
+              onChange={(e) => setAiSettings((prev: any) => ({
+                ...prev,
+                provider: e.target.value,
+                model: e.target.value === 'groq' ? 'openai/gpt-oss-20b' : 'gpt-5.4-mini'
+              }))}
+              className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm text-gray-900 dark:text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="groq">Groq</option>
+              <option value="openai">OpenAI</option>
+            </select>
+          </div>
+
+          <div>
             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t('ai_admin_model')}</label>
             <input
               value={aiSettings.model || ''}
               onChange={(e) => setAiSettings((prev: any) => ({ ...prev, model: e.target.value }))}
-              placeholder="gpt-5.4-mini"
+              placeholder={aiSettings.provider === 'groq' ? 'openai/gpt-oss-20b' : 'gpt-5.4-mini'}
               className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-gray-700 rounded-xl font-mono text-sm text-gray-900 dark:text-white focus:outline-none focus:border-blue-500"
             />
           </div>
@@ -3071,15 +3089,27 @@ const AdminSettings = () => {
           </div>
 
           <div className="md:col-span-2">
+            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t('ai_admin_groq_key')}</label>
+            <input
+              type="password"
+              value={aiSettings.groqApiKey || ''}
+              onChange={(e) => setAiSettings((prev: any) => ({ ...prev, groqApiKey: e.target.value }))}
+              placeholder={aiSettings.hasKey ? t('ai_admin_key_saved') : t('ai_admin_key_placeholder')}
+              className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-gray-700 rounded-xl font-mono text-sm text-gray-900 dark:text-white focus:outline-none focus:border-blue-500"
+            />
+            <p className="text-xs text-gray-400 mt-2">{t('ai_admin_key_help')}</p>
+          </div>
+
+          <div className="md:col-span-2">
             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t('ai_admin_openai_key')}</label>
             <input
               type="password"
               value={aiSettings.openaiApiKey || ''}
               onChange={(e) => setAiSettings((prev: any) => ({ ...prev, openaiApiKey: e.target.value }))}
-              placeholder={aiSettings.hasKey ? t('ai_admin_key_saved') : t('ai_admin_key_placeholder')}
+              placeholder={aiSettings.hasOpenAIKey ? t('ai_admin_key_saved') : t('ai_admin_openai_placeholder')}
               className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-gray-700 rounded-xl font-mono text-sm text-gray-900 dark:text-white focus:outline-none focus:border-blue-500"
             />
-            <p className="text-xs text-gray-400 mt-2">{t('ai_admin_key_help')}</p>
+            <p className="text-xs text-gray-400 mt-2">{t('ai_admin_optional_provider_key')}</p>
           </div>
 
           <div className="md:col-span-2">

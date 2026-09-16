@@ -15305,7 +15305,7 @@ Description: ${description}
 Tracking code: ${trackingCode || 'N/A'}
 
 Write a professional logistics support reply for DoorDrop. Use the customer's language (${language}). Use the word courier for shipping partners. Do not expose internal systems, raw data, keys, logs, tables or technical errors. Keep it friendly and concise.`;
-    const response = await callOpenAIText([
+    const response = await callAIText([
       { role: 'system', content: ship24goSupportSystemPrompt(language) },
       { role: 'user', content: prompt }
     ], language, { maxOutputTokens: 450 });
@@ -15449,6 +15449,15 @@ function parseOpenAIText(data: any): string {
   return parts.join('\n').trim();
 }
 
+function parseChatCompletionText(data: any): string {
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) {
+    return content.map((part: any) => typeof part === 'string' ? part : (part?.text || part?.content || '')).join('\n').trim();
+  }
+  return '';
+}
+
 async function getStoredAISettings(): Promise<any> {
   const settings = await AdminSettingsRepo.get().catch(() => ({}));
   return settings?.ai || {};
@@ -15456,25 +15465,71 @@ async function getStoredAISettings(): Promise<any> {
 
 async function publicAISettings(): Promise<any> {
   const stored = await getStoredAISettings();
-  const key = stored.openaiApiKey || process.env.OPENAI_API_KEY || '';
+  const requestedProvider = String(stored.provider || '').trim().toLowerCase();
+  const provider = requestedProvider === 'groq' || requestedProvider === 'openai'
+    ? requestedProvider
+    : (stored.groqApiKey || process.env.GROQ_API_KEY ? 'groq' : 'openai');
+  const openaiKey = stored.openaiApiKey || process.env.OPENAI_API_KEY || '';
+  const groqKey = stored.groqApiKey || process.env.GROQ_API_KEY || '';
+  const key = provider === 'groq' ? groqKey : openaiKey;
+  const defaultModel = provider === 'groq'
+    ? (process.env.GROQ_MODEL || 'openai/gpt-oss-20b')
+    : (process.env.OPENAI_MODEL || 'gpt-5.4-mini');
   return {
     enabled: stored.enabled !== false,
-    model: stored.model || process.env.OPENAI_MODEL || 'gpt-5.4-mini',
+    provider,
+    model: stored.model || defaultModel,
     autoTicket: stored.autoTicket !== false,
     maxContextRecords: Math.max(5, Math.min(50, Number(stored.maxContextRecords || process.env.AI_COPILOT_MAX_CONTEXT_RECORDS || 20))),
     publicProviderWord: 'courier',
     instructions: stored.instructions || '',
-    openaiApiKey: key ? '••••••••' : '',
+    openaiApiKey: openaiKey ? '••••••••' : '',
+    groqApiKey: groqKey ? '••••••••' : '',
+    hasOpenAIKey: Boolean(openaiKey),
+    hasGroqKey: Boolean(groqKey),
     hasKey: Boolean(key)
   };
 }
 
-async function callOpenAIText(messages: Array<{ role: string; content: string }>, lang: string, opts: any = {}): Promise<{ text: string; model: string }> {
+async function callAIText(messages: Array<{ role: string; content: string }>, lang: string, opts: any = {}): Promise<{ text: string; model: string }> {
   const stored = await getStoredAISettings();
-  const apiKey = stored.openaiApiKey || process.env.OPENAI_API_KEY;
-  const model = String(stored.model || process.env.OPENAI_MODEL || 'gpt-5.4-mini').trim();
+  const requestedProvider = String(stored.provider || '').trim().toLowerCase();
+  const provider = requestedProvider === 'groq' || requestedProvider === 'openai'
+    ? requestedProvider
+    : (stored.groqApiKey || process.env.GROQ_API_KEY ? 'groq' : 'openai');
+  const apiKey = provider === 'groq'
+    ? (stored.groqApiKey || process.env.GROQ_API_KEY)
+    : (stored.openaiApiKey || process.env.OPENAI_API_KEY);
+  const defaultModel = provider === 'groq'
+    ? (process.env.GROQ_MODEL || 'openai/gpt-oss-20b')
+    : (process.env.OPENAI_MODEL || 'gpt-5.4-mini');
+  const model = String(stored.model || defaultModel).trim();
   if (!apiKey) throw new Error('AI key unavailable');
   if (stored.enabled === false) throw new Error('AI disabled');
+
+  if (provider === 'groq') {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        max_tokens: Math.max(200, Math.min(1200, Number(opts.maxOutputTokens || 700))),
+        temperature: 0.2
+      })
+    });
+
+    if (!response.ok) {
+      console.warn('[AI Copilot] Groq request failed:', response.status);
+      throw new Error('AI request unavailable');
+    }
+
+    const data = await response.json();
+    return { text: parseChatCompletionText(data), model };
+  }
 
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -15491,8 +15546,7 @@ async function callOpenAIText(messages: Array<{ role: string; content: string }>
   });
 
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    console.warn('[AI Copilot] OpenAI request failed:', response.status, text.slice(0, 240));
+    console.warn('[AI Copilot] OpenAI request failed:', response.status);
     throw new Error('AI request unavailable');
   }
 
@@ -15745,7 +15799,7 @@ DoorDrop backend context:
 ${compactJson(context)}
 
 Answer the customer now. If the context does not contain enough reliable information, append [[HUMAN_ESCALATION]].`;
-      const ai = await callOpenAIText([
+      const ai = await callAIText([
         { role: 'system', content: `${ship24goSupportSystemPrompt(language)}\nAdditional admin instructions: ${String((await getStoredAISettings()).instructions || '').slice(0, 1200)}` },
         { role: 'user', content: prompt }
       ], language);
@@ -15794,7 +15848,7 @@ app.post('/api/shipments/:id/cancellation-reason/suggest', authMiddleware, async
     const fallback = customerDetail || label;
 
     try {
-      const ai = await callOpenAIText([
+      const ai = await callAIText([
         { role: 'system', content: `You rewrite a customer's shipment cancellation explanation in ${COPILOT_LANGUAGES[language] || 'Spanish'}. Be factual, polite and concise (maximum 70 words). Preserve the customer's meaning. Do not invent dates, promises, refunds, legal claims, courier actions or personal data. Return only the improved explanation.` },
         { role: 'user', content: `Selected reason: ${label}\nShipments included: ${count}\nCustomer detail: ${customerDetail || 'No additional detail provided.'}` },
       ], language, { maxOutputTokens: 180 });
