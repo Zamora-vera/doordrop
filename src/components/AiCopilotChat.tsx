@@ -19,6 +19,10 @@ const shortTime = (value: string) => {
   }
 };
 
+const sanitizeCopilotText = (value: string) => String(value || '')
+  .replace(/\s*\(ad es\.[^)]*\)/gi, '')
+  .replace(/\b(?:Paccofacile|SpediamoPro|ParcelABC)\b/gi, 'courier DoorDrop');
+
 export function AiCopilotChat() {
   const { t, language } = useI18n();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -44,7 +48,10 @@ export function AiCopilotChat() {
       try {
         const parsed = JSON.parse(savedChat);
         if (Array.isArray(parsed) && parsed.length) {
-          setMessages(parsed);
+          setMessages(parsed.map((message) => ({
+            ...message,
+            content: sanitizeCopilotText(message?.content || '')
+          })));
           return;
         }
       } catch {
@@ -80,7 +87,7 @@ export function AiCopilotChat() {
       const historyPayload = messages
         .filter((m) => m.id !== 'welcome')
         .slice(-8)
-        .map((m) => ({ role: m.role, content: m.content }));
+        .map((m) => ({ role: m.role, content: sanitizeCopilotText(m.content) }));
 
       const res = await api.copilotMessage(cleanText, historyPayload, language, conversationId);
       if (res.conversationId) {
@@ -88,7 +95,7 @@ export function AiCopilotChat() {
         localStorage.setItem('ship24go_ai_conversation_id', res.conversationId);
       }
 
-      const responseText = res.response || res.message || t('ai_error_message');
+      const responseText = sanitizeCopilotText(res.response || res.message || t('ai_error_message'));
       const assistantMsg: ChatMessage = {
         id: `msg_${Date.now()}_a`,
         role: 'assistant',
