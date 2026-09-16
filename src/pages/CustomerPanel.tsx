@@ -3377,7 +3377,8 @@ const CustomerSettings = () => {
         fetchLatestProfile();
       }
     } catch (e: any) {
-      setActionError(e.message || 'No se pudo activar la suscripción.');
+      const message = String(e?.message || '').trim();
+      setActionError(/polar/i.test(message) ? 'No se pudo iniciar el pago seguro. Intenta de nuevo o elige otro método de pago.' : (message || 'No se pudo activar la suscripción.'));
     } finally {
       setSubscribing(false);
     }
@@ -3390,7 +3391,7 @@ const CustomerSettings = () => {
     // Parse query params
     const params = new URLSearchParams(window.location.search);
     if (params.get('payment_success') === 'true') {
-      setSuccessMessage('¡Suscripción procesada con éxito mediante Polar! Disfruta de todos tus beneficios Pro.');
+      setSuccessMessage('¡Suscripción procesada con éxito! Disfruta de todos tus beneficios Pro.');
       // Clean query parameters from URL without reloading
       window.history.replaceState({}, document.title, window.location.pathname);
     }
@@ -3404,10 +3405,10 @@ const CustomerSettings = () => {
       if (res.url) {
         window.location.href = res.url;
       } else {
-        setErrorMessage('No se pudo obtener el enlace de suscripción de Polar.');
+        setErrorMessage('No se pudo obtener el enlace de suscripción. Intenta de nuevo o elige otro método de pago.');
       }
     } catch (e: any) {
-      setErrorMessage(e.message || 'Configuración de Polar incompleta. Por favor, configura Polar API Token y Product ID en el panel de administrador.');
+      setErrorMessage('No se pudo iniciar la suscripción. Intenta de nuevo o elige otro método de pago.');
     } finally {
       setSubscribing(false);
     }
@@ -3428,7 +3429,8 @@ const CustomerSettings = () => {
         setActionSuccess('Solicitud de recarga creada. Tu saldo se acreditará cuando el pago sea confirmado.');
       }
     } catch (e: any) {
-      setActionError(e.message || 'No se pudo procesar la recarga del monedero.');
+      const message = String(e?.message || '').trim();
+      setActionError(/polar/i.test(message) ? 'No se pudo iniciar el pago seguro. Intenta de nuevo o elige otro método de pago.' : (message || 'No se pudo procesar la recarga del monedero.'));
     } finally {
       setRechargeLoading(false);
     }
@@ -3586,9 +3588,10 @@ const CustomerSettings = () => {
                 {subscriptionMethods.polar && <button
                   onClick={() => handleRecharge(150, 'polar')}
                   disabled={rechargeLoading}
-                  className="w-full bg-gradient-to-r from-pink-500 to-orange-400 hover:from-pink-600 hover:to-orange-500 dark:from-neon-pink dark:to-[#9D00FF] text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 cursor-pointer"
+                  className="w-full flex flex-wrap items-center justify-center gap-2 bg-gradient-to-r from-slate-900 via-blue-700 to-cyan-600 hover:from-slate-950 hover:via-blue-800 hover:to-cyan-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 cursor-pointer"
                 >
-                  {rechargeLoading ? 'Abriendo pago seguro...' : 'Recargar con tarjeta (Polar)'}
+                  <span>{rechargeLoading ? 'Abriendo pago seguro...' : 'Recargar con tarjeta'}</span>
+                  {!rechargeLoading && <PaymentBrandMarks />}
                 </button>}
                 {subscriptionMethods.paypal && <button
                   onClick={() => handleRecharge(150, 'paypal')}
@@ -3675,7 +3678,7 @@ const CustomerSettings = () => {
                   </div>
               </div>
 
-              {/* Polar Plan subscription option */}
+              {/* Customer-facing subscription summary */}
               <div className="pt-6 border-t border-gray-100 dark:border-gray-800 mt-6 flex items-center justify-between">
                   <div>
                       <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Plan de Suscripción</p>
@@ -3699,7 +3702,7 @@ const CustomerSettings = () => {
           <div>
             <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-600 dark:text-neon-cyan mb-2">Suscripción</p>
             <h3 className="font-black text-2xl text-gray-900 dark:text-white">Planes y métodos de pago</h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-3xl">Activa tu plan con wallet, tarjeta crédito/débito mediante Polar o PayPal. Si eliges wallet, el saldo se descuenta automáticamente y la suscripción queda activa al instante.</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-3xl">Activa tu plan con saldo disponible, tarjeta de crédito/débito o PayPal. Elige la opción que prefieras; con el saldo disponible la suscripción queda activa al instante.</p>
           </div>
           <div className="rounded-2xl bg-gray-50 dark:bg-dark-800 border border-gray-100 dark:border-gray-800 p-4 min-w-[220px]">
             <p className="text-xs font-black text-gray-500 uppercase tracking-wider">Saldo disponible</p>
@@ -3724,7 +3727,7 @@ const CustomerSettings = () => {
                 <button onClick={() => setSelectedPlanId(plan.id)} className="w-full mb-4 py-2 rounded-xl border border-gray-200 dark:border-gray-700 font-black text-sm hover:border-blue-500 dark:hover:border-neon-cyan">Seleccionar</button>
                 <div className="space-y-2">
                   {subscriptionMethods.wallet && plan.walletEnabled !== false && <button disabled={subscribing} onClick={() => handleSubscriptionCheckout('wallet', plan.id)} className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm disabled:opacity-60">Activar con wallet</button>}
-                  {subscriptionMethods.polar && plan.polarEnabled !== false && <button disabled={subscribing} onClick={() => handleSubscriptionCheckout('polar', plan.id)} className="w-full py-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-orange-400 text-white font-black text-sm disabled:opacity-60">Tarjeta crédito/débito (Polar)</button>}
+                  {subscriptionMethods.polar && plan.polarEnabled !== false && <button disabled={subscribing} onClick={() => handleSubscriptionCheckout('polar', plan.id)} className="w-full flex flex-wrap items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-slate-900 via-blue-700 to-cyan-600 hover:from-slate-950 hover:via-blue-800 hover:to-cyan-700 text-white font-black text-sm disabled:opacity-60"><span>Tarjeta de crédito/débito</span><PaymentBrandMarks /></button>}
                   {subscriptionMethods.paypal && plan.paypalEnabled !== false && <button disabled={subscribing} onClick={() => handleSubscriptionCheckout('paypal', plan.id)} className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-sm disabled:opacity-60">PayPal / crédito / débito</button>}
                 </div>
               </div>
@@ -3878,6 +3881,21 @@ const CustomerSettings = () => {
   );
 };
 
+
+const PaymentBrandMarks = ({ className = '' }: { className?: string }) => (
+  <span
+    className={`inline-flex items-center gap-1.5 rounded-full bg-white/95 px-2 py-1 text-[10px] leading-none shadow-sm ${className}`}
+    aria-label="Visa, Mastercard y Google Pay"
+    title="Visa, Mastercard y Google Pay"
+  >
+    <span className="font-black tracking-tight text-[#1a1f71]">VISA</span>
+    <span className="inline-flex items-center -space-x-1" aria-hidden="true">
+      <span className="h-3.5 w-3.5 rounded-full bg-[#eb001b]" />
+      <span className="h-3.5 w-3.5 rounded-full bg-[#f79e1b] opacity-90" />
+    </span>
+    <span className="font-semibold tracking-tight text-slate-700"><span className="text-[#4285f4]">G</span> Pay</span>
+  </span>
+);
 
 const CustomerApiDocs = () => {
   return (

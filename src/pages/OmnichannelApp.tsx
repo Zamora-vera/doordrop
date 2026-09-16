@@ -160,7 +160,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       faqs: 'Preguntas Frecuentes (FAQs)',
       saveAi: 'Guardar Configuración AI',
       savedSuccess: 'Configuración guardada exitosamente.',
-      polarCheckout: 'Suscribirse con Polar',
+      polarCheckout: 'Suscribirse de forma segura',
       walletPay: 'Pagar con Saldo DoorDrop',
       currentPlanBadge: 'TU PLAN ACTUAL',
       upgradePlan: 'Cambiar a este Plan'
@@ -204,7 +204,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       faqs: 'Domande Frequenti (FAQ)',
       saveAi: 'Salva Configurazione AI',
       savedSuccess: 'Configurazione salvata con successo.',
-      polarCheckout: 'Abbonati con Polar',
+      polarCheckout: 'Abbonati in modo sicuro',
       walletPay: 'Paga con Saldo DoorDrop',
       currentPlanBadge: 'IL TUO PIANO ATTUALE',
       upgradePlan: 'Passa a questo Piano'
@@ -248,7 +248,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       faqs: 'Frequently Asked Questions (FAQs)',
       saveAi: 'Save AI Settings',
       savedSuccess: 'Settings saved successfully.',
-      polarCheckout: 'Subscribe with Polar',
+      polarCheckout: 'Subscribe securely',
       walletPay: 'Pay with DoorDrop Balance',
       currentPlanBadge: 'YOUR CURRENT PLAN',
       upgradePlan: 'Upgrade to this Plan'
@@ -292,7 +292,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       faqs: 'Häufig gestellte Fragen (FAQs)',
       saveAi: 'KI-Einstellungen speichern',
       savedSuccess: 'Erfolgreich gespeichert.',
-      polarCheckout: 'Mit Polar abonnieren',
+      polarCheckout: 'Sicher abonnieren',
       walletPay: 'Mit Guthaben bezahlen',
       currentPlanBadge: 'IHR AKTUELLER PLAN',
       upgradePlan: 'Zu diesem Plan wechseln'
@@ -845,13 +845,14 @@ export function OmnichannelApp({ profile }: { profile: any }) {
     setSubscribingCode(plan.code);
     try {
       if (!plan.checkout_ready) {
-        throw new Error('Este plan todavía no está configurado en Polar. El administrador debe asociar su producto recurrente.');
+        throw new Error('Este plan todavía no está disponible para suscripción. Intenta con otro plan o contacta con soporte.');
       }
       const pData = await omnichannelApi.createPolarCheckout(plan.id);
-      if (!pData.url) throw new Error('Polar no devolvió una URL de checkout.');
+      if (!pData.url) throw new Error('No se pudo abrir el pago seguro. Intenta nuevamente.');
       window.location.href = pData.url;
     } catch (e: any) {
-      alert(e.message || 'Error activando plan');
+      const message = String(e?.message || '').trim();
+      alert(/polar/i.test(message) ? 'No se pudo iniciar el pago seguro. Intenta nuevamente.' : (message || 'Error activando plan'));
     } finally {
       setSubscribingCode(null);
     }
@@ -2216,7 +2217,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 </div>
                 <p className="text-xs text-purple-600 dark:text-purple-400 font-medium mt-1 flex items-center gap-1">
                  <span className={`w-2 h-2 rounded-full inline-block ${data?.subscription?.is_active ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
-                 {data?.subscription?.is_active ? '24/7 En línea' : 'Requiere suscripción Polar'}
+                 {data?.subscription?.is_active ? '24/7 En línea' : 'Requiere una suscripción activa'}
                 </p>
             </div>
           </div>
@@ -2282,7 +2283,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
                   {data?.subscription?.is_active
                     ? 'Tu empleado virtual consulta directamente la base de datos de DoorDrop para responder con precisión:'
-                    : 'Activa una suscripción Polar para habilitar el empleado virtual y sus herramientas:'}
+                    : 'Activa una suscripción para habilitar el empleado virtual y sus herramientas:'}
                 </p>
                 <div className="space-y-2 mt-4 text-xs font-medium text-gray-700 dark:text-gray-300">
                   <div className="flex items-center gap-2">
@@ -3182,7 +3183,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       )}
 
       {/* --------------------------------------------------------------------- */}
-      {/* 7. PLANS & POLAR SUBSCRIPTION */}
+      {/* 7. PLANS & SUBSCRIPTION */}
       {/* --------------------------------------------------------------------- */}
       {activeTab === 'plans' && (
         <div className="space-y-6">
@@ -3264,10 +3265,10 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                       }`}
                     >
                       <CreditCard className="w-3.5 h-3.5" />
-                      {isCurrent ? t.currentPlanBadge : p.checkout_ready ? t.polarCheckout : 'Polar pendiente'}
+                      {isCurrent ? t.currentPlanBadge : p.checkout_ready ? t.polarCheckout : 'Plan no disponible'}
                     </button>
                     {!isCurrent && !p.checkout_ready && (
-                      <p className="text-[10px] text-amber-600 dark:text-amber-400 text-center">El Super Admin debe asociar el producto recurrente de Polar.</p>
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 text-center">Este plan aún no está disponible para suscripción.</p>
                     )}
                   </div>
                 </div>
@@ -3290,7 +3291,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                   <div>
                     <h4 className="text-xs font-bold text-gray-900 dark:text-white">{addon.name}</h4>
                     <p className="text-[11px] text-gray-500">{addon.description}</p>
-                    {!addon.checkout_ready && <p className="text-[10px] text-amber-600 mt-1">Disponible cuando Polar esté configurado.</p>}
+                    {!addon.checkout_ready && <p className="text-[10px] text-amber-600 mt-1">Disponible cuando se active el pago seguro.</p>}
                   </div>
                   <span className="font-bold text-sm text-blue-600 whitespace-nowrap">{addon.currency === 'USD' ? '$' : `${addon.currency} `}{Number(addon.price || 0).toFixed(2)} / mes</span>
                 </div>
