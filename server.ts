@@ -15324,6 +15324,18 @@ const copilotMessages: Record<string, Record<string, string>> = {
   es: {
     missingMessage: 'Escribe tu consulta para ayudarte.',
     greeting: '¡Hola! Soy el Copiloto de DoorDrop. Puedo ayudarte con envíos, seguimiento, tickets, facturación e integraciones. ¿Qué necesitas?',
+    ticketTracking: 'Seguimiento de envío',
+    ticketShipment: 'Creación de envío',
+    ticketBilling: 'Facturación y saldo',
+    ticketPayments: 'Pagos y suscripción',
+    ticketIntegrations: 'Integraciones',
+    ticketAccount: 'Acceso y cuenta',
+    ticketGeneral: 'Consulta de soporte',
+    ticketRequestLabel: 'Solicitud del cliente',
+    ticketTopicLabel: 'Tema',
+    ticketConversationLabel: 'Contexto de la conversación',
+    ticketReasonLabel: 'Motivo de escalación',
+    ticketReasonHuman: 'La solicitud requiere revisión humana.',
     noData: 'No encontramos información suficiente para responder con seguridad. Un agente continuará la asistencia.',
     ticketCreated: 'Hemos creado un ticket para que un agente continúe la asistencia.',
     unavailable: 'Estamos revisando tu solicitud. Un agente continuará la asistencia.',
@@ -15335,6 +15347,18 @@ const copilotMessages: Record<string, Record<string, string>> = {
   en: {
     missingMessage: 'Write your question so we can help you.',
     greeting: 'Hello! I’m the DoorDrop Copilot. I can help with shipments, tracking, tickets, billing and integrations. What do you need?',
+    ticketTracking: 'Shipment tracking',
+    ticketShipment: 'Shipment creation',
+    ticketBilling: 'Billing and balance',
+    ticketPayments: 'Payments and subscription',
+    ticketIntegrations: 'Integrations',
+    ticketAccount: 'Account and access',
+    ticketGeneral: 'Support request',
+    ticketRequestLabel: 'Customer request',
+    ticketTopicLabel: 'Topic',
+    ticketConversationLabel: 'Conversation context',
+    ticketReasonLabel: 'Escalation reason',
+    ticketReasonHuman: 'The request requires human review.',
     noData: 'We could not find enough information to answer safely. An agent will continue the assistance.',
     ticketCreated: 'We created a ticket so an agent can continue the assistance.',
     unavailable: 'We are reviewing your request. An agent will continue the assistance.',
@@ -15346,6 +15370,18 @@ const copilotMessages: Record<string, Record<string, string>> = {
   it: {
     missingMessage: 'Scrivi la tua richiesta per poterti aiutare.',
     greeting: 'Ciao! Sono il Copilota DoorDrop. Posso aiutarti con spedizioni, tracciamento, ticket, fatturazione e integrazioni. Di cosa hai bisogno?',
+    ticketTracking: 'Tracciamento della spedizione',
+    ticketShipment: 'Creazione della spedizione',
+    ticketBilling: 'Fatturazione e saldo',
+    ticketPayments: 'Pagamenti e abbonamento',
+    ticketIntegrations: 'Integrazioni',
+    ticketAccount: 'Accesso e account',
+    ticketGeneral: 'Richiesta di supporto',
+    ticketRequestLabel: 'Richiesta del cliente',
+    ticketTopicLabel: 'Argomento',
+    ticketConversationLabel: 'Contesto della conversazione',
+    ticketReasonLabel: 'Motivo dell’escalation',
+    ticketReasonHuman: 'La richiesta richiede una revisione umana.',
     noData: 'Non abbiamo trovato informazioni sufficienti per rispondere in sicurezza. Un agente continuerà l’assistenza.',
     ticketCreated: 'Abbiamo creato un ticket così un agente può continuare l’assistenza.',
     unavailable: 'Stiamo esaminando la tua richiesta. Un agente continuerà l’assistenza.',
@@ -15357,6 +15393,18 @@ const copilotMessages: Record<string, Record<string, string>> = {
   fr: {
     missingMessage: 'Écrivez votre demande afin que nous puissions vous aider.',
     greeting: 'Bonjour ! Je suis le Copilote DoorDrop. Je peux vous aider avec les envois, le suivi, les tickets, la facturation et les intégrations. Que souhaitez-vous faire ?',
+    ticketTracking: 'Suivi de l’envoi',
+    ticketShipment: 'Création d’un envoi',
+    ticketBilling: 'Facturation et solde',
+    ticketPayments: 'Paiements et abonnement',
+    ticketIntegrations: 'Intégrations',
+    ticketAccount: 'Accès et compte',
+    ticketGeneral: 'Demande de support',
+    ticketRequestLabel: 'Demande du client',
+    ticketTopicLabel: 'Sujet',
+    ticketConversationLabel: 'Contexte de la conversation',
+    ticketReasonLabel: 'Motif de l’escalade',
+    ticketReasonHuman: 'La demande nécessite une vérification humaine.',
     noData: 'Nous n’avons pas trouvé suffisamment d’informations pour répondre avec sécurité. Un agent poursuivra l’assistance.',
     ticketCreated: 'Nous avons créé un ticket afin qu’un agent poursuive l’assistance.',
     unavailable: 'Nous examinons votre demande. Un agent poursuivra l’assistance.',
@@ -15368,6 +15416,18 @@ const copilotMessages: Record<string, Record<string, string>> = {
   de: {
     missingMessage: 'Schreiben Sie Ihre Anfrage, damit wir helfen können.',
     greeting: 'Hallo! Ich bin der DoorDrop-Copilot. Ich helfe bei Sendungen, Tracking, Tickets, Abrechnung und Integrationen. Wobei kann ich helfen?',
+    ticketTracking: 'Sendungsverfolgung',
+    ticketShipment: 'Sendung erstellen',
+    ticketBilling: 'Abrechnung und Guthaben',
+    ticketPayments: 'Zahlungen und Abonnement',
+    ticketIntegrations: 'Integrationen',
+    ticketAccount: 'Konto und Zugang',
+    ticketGeneral: 'Supportanfrage',
+    ticketRequestLabel: 'Kundenanfrage',
+    ticketTopicLabel: 'Thema',
+    ticketConversationLabel: 'Gesprächskontext',
+    ticketReasonLabel: 'Grund der Eskalation',
+    ticketReasonHuman: 'Die Anfrage erfordert eine menschliche Prüfung.',
     noData: 'Wir haben nicht genügend Informationen gefunden, um sicher zu antworten. Ein Mitarbeiter setzt die Unterstützung fort.',
     ticketCreated: 'Wir haben ein Ticket erstellt, damit ein Mitarbeiter die Unterstützung fortsetzen kann.',
     unavailable: 'Wir prüfen Ihre Anfrage. Ein Mitarbeiter setzt die Unterstützung fort.',
@@ -15379,6 +15439,18 @@ const copilotMessages: Record<string, Record<string, string>> = {
   zh: {
     missingMessage: '请写下您的问题，以便我们为您提供帮助。',
     greeting: '您好！我是 DoorDrop AI 助手，可以帮助您处理寄件、追踪、工单、账单和集成。请问需要什么帮助？',
+    ticketTracking: '包裹追踪',
+    ticketShipment: '创建运单',
+    ticketBilling: '账单与余额',
+    ticketPayments: '付款与订阅',
+    ticketIntegrations: '集成',
+    ticketAccount: '账户与登录',
+    ticketGeneral: '支持请求',
+    ticketRequestLabel: '客户请求',
+    ticketTopicLabel: '主题',
+    ticketConversationLabel: '对话上下文',
+    ticketReasonLabel: '升级原因',
+    ticketReasonHuman: '该请求需要人工审核。',
     noData: '我们没有找到足够的信息来安全回复。客服人员将继续协助。',
     ticketCreated: '我们已创建工单，客服人员将继续协助。',
     unavailable: '我们正在查看您的请求。客服人员将继续协助。',
@@ -15402,6 +15474,24 @@ function normalizeCopilotLanguage(value: any): string {
 function copilotText(lang: string, key: string): string {
   const language = normalizeCopilotLanguage(lang);
   return copilotMessages[language]?.[key] || copilotMessages.es[key] || key;
+}
+
+function copilotTicketTopicKey(message: string, history: any[] = []): string {
+  const source = [
+    ...history.filter((item: any) => item?.role === 'user').map((item: any) => item?.content),
+    message
+  ].join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ' ');
+  if (/(tracking|tracci|seguimiento|rastre|dove si trova|where is|donde esta)/.test(source)) return 'ticketTracking';
+  if (/(factur|invoice|billing|wallet|saldo|balance|recarga|recharge|refund|reembolso|rimborso)/.test(source)) return 'ticketBilling';
+  if (/(pagament|payment|pago|paypal|polar|suscrip|abbon|subscription|plan)/.test(source)) return 'ticketPayments';
+  if (/(integr|shopify|amazon|ebay|temu|wix|store|tienda|boutique)/.test(source)) return 'ticketIntegrations';
+  if (/(password|contrasena|acces|login|cuenta|account|konto|mot de passe)/.test(source)) return 'ticketAccount';
+  if (/(spediz|envio|shipment|package|paquet|pacco|courier|carrier|transport)/.test(source)) return 'ticketShipment';
+  return 'ticketGeneral';
+}
+
+function buildCopilotTicketSubject(lang: string, message: string, history: any[] = []): string {
+  return `DoorDrop · ${copilotText(lang, copilotTicketTopicKey(message, history))}`.slice(0, 160);
 }
 
 function isSimpleCopilotGreeting(message: string): boolean {
@@ -15735,13 +15825,21 @@ async function createCopilotHumanTicket(req: any, conversationId: string, lang: 
   await ensureCopilotTables();
   const language = normalizeCopilotLanguage(lang);
   const ticketId = generateId('tkt_');
-  const historyLines = (history || []).slice(-8).map((m: any) => `${m.role === 'user' ? 'Cliente' : 'AI'}: ${String(m.content || '').slice(0, 700)}`).join('\n');
-  const description = `${copilotText(language, 'summary')}\n\n${historyLines ? `${historyLines}\n` : ''}Cliente: ${String(message || '').slice(0, 1200)}\n\n${copilotText(language, 'category')}`;
+  const hiddenProviderTerms = await getHiddenCopilotProviderTerms();
+  const safeMessage = redactCopilotProviderDetails(String(message || '').slice(0, 1200), hiddenProviderTerms);
+  const historyLines = (history || []).slice(-8).map((m: any) => `${m.role === 'user' ? copilotText(language, 'ticketRequestLabel') : 'AI'}: ${redactCopilotProviderDetails(String(m.content || '').slice(0, 700), hiddenProviderTerms)}`).join('\n');
+  const subject = buildCopilotTicketSubject(language, message, history);
+  const description = [
+    `${copilotText(language, 'ticketRequestLabel')}: ${safeMessage}`,
+    `${copilotText(language, 'ticketTopicLabel')}: ${subject}`,
+    historyLines ? `${copilotText(language, 'ticketConversationLabel')}:\n${historyLines}` : '',
+    `${copilotText(language, 'ticketReasonLabel')}: ${copilotText(language, 'ticketReasonHuman')}`
+  ].filter(Boolean).join('\n\n').slice(0, 12000);
 
   await TicketRepo.create({
     id: ticketId,
     user_id: req.user.id,
-    subject: copilotText(language, 'title'),
+    subject,
     category: 'ai_copilot_handoff',
     description,
     tracking_code: '',

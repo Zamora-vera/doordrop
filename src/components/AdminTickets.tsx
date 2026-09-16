@@ -131,6 +131,8 @@ export function AdminTickets() {
         return t('ticket_category_weight');
       case 'cancellation_request':
         return t('ticket_category_cancellation');
+      case 'ai_copilot_handoff':
+        return t('ticket_category_ai');
       default:
         return cat;
     }

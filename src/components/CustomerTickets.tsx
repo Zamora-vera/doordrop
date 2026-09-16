@@ -160,9 +160,16 @@ export function CustomerTickets() {
         return t('ticket_category_weight');
       case 'cancellation_request':
         return t('ticket_category_cancellation');
+      case 'ai_copilot_handoff':
+        return t('ticket_category_ai');
       default:
         return cat;
     }
+  };
+
+  const getTicketPreview = (ticket: any) => {
+    const firstLine = String(ticket?.description || '').split('\n').map((line) => line.trim()).find(Boolean) || '';
+    return firstLine.slice(0, 180);
   };
 
   const formatDate = (value: string | number | Date, variant: 'short' | 'long' = 'short') => {
@@ -586,6 +593,7 @@ export function CustomerTickets() {
                       <div className="min-w-0">
                         <p className="truncate text-sm font-black text-slate-950 dark:text-white">{ticket.subject}</p>
                         <p className="mt-0.5 truncate font-mono text-[11px] font-semibold text-slate-400">{ticket.id}</p>
+                        {getTicketPreview(ticket) && <p className="mt-1 line-clamp-2 text-xs font-medium leading-5 text-slate-500 dark:text-slate-400">{getTicketPreview(ticket)}</p>}
                       </div>
                     </div>
 

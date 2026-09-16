@@ -96,10 +96,13 @@ export function AiCopilotChat() {
       }
 
       const responseText = sanitizeCopilotText(res.response || res.message || t('ai_error_message'));
+      const ticketNotice = res.ticket?.subject
+        ? `${t('ai_ticket_created_notice')}\n${t('ticket_subject')}: ${sanitizeCopilotText(res.ticket.subject)}`
+        : '';
       const assistantMsg: ChatMessage = {
         id: `msg_${Date.now()}_a`,
         role: 'assistant',
-        content: res.escalated ? `${responseText}\n\n${t('ai_ticket_created_notice')}` : responseText,
+        content: ticketNotice ? `${responseText}\n\n${ticketNotice}` : responseText,
         timestamp: new Date().toISOString(),
         escalated: Boolean(res.escalated)
       };
