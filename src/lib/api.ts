@@ -25,7 +25,12 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(data.error || data.message || 'No se pudo completar la operación. Intenta nuevamente más tarde.');
+    const error: any = new Error(data.error || data.message || 'No se pudo completar la operación. Intenta nuevamente más tarde.');
+    error.code = data.code;
+    error.status = response.status;
+    error.email = data.email;
+    error.requiresEmailVerification = Boolean(data.requiresEmailVerification);
+    throw error;
   }
   return data;
 }
@@ -67,6 +72,8 @@ export const api = {
   getPaypalAuthConfig: () => fetchAPI('/auth/paypal/config'),
   startPaypalAuth: (mode: 'login' | 'register') => fetchAPI(`/auth/paypal/start?mode=${encodeURIComponent(mode)}`),
   completePaypalAuth: () => fetchAPI('/auth/paypal/complete', { method: 'POST' }),
+  resendEmailVerification: (data: { email: string }) => fetchAPI('/auth/verify-email/resend', { method: 'POST', body: JSON.stringify(data) }),
+  completeEmailVerification: (data: { token: string }) => fetchAPI('/auth/verify-email/complete', { method: 'POST', body: JSON.stringify(data) }),
   forgotPassword: (data: { email: string }) => fetchAPI('/auth/forgot-password', { method: 'POST', body: JSON.stringify(data) }),
   resetPassword: (data: { token: string; newPassword: string }) => fetchAPI('/auth/reset-password', { method: 'POST', body: JSON.stringify(data) }),
   register: (data: any) => fetchAPI('/auth/register', { method: 'POST', body: JSON.stringify(data) }),

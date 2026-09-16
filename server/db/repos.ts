@@ -109,6 +109,20 @@ export async function initDb() {
     CONSTRAINT fk_prt_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
+  await pool.query(`CREATE TABLE IF NOT EXISTS email_verification_tokens (
+    id CHAR(36) PRIMARY KEY,
+    user_id CHAR(36) NOT NULL,
+    token_hash CHAR(64) NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    request_ip VARCHAR(45) NULL,
+    UNIQUE KEY uq_evt_token_hash (token_hash),
+    INDEX idx_evt_user_id (user_id),
+    INDEX idx_evt_expires_used (expires_at, used_at),
+    CONSTRAINT fk_evt_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
   // PayPal Login with OAuth/OpenID Connect. Only provider identity metadata and
   // one-time state/handoff hashes are stored; PayPal access tokens never enter
   // the database, logs, or the browser.
@@ -261,6 +275,9 @@ export async function initDb() {
     `ALTER TABLE shipment_packages ADD COLUMN IF NOT EXISTS manifest_reference VARCHAR(191) NULL`,
     `ALTER TABLE shipments ADD COLUMN IF NOT EXISTS provider_payload_json JSON NULL`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS currency CHAR(3) DEFAULT 'EUR'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS language CHAR(2) NOT NULL DEFAULT 'es'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at DATETIME NULL`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_required TINYINT(1) NOT NULL DEFAULT 0`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS status ENUM('active','suspended','closed') NOT NULL DEFAULT 'active'`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_payment_method VARCHAR(30) NOT NULL DEFAULT 'wallet'`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_token_version INT NOT NULL DEFAULT 1`,
@@ -322,8 +339,8 @@ export const UserRepo = {
 
   async create(user: any): Promise<void> {
     await pool.query(
-      `INSERT INTO users (id, email, password_hash, name, phone, country, currency, role, business_type, balance, card_connected, paypal_connected, paypal_email, status) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO users (id, email, password_hash, name, phone, country, currency, language, role, business_type, balance, card_connected, paypal_connected, paypal_email, email_verified_at, email_verification_required, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         user.id,
         user.email,
@@ -332,12 +349,15 @@ export const UserRepo = {
         user.phone || '',
         user.country || 'ES',
         user.currency || 'EUR',
+        user.language || 'es',
         user.role || 'customer',
         user.business_type || 'Tienda online',
         user.balance || 0.00,
         user.card_connected ? 1 : 0,
         user.paypal_connected ? 1 : 0,
         user.paypal_email || '',
+        user.email_verified_at || null,
+        user.email_verification_required ? 1 : 0,
         user.status || 'active'
       ]
     );

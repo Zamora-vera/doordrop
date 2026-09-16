@@ -188,6 +188,10 @@ const Login = () => {
         navigate(next.path, next.state ? { state: next.state } : undefined);
       }
     } catch (err: any) {
+      if (err?.code === 'EMAIL_NOT_VERIFIED' || err?.requiresEmailVerification) {
+        navigate(`/auth/verify-email?email=${encodeURIComponent(err.email || form.email)}`);
+        return;
+      }
       setError(err.message || 'Error de inicio de sesión');
     } finally {
       setLoading(false);
@@ -359,6 +363,10 @@ const Register = () => {
     setError('');
     try {
       const res = await api.register(form);
+      if (res?.requiresEmailVerification) {
+        navigate(`/auth/verify-email?email=${encodeURIComponent(res.email || form.email)}`);
+        return;
+      }
       setAuthToken(res.token);
       const next = resolvePostAuthNavigation(location.state);
       navigate(next.path, next.state ? { state: next.state } : undefined);
@@ -1232,6 +1240,151 @@ const PaypalAuthCallback = () => {
   );
 };
 
+const EmailVerification = () => {
+  const { t } = useI18n();
+  const { brand } = useBrand();
+  const location = useLocation();
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
+  const [resent, setResent] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const params = new URLSearchParams(location.search);
+    const rawToken = params.get('token') || '';
+    const queryEmail = params.get('email') || '';
+    setEmail(queryEmail);
+    setError('');
+    setResent(false);
+    setSuccess(false);
+
+    // El token solo se necesita durante esta carga; no lo dejamos visible en el historial.
+    try {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } catch {}
+
+    if (!rawToken) {
+      setLoading(false);
+      return () => { active = false; };
+    }
+
+    setLoading(true);
+    api.completeEmailVerification({ token: rawToken })
+      .then(() => { if (active) setSuccess(true); })
+      .catch((err: any) => { if (active) setError(err.message || t('email_verification_invalid')); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [location.search, t]);
+
+  const resend = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setError(t('email_verification_email_required'));
+      return;
+    }
+    setResendLoading(true);
+    setError('');
+    setResent(false);
+    try {
+      await api.resendEmailVerification({ email: normalizedEmail });
+      setResent(true);
+    } catch (err: any) {
+      setError(err.message || t('email_verification_resend_error'));
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 grid grid-cols-1 lg:grid-cols-12 font-sans overflow-x-hidden">
+      <AuthSidebar />
+      <div className="col-span-1 lg:col-span-7 flex flex-col justify-between py-8 px-4 sm:px-6 lg:px-16 relative min-h-screen">
+        <div className="flex items-center justify-between w-full mb-8">
+          <Link to="/" className="lg:hidden">
+            <BrandMark iconClassName="w-8 h-8 rounded-lg" textClassName="text-xl text-slate-900 dark:text-white" />
+          </Link>
+          <div className="ml-auto flex items-center gap-4"><LanguageSelector /></div>
+        </div>
+
+        <div className="my-auto w-full max-w-md mx-auto">
+          <div className="text-left mb-8">
+            <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+              {t('email_verification_title')}
+            </h2>
+            <p className="mt-2.5 text-sm text-slate-500 dark:text-slate-400">
+              {t('email_verification_desc')}
+            </p>
+          </div>
+
+          <div className="bg-white dark:bg-slate-800 py-8 px-6 sm:px-10 rounded-3xl shadow-xl shadow-slate-100 dark:shadow-none border border-slate-100 dark:border-slate-700/55">
+            {loading ? (
+              <div className="text-center py-6 space-y-4">
+                <div className="w-16 h-16 bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mx-auto">
+                  <svg className="animate-spin h-8 w-8" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">{t('email_verification_pending')}</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{t('email_verification_pending_desc')}</p>
+              </div>
+            ) : success ? (
+              <div className="text-center py-4 space-y-4">
+                <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto shadow-sm">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">{t('email_verification_success_title')}</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{t('email_verification_success_desc')}</p>
+                <Link to="/auth/login" className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-all shadow-md shadow-blue-500/10">
+                  <span>{t('email_verification_login')}</span>
+                  <ArrowRight className="w-4 h-4" />
+                </Link>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {error && <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 text-xs font-medium">{error}</div>}
+                {resent && <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 text-emerald-700 dark:text-emerald-300 text-xs font-medium">{t('email_verification_resent')}</div>}
+                <div className="text-center py-2">
+                  <div className="w-16 h-16 bg-blue-100 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Mail className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">{t('email_verification_check_title')}</h3>
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{t('email_verification_check_desc')}</p>
+                </div>
+                <form onSubmit={resend} className="space-y-3 pt-2">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">{t('email')}</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-slate-400" />
+                    <input required type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="nombre@empresa.com" className="block w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900 pl-11 pr-4 py-3 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all" />
+                  </div>
+                  <button disabled={resendLoading} type="submit" className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-all">
+                    {resendLoading ? t('email_verification_resending') : t('email_verification_resend')}
+                  </button>
+                </form>
+                <p className="text-center text-[11px] text-slate-400 dark:text-slate-500">{t('email_verification_expiry')}</p>
+                <div className="pt-3 text-center border-t border-slate-100 dark:border-slate-700/50">
+                  <Link to="/auth/login" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>{t('back_to_login')}</span>
+                  </Link>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="text-center text-xs text-slate-400 dark:text-slate-500 mt-8 lg:hidden">
+          <span>© 2026 {brand.siteName || 'DoorDrop'}. {t('footer_rights')}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 export default function AuthPages() {
   return (
@@ -1240,8 +1393,8 @@ export default function AuthPages() {
       <Route path="/register" element={<Register />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/verify-email" element={<EmailVerification />} />
       <Route path="/paypal/callback" element={<PaypalAuthCallback />} />
     </Routes>
   );
 }
-

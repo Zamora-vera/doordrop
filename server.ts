@@ -387,6 +387,8 @@ if (!JWT_SECRET || JWT_SECRET.length < 32) {
 }
 
 const JWT_TTL_SECONDS = 7 * 24 * 60 * 60;
+const EMAIL_VERIFICATION_TTL_MS = 4 * 60 * 60 * 1000;
+const EMAIL_VERIFICATION_TTL_HOURS = 4;
 type AuthTokenPayload = {
   userId: string;
   role: string;
@@ -6147,9 +6149,56 @@ app.get('/api/docs/pdf', (req, res) => {
   }
 });
 
+async function issueEmailVerification(user: any, requestIp: string) {
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const tokenId = generateId('evt_');
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query(
+      'UPDATE email_verification_tokens SET used_at = NOW() WHERE user_id = ? AND used_at IS NULL',
+      [user.id]
+    );
+    await conn.query(
+      `INSERT INTO email_verification_tokens
+        (id, user_id, token_hash, expires_at, created_at, request_ip)
+       VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 4 HOUR), NOW(), ?)`,
+      [tokenId, user.id, tokenHash, requestIp || null]
+    );
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback().catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+
+  const verificationUrl = `${appBaseUrl()}/auth/verify-email?token=${encodeURIComponent(rawToken)}`;
+  const mail = await sendNotificationEvent({
+    eventCode: 'email_verification',
+    entityType: 'email_verification',
+    entityId: tokenId,
+    userId: String(user.id),
+    audience: 'customer',
+    toEmail: user.email,
+    recipientName: user.name,
+    language: user.language || user.country || 'ES',
+    variables: {
+      userName: user.name,
+      userEmail: user.email,
+      verificationUrl,
+      expirationHours: EMAIL_VERIFICATION_TTL_HOURS,
+      expirationMinutes: EMAIL_VERIFICATION_TTL_HOURS * 60
+    }
+  });
+
+  return { tokenId, sent: Boolean(mail.success), messageId: mail.messageId };
+}
+
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { email, password, name, phone, country, currency, businessType, storeType, pickupAddress } = req.body;
+    const { email, password, name, phone, country, currency, language, businessType, storeType, pickupAddress } = req.body;
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     const normalizedName = typeof name === 'string' ? name.trim() : '';
     
@@ -6170,6 +6219,7 @@ app.post('/api/auth/register', async (req, res) => {
     const userId = generateId('usr_');
     const passwordHash = hashPassword(password);
     
+    const registrationLanguage = normalizeMailLanguage(language || country || 'ES');
     const newUser = {
       id: userId,
       email: normalizedEmail,
@@ -6178,15 +6228,24 @@ app.post('/api/auth/register', async (req, res) => {
       phone: phone || '',
       country: country || 'ES',
       currency: currency || 'EUR',
+      language: registrationLanguage,
       role: 'customer', // Siempre registrado como customer
       business_type: businessType || 'Solo quiero enviar paquetes',
       balance: 0.00,
+      email_verified_at: null,
+      email_verification_required: true,
       status: 'active'
     };
 
     await UserRepo.create(newUser);
 
-    const registrationLanguage = normalizeMailLanguage(country || 'ES');
+    let verification = { sent: false, messageId: undefined as string | undefined };
+    try {
+      const issued = await issueEmailVerification(newUser, clientIp);
+      verification = { sent: issued.sent, messageId: issued.messageId };
+    } catch (mailError: any) {
+      console.error('[auth/register] La cuenta se creó, pero no se pudo preparar la verificación:', mailError?.message || 'error de verificación');
+    }
     await sendNotificationEvent({
       eventCode: 'user_registered',
       entityType: 'user',
@@ -6227,21 +6286,25 @@ app.post('/api/auth/register', async (req, res) => {
       });
     }
 
-    const userForToken = { id: userId, role: 'customer' };
-    const token = generateToken({ userId: userForToken.id, role: userForToken.role, authTokenVersion: 1 });
-    
-    res.json({
+    res.status(201).json({
       user: {
         id: newUser.id,
         email: newUser.email,
         name: newUser.name,
         role: newUser.role,
         currency: newUser.currency,
+        language: newUser.language,
+        emailVerified: false,
         status: newUser.status,
         balance: newUser.balance,
         businessType: newUser.business_type
       },
-      token
+      email: newUser.email,
+      requiresEmailVerification: true,
+      emailVerificationSent: verification.sent,
+      message: verification.sent
+        ? 'Revisa tu correo y confirma tu cuenta. El enlace es válido durante 4 horas.'
+        : 'La cuenta fue creada. Solicita un nuevo enlace de verificación cuando el correo esté disponible.'
     });
   } catch (error) {
     console.error('[Diagnóstico Interno] Error en registro:', error);
@@ -6279,6 +6342,15 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(403).json({ error: 'Cuenta no disponible temporalmente.' });
     }
 
+    if (user.role === 'customer' && Number(user.email_verification_required || 0) === 1 && !user.email_verified_at) {
+      return res.status(403).json({
+        error: 'Debes verificar tu correo electrónico antes de iniciar sesión.',
+        code: 'EMAIL_NOT_VERIFIED',
+        email: user.email,
+        requiresEmailVerification: true
+      });
+    }
+
     if (user.role === 'support') {
       await pool.query('UPDATE admin_staff SET last_login_at = NOW() WHERE user_id = ?', [user.id]).catch(() => null);
     }
@@ -6292,6 +6364,8 @@ app.post('/api/auth/login', async (req, res) => {
         name: user.name,
         role: user.role,
         currency: normalizeCurrencyCode(user.currency || 'EUR'),
+        language: user.language || 'es',
+        emailVerified: Boolean(user.email_verified_at) || Number(user.email_verification_required || 0) !== 1,
         status: user.status || 'active',
         balance: Number(user.balance),
         businessType: user.business_type,
@@ -6309,6 +6383,96 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+const EMAIL_VERIFICATION_GENERIC_MESSAGE = 'Si el correo corresponde a una cuenta pendiente, recibirás un enlace de verificación válido durante 4 horas.';
+
+app.post('/api/auth/verify-email/resend', async (req, res) => {
+  try {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Por favor, ingresa un correo electrónico válido.' });
+    }
+
+    const clientIp = clientIpFromRequest(req).slice(0, 45);
+    const ipAllowed = checkForgotPasswordRateLimit(`verify_email_ip_${clientIp}`, 5, 15 * 60 * 1000);
+    const emailAllowed = checkForgotPasswordRateLimit(`verify_email_${email}`, 3, 15 * 60 * 1000);
+    if (!ipAllowed || !emailAllowed) {
+      return res.status(429).json({ error: 'Demasiadas solicitudes. Espera 15 minutos antes de intentarlo nuevamente.' });
+    }
+
+    const user = await UserRepo.getByEmail(email);
+    if (!user || user.role !== 'customer' || !Number(user.email_verification_required || 0) || user.email_verified_at) {
+      return res.status(202).json({ ok: true, message: EMAIL_VERIFICATION_GENERIC_MESSAGE });
+    }
+
+    try {
+      await issueEmailVerification(user, clientIp);
+    } catch (mailError: any) {
+      console.error('[auth/verify-email/resend] No se pudo preparar el correo:', mailError?.message || 'error interno');
+    }
+    return res.status(202).json({ ok: true, message: EMAIL_VERIFICATION_GENERIC_MESSAGE });
+  } catch (error: any) {
+    console.error('[auth/verify-email/resend] Error interno:', error?.message || 'error interno');
+    return res.status(500).json({ error: 'No se pudo procesar la solicitud en este momento.' });
+  }
+});
+
+app.post('/api/auth/verify-email/complete', async (req, res) => {
+  const invalidMessage = 'El enlace de verificación es inválido, ya fue utilizado o ha expirado. Solicita uno nuevo.';
+  const rawToken = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  if (!/^[a-f0-9]{64}$/i.test(rawToken)) {
+    return res.status(400).json({ error: invalidMessage });
+  }
+
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [rows]: any = await conn.query(
+      `SELECT id, user_id
+         FROM email_verification_tokens
+        WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW()
+        LIMIT 1 FOR UPDATE`,
+      [tokenHash]
+    );
+    if (!rows?.length) {
+      await conn.rollback();
+      return res.status(400).json({ error: invalidMessage });
+    }
+
+    const verification = rows[0];
+    await conn.query('UPDATE email_verification_tokens SET used_at = NOW() WHERE id = ?', [verification.id]);
+    await conn.query(
+      `UPDATE email_verification_tokens
+          SET used_at = NOW()
+        WHERE user_id = ? AND used_at IS NULL`,
+      [verification.user_id]
+    );
+    await conn.query(
+      `UPDATE users
+          SET email_verified_at = NOW(), email_verification_required = 0
+        WHERE id = ?`,
+      [verification.user_id]
+    );
+    const [userRows]: any = await conn.query(
+      'SELECT id, email, name, language, email_verified_at FROM users WHERE id = ? LIMIT 1',
+      [verification.user_id]
+    );
+    await conn.commit();
+    const user = userRows?.[0] || null;
+    return res.json({
+      ok: true,
+      message: 'Correo verificado correctamente. Ya puedes iniciar sesión.',
+      user: user ? { id: user.id, email: user.email, name: user.name, language: user.language || 'es', emailVerified: true } : undefined
+    });
+  } catch (error: any) {
+    await conn.rollback().catch(() => {});
+    console.error('[auth/verify-email/complete] Error interno:', error?.message || 'error interno');
+    return res.status(500).json({ error: 'No se pudo completar la verificación. Intenta nuevamente.' });
+  } finally {
+    conn.release();
+  }
+});
+
 function publicPaypalAuthUser(user: any) {
   return {
     id: user.id,
@@ -6316,6 +6480,8 @@ function publicPaypalAuthUser(user: any) {
     name: user.name,
     role: user.role,
     currency: normalizeCurrencyCode(user.currency || 'EUR'),
+    language: user.language || 'es',
+    emailVerified: Boolean(user.email_verified_at) || Number(user.email_verification_required || 0) !== 1,
     status: user.status || 'active',
     balance: Number(user.balance || 0),
     businessType: user.business_type,
@@ -13915,9 +14081,18 @@ async function resolvePaypalUser(state: { userId: string | null; flow: string },
       const userId = generateId('usr_');
       await conn.query(
         `INSERT INTO users
-          (id, email, password_hash, name, phone, country, currency, role, business_type, balance, paypal_connected, paypal_email, status)
-         VALUES (?, ?, ?, ?, ?, ?, 'EUR', 'customer', 'Solo quiero enviar paquetes', 0.00, 1, ?, 'active')`,
-        [userId, identity.email, hashPassword(crypto.randomBytes(32).toString('hex')), identity.name, '', identity.country || 'ES', identity.email]
+          (id, email, password_hash, name, phone, country, currency, language, role, business_type, balance, paypal_connected, paypal_email, email_verified_at, email_verification_required, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'EUR', ?, 'customer', 'Solo quiero enviar paquetes', 0.00, 1, ?, NOW(), 0, 'active')`,
+        [
+          userId,
+          identity.email,
+          hashPassword(crypto.randomBytes(32).toString('hex')),
+          identity.name,
+          '',
+          identity.country || 'ES',
+          normalizeMailLanguage(identity.locale || identity.country || 'ES'),
+          identity.email
+        ]
       );
       const [rows]: any = await conn.query('SELECT * FROM users WHERE id = ? LIMIT 1 FOR UPDATE', [userId]);
       user = rows[0] || null;
@@ -13948,7 +14123,16 @@ async function resolvePaypalUser(state: { userId: string | null; flow: string },
         [generateId('identity_'), user.id, PAYPAL_AUTH_PROVIDER, identity.subject, identity.email, identity.name, identity.avatarUrl || null, JSON.stringify(identity.profile)]
       );
     }
-    await conn.query('UPDATE users SET paypal_connected = 1, paypal_email = ? WHERE id = ?', [identity.email, user.id]);
+    await conn.query(
+      `UPDATE users
+          SET paypal_connected = 1,
+              paypal_email = ?,
+              email_verified_at = COALESCE(email_verified_at, NOW()),
+              email_verification_required = 0,
+              language = COALESCE(NULLIF(language, ''), ?)
+        WHERE id = ?`,
+      [identity.email, normalizeMailLanguage(identity.locale || identity.country || user.language || 'ES'), user.id]
+    );
     const [freshRows]: any = await conn.query('SELECT * FROM users WHERE id = ? LIMIT 1', [user.id]);
     user = freshRows[0] || user;
     await conn.commit();
