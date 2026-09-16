@@ -15323,6 +15323,7 @@ const COPILOT_LANGUAGES: Record<string, string> = {
 const copilotMessages: Record<string, Record<string, string>> = {
   es: {
     missingMessage: 'Escribe tu consulta para ayudarte.',
+    greeting: '¡Hola! Soy el Copiloto de DoorDrop. Puedo ayudarte con envíos, seguimiento, tickets, facturación e integraciones. ¿Qué necesitas?',
     noData: 'No encontramos información suficiente para responder con seguridad. Un agente continuará la asistencia.',
     ticketCreated: 'Hemos creado un ticket para que un agente continúe la asistencia.',
     unavailable: 'Estamos revisando tu solicitud. Un agente continuará la asistencia.',
@@ -15333,6 +15334,7 @@ const copilotMessages: Record<string, Record<string, string>> = {
   },
   en: {
     missingMessage: 'Write your question so we can help you.',
+    greeting: 'Hello! I’m the DoorDrop Copilot. I can help with shipments, tracking, tickets, billing and integrations. What do you need?',
     noData: 'We could not find enough information to answer safely. An agent will continue the assistance.',
     ticketCreated: 'We created a ticket so an agent can continue the assistance.',
     unavailable: 'We are reviewing your request. An agent will continue the assistance.',
@@ -15343,6 +15345,7 @@ const copilotMessages: Record<string, Record<string, string>> = {
   },
   it: {
     missingMessage: 'Scrivi la tua richiesta per poterti aiutare.',
+    greeting: 'Ciao! Sono il Copilota DoorDrop. Posso aiutarti con spedizioni, tracciamento, ticket, fatturazione e integrazioni. Di cosa hai bisogno?',
     noData: 'Non abbiamo trovato informazioni sufficienti per rispondere in sicurezza. Un agente continuerà l’assistenza.',
     ticketCreated: 'Abbiamo creato un ticket così un agente può continuare l’assistenza.',
     unavailable: 'Stiamo esaminando la tua richiesta. Un agente continuerà l’assistenza.',
@@ -15353,6 +15356,7 @@ const copilotMessages: Record<string, Record<string, string>> = {
   },
   fr: {
     missingMessage: 'Écrivez votre demande afin que nous puissions vous aider.',
+    greeting: 'Bonjour ! Je suis le Copilote DoorDrop. Je peux vous aider avec les envois, le suivi, les tickets, la facturation et les intégrations. Que souhaitez-vous faire ?',
     noData: 'Nous n’avons pas trouvé suffisamment d’informations pour répondre avec sécurité. Un agent poursuivra l’assistance.',
     ticketCreated: 'Nous avons créé un ticket afin qu’un agent poursuive l’assistance.',
     unavailable: 'Nous examinons votre demande. Un agent poursuivra l’assistance.',
@@ -15363,6 +15367,7 @@ const copilotMessages: Record<string, Record<string, string>> = {
   },
   de: {
     missingMessage: 'Schreiben Sie Ihre Anfrage, damit wir helfen können.',
+    greeting: 'Hallo! Ich bin der DoorDrop-Copilot. Ich helfe bei Sendungen, Tracking, Tickets, Abrechnung und Integrationen. Wobei kann ich helfen?',
     noData: 'Wir haben nicht genügend Informationen gefunden, um sicher zu antworten. Ein Mitarbeiter setzt die Unterstützung fort.',
     ticketCreated: 'Wir haben ein Ticket erstellt, damit ein Mitarbeiter die Unterstützung fortsetzen kann.',
     unavailable: 'Wir prüfen Ihre Anfrage. Ein Mitarbeiter setzt die Unterstützung fort.',
@@ -15373,6 +15378,7 @@ const copilotMessages: Record<string, Record<string, string>> = {
   },
   zh: {
     missingMessage: '请写下您的问题，以便我们为您提供帮助。',
+    greeting: '您好！我是 DoorDrop AI 助手，可以帮助您处理寄件、追踪、工单、账单和集成。请问需要什么帮助？',
     noData: '我们没有找到足够的信息来安全回复。客服人员将继续协助。',
     ticketCreated: '我们已创建工单，客服人员将继续协助。',
     unavailable: '我们正在查看您的请求。客服人员将继续协助。',
@@ -15398,14 +15404,43 @@ function copilotText(lang: string, key: string): string {
   return copilotMessages[language]?.[key] || copilotMessages.es[key] || key;
 }
 
+function isSimpleCopilotGreeting(message: string): boolean {
+  const text = String(message || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[!?.,;:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text || text.length > 80) return false;
+  return /^(?:ciao|salve|buongiorno|buonasera|buonanotte|hola|buenos dias|buenas tardes|buenas noches|hello|hi|hey|good morning|good afternoon|good evening|bonjour|bonsoir|guten tag|guten morgen|guten abend|ni hao|你好)(?: (?:doordrop|door drop|team|equipo|support|supporto|assistance))?$/.test(text);
+}
+
+function escapeRegExp(value: string): string {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function redactCopilotProviderDetails(value: any, hiddenTerms: string[] = []): string {
+  let text = cleanCopilotOutput(value);
+  const terms = hiddenTerms
+    .map((term) => String(term || '').trim())
+    .filter((term) => term.length >= 3 && !/^doordrop$/i.test(term))
+    .sort((a, b) => b.length - a.length);
+  for (const term of terms) {
+    text = text.replace(new RegExp(`\\b${escapeRegExp(term)}\\b`, 'gi'), 'courier DoorDrop');
+  }
+  return text;
+}
+
 function ship24goSupportSystemPrompt(lang: string): string {
   return `You are DoorDrop Copilot, a professional logistics support assistant.
 Respond in ${COPILOT_LANGUAGES[normalizeCopilotLanguage(lang)] || 'Spanish'}.
 Use only the context provided by DoorDrop backend. Do not invent shipment status, invoices, balances, labels, provider responses or internal facts.
-Use the public word "courier" for shipping partners, and public names such as DHL only if present in context.
+Use the public word "courier" for shipping partners. Do not name a courier unless DoorDrop has explicitly marked that exact name as customer-visible in the provided context.
 Never mention internal database tables, schemas, payloads, logs, environment variables, API keys, SQL, migrations, endpoints, stack traces, debug details, or hidden configuration.
-If the provided context is not enough to answer safely, say that an agent will continue the assistance and append the exact marker [[HUMAN_ESCALATION]].
-Keep answers clear, commercial, friendly and concise.`;
+Never reveal provider codes, upstream aggregators, suppliers, brokers, purchase sources, internal margins, internal costs, or the names of services DoorDrop uses behind the scenes. If asked where DoorDrop buys or routes transport, say only that DoorDrop uses a connected logistics network and offers the available service and final price.
+If the context does not include a live quote, do not escalate just because a price needs shipment details: explain which details are required and ask the customer for them. Append the exact marker [[HUMAN_ESCALATION]] only when the customer explicitly requests a human, reports a problem that cannot be resolved with the context, or a human decision/action is genuinely required.
+Keep answers clear, commercial, friendly and concise. Prefer a direct answer with short bullets and no more than 120 words unless more detail is necessary.`;
 }
 
 function cleanCopilotOutput(value: any): string {
@@ -15616,7 +15651,7 @@ function compactJson(value: any, max = 20000): string {
 
 async function buildCopilotContext(req: any, limit: number) {
   const isSuperAdmin = req.user.role === 'super_admin';
-  const providers = await ProviderRepo.getAll().catch(() => []);
+  const providers = isSuperAdmin ? await ProviderRepo.getAll().catch(() => []) : [];
   const providerSummary = providers.map((p: any) => ({
     code: p.code,
     name: p.name,
@@ -15680,7 +15715,6 @@ async function buildCopilotContext(req: any, limit: number) {
     shipments: shipments.map((s: any) => ({
       id: s.id,
       trackingCode: s.tracking_code,
-      courier: s.provider_code,
       status: s.status_label || s.status,
       createdAt: s.created_at,
       updatedAt: s.updated_at
@@ -15688,9 +15722,13 @@ async function buildCopilotContext(req: any, limit: number) {
     trackingEvents: shipmentEvents,
     stores: myStores.slice(0, limit).map((st: any) => ({ id: st.id, platform: st.platform, name: st.store_name, status: st.status })),
     tickets: myTickets.slice(0, limit).map((t: any) => ({ id: t.id, subject: t.subject, category: t.category, status: t.status, createdAt: t.created_at })),
-    plans: plans.map((p: any) => ({ code: p.code, name: p.name, price: p.price, currency: p.currency, active: Boolean(p.is_active) })),
-    couriers: providerSummary
+    plans: plans.map((p: any) => ({ code: p.code, name: p.name, price: p.price, currency: p.currency, active: Boolean(p.is_active) }))
   };
+}
+
+async function getHiddenCopilotProviderTerms(): Promise<string[]> {
+  const providers = await ProviderRepo.getAll().catch(() => []);
+  return providers.flatMap((provider: any) => [provider?.name, provider?.code]).filter(Boolean);
 }
 
 async function createCopilotHumanTicket(req: any, conversationId: string, lang: string, message: string, history: any[], reason: string) {
@@ -15782,14 +15820,17 @@ async function handleCopilotMessage(req: any, res: any) {
   let ticket: any = null;
 
   try {
-    const context = await buildCopilotContext(req, Number(aiSettings.maxContextRecords || 20));
-    const historyText = (history || []).slice(-8).map((msg: any) => `${msg.role === 'user' ? 'Customer' : 'Assistant'}: ${String(msg.content || '').slice(0, 900)}`).join('\n');
     const forceEscalation = shouldForceHumanEscalation(cleanMessage);
 
     if (forceEscalation) {
       responseText = copilotText(language, 'unavailable');
       escalated = true;
+    } else if (isSimpleCopilotGreeting(cleanMessage)) {
+      responseText = copilotText(language, 'greeting');
     } else {
+      const context = await buildCopilotContext(req, Number(aiSettings.maxContextRecords || 20));
+      const hiddenProviderTerms = req.user.role === 'super_admin' ? [] : await getHiddenCopilotProviderTerms();
+      const historyText = (history || []).slice(-8).map((msg: any) => `${msg.role === 'user' ? 'Customer' : 'Assistant'}: ${redactCopilotProviderDetails(String(msg.content || '').slice(0, 900), hiddenProviderTerms)}`).join('\n');
       const prompt = `Customer message: ${cleanMessage}
 
 Recent conversation:
@@ -15798,13 +15839,13 @@ ${historyText || 'No previous messages.'}
 DoorDrop backend context:
 ${compactJson(context)}
 
-Answer the customer now. If the context does not contain enough reliable information, append [[HUMAN_ESCALATION]].`;
+Answer the customer now. If shipment details are missing for a live quote, ask for those details instead of escalating. Append [[HUMAN_ESCALATION]] only under the escalation rule above.`;
       const ai = await callAIText([
         { role: 'system', content: `${ship24goSupportSystemPrompt(language)}\nAdditional admin instructions: ${String((await getStoredAISettings()).instructions || '').slice(0, 1200)}` },
         { role: 'user', content: prompt }
       ], language);
       escalated = hasHumanEscalationMarker(ai.text);
-      responseText = cleanCopilotOutput(ai.text) || copilotText(language, 'noData');
+      responseText = redactCopilotProviderDetails(ai.text, hiddenProviderTerms) || copilotText(language, 'noData');
       if (!responseText || escalated) escalated = true;
     }
   } catch (error) {
