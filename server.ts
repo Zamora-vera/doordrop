@@ -41,7 +41,7 @@ import {
   verifyPassword,
   generateId
 } from './server/db/repos';
-import { getDocBundle, docsToMarkdown, docsToPdfBuffer, getOpenApiSpec, getOpenAiToolSchemas } from './server/docs/apiDocs';
+import { getDocBundle, docsToMarkdown, docsToPdfBuffer, billingStatementToPdfBuffer, getOpenApiSpec, getOpenAiToolSchemas } from './server/docs/apiDocs';
 import { swaggerUiHtml } from './server/docs/swaggerUi';
 import { sendPasswordResetEmail, sendTemplatedEmail, sendNotificationEvent, testSmtpConnection, renderTemplateText } from './server/services/emailService';
 import {
@@ -7403,7 +7403,8 @@ const billingServerCopy: Record<DoorDropBillingLanguage, Record<string, string>>
     refunded: 'Reembolsado',
     cancelled: 'Cancelado',
     active: 'Activo',
-    canceled: 'Cancelado'
+    canceled: 'Cancelado',
+    statementTitle: 'Estado de cuenta', issued: 'Emisión', period: 'Periodo', allPeriod: 'Todos los movimientos', preparedFor: 'Preparado para', account: 'Cuenta', currency: 'Moneda', version: 'Versión', summary: 'Resumen del periodo', availableBalance: 'Saldo disponible', movements: 'Movimientos', topups: 'Recargas completadas', payments: 'Pagos completados', activity: 'Detalle de movimientos', date: 'Fecha', concept: 'Concepto', status: 'Estado', direction: 'Sentido', amount: 'Importe', reference: 'Referencia', referenceShort: 'Ref.', subscriptions: 'Suscripciones', noActivity: 'No hay movimientos registrados.', noSubscriptions: 'No hay suscripciones registradas.', renews: 'Renueva', note: 'Documento informativo basado en los registros reales de DoorDrop.', footerNote: 'Estado de cuenta informativo', page: 'Página', continuation: 'Estado de cuenta', notConfigured: 'Perfil no configurado'
   },
   en: {
     title: 'DoorDrop account statement',
@@ -7427,7 +7428,8 @@ const billingServerCopy: Record<DoorDropBillingLanguage, Record<string, string>>
     refunded: 'Refunded',
     cancelled: 'Cancelled',
     active: 'Active',
-    canceled: 'Canceled'
+    canceled: 'Canceled',
+    statementTitle: 'Account statement', issued: 'Issued', period: 'Period', allPeriod: 'All movements', preparedFor: 'Prepared for', account: 'Account', currency: 'Currency', version: 'Version', summary: 'Period summary', availableBalance: 'Available balance', movements: 'Movements', topups: 'Completed top-ups', payments: 'Completed payments', activity: 'Movement details', date: 'Date', concept: 'Concept', status: 'Status', direction: 'Direction', amount: 'Amount', reference: 'Reference', referenceShort: 'Ref.', subscriptions: 'Subscriptions', noActivity: 'No account activity found.', noSubscriptions: 'No subscriptions recorded.', renews: 'Renews', note: 'Informational document based on real DoorDrop records.', footerNote: 'Informational account statement', page: 'Page', continuation: 'Account statement', notConfigured: 'Profile not configured'
   },
   it: {
     title: 'Estratto conto DoorDrop',
@@ -7451,7 +7453,8 @@ const billingServerCopy: Record<DoorDropBillingLanguage, Record<string, string>>
     refunded: 'Rimborsato',
     cancelled: 'Annullato',
     active: 'Attivo',
-    canceled: 'Annullato'
+    canceled: 'Annullato',
+    statementTitle: 'Estratto conto', issued: 'Emissione', period: 'Periodo', allPeriod: 'Tutti i movimenti', preparedFor: 'Preparato per', account: 'Conto', currency: 'Valuta', version: 'Versione', summary: 'Riepilogo del periodo', availableBalance: 'Saldo disponibile', movements: 'Movimenti', topups: 'Ricariche completate', payments: 'Pagamenti completati', activity: 'Dettaglio movimenti', date: 'Data', concept: 'Voce', status: 'Stato', direction: 'Direzione', amount: 'Importo', reference: 'Riferimento', referenceShort: 'Rif.', subscriptions: 'Abbonamenti', noActivity: 'Nessun movimento trovato.', noSubscriptions: 'Nessun abbonamento registrato.', renews: 'Rinnova', note: 'Documento informativo basato sui registri reali di DoorDrop.', footerNote: 'Estratto conto informativo', page: 'Pagina', continuation: 'Estratto conto', notConfigured: 'Profilo non configurato'
   },
   fr: {
     title: 'Relevé de compte DoorDrop',
@@ -7475,7 +7478,8 @@ const billingServerCopy: Record<DoorDropBillingLanguage, Record<string, string>>
     refunded: 'Remboursé',
     cancelled: 'Annulé',
     active: 'Actif',
-    canceled: 'Annulé'
+    canceled: 'Annulé',
+    statementTitle: 'Relevé de compte', issued: 'Émission', period: 'Période', allPeriod: 'Tous les mouvements', preparedFor: 'Préparé pour', account: 'Compte', currency: 'Devise', version: 'Version', summary: 'Résumé de la période', availableBalance: 'Solde disponible', movements: 'Mouvements', topups: 'Recharges terminées', payments: 'Paiements terminés', activity: 'Détail des mouvements', date: 'Date', concept: 'Libellé', status: 'Statut', direction: 'Sens', amount: 'Montant', reference: 'Référence', referenceShort: 'Réf.', subscriptions: 'Abonnements', noActivity: 'Aucun mouvement trouvé.', noSubscriptions: 'Aucun abonnement enregistré.', renews: 'Renouvellement', note: 'Document informatif basé sur les registres réels de DoorDrop.', footerNote: 'Relevé de compte informatif', page: 'Page', continuation: 'Relevé de compte', notConfigured: 'Profil non configuré'
   }
 };
 
@@ -7710,12 +7714,13 @@ function billingCsvCell(value: any) {
   return `"${String(value ?? '').replace(/"/g, '""')}"`;
 }
 
-function formatBillingAmount(amount: number, currency: string, lang: DoorDropBillingLanguage) {
+function formatBillingDateForPdf(value: any, lang: DoorDropBillingLanguage) {
+  if (!value) return '';
   const locale = lang === 'en' ? 'en-US' : lang === 'fr' ? 'fr-FR' : lang === 'it' ? 'it-IT' : 'es-ES';
   try {
-    return new Intl.NumberFormat(locale, { style: 'currency', currency: normalizeCurrencyCode(currency), minimumFractionDigits: 2 }).format(amount);
+    return new Intl.DateTimeFormat(locale, { dateStyle: 'long' }).format(new Date(value));
   } catch {
-    return `${Number(amount || 0).toFixed(2)} ${normalizeCurrencyCode(currency)}`;
+    return String(value);
   }
 }
 
@@ -7759,20 +7764,38 @@ app.get('/api/user/billing/export', authMiddleware, async (req: any, res) => {
       return res.send(`\uFEFF${csv}`);
     }
 
-    const lines = data.entries.length
-      ? data.entries.map((entry: any) => `${entry.createdAt || ''} | ${entry.title} | ${copy[entry.direction] || entry.direction} | ${copy[entry.status] || entry.status} | ${formatBillingAmount(entry.amount, entry.currency, lang)} | ${entry.reference || '—'}`)
-      : [lang === 'en' ? 'No account activity found.' : lang === 'it' ? 'Nessun movimento trovato.' : lang === 'fr' ? 'Aucun mouvement trouvé.' : 'No hay movimientos registrados.'];
-    const pdf = docsToPdfBuffer({
+    const from = String(req.query?.from || '').trim();
+    const to = String(req.query?.to || '').trim();
+    const validDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+    const periodLabel = validDate(from) && validDate(to)
+      ? `${formatBillingDateForPdf(from, lang)} - ${formatBillingDateForPdf(to, lang)}`
+      : validDate(from)
+        ? `${formatBillingDateForPdf(from, lang)} - ${formatBillingDateForPdf(dateStamp, lang)}`
+        : validDate(to)
+          ? `${copy.allPeriod} - ${formatBillingDateForPdf(to, lang)}`
+          : copy.allPeriod;
+    const pdfEntries = data.entries.map((entry: any) => ({
+      ...entry,
+      direction: copy[entry.direction] || entry.direction,
+      status: copy[entry.status] || entry.status
+    }));
+    const pdfSubscriptions = data.subscriptions.map((subscription: any) => ({
+      planName: subscription.planName,
+      status: copy[subscription.status] || subscription.status,
+      currentPeriodEnd: subscription.currentPeriodEnd
+    }));
+    const pdf = billingStatementToPdfBuffer({
       lang,
-      title: copy.title,
-      subtitle: `${copy.subtitle} · ${data.account.email}`,
       version: APP_VERSION,
-      updated: dateStamp,
-      sections: [
-        { title: `${lang === 'en' ? 'Available balance' : lang === 'it' ? 'Saldo disponibile' : lang === 'fr' ? 'Solde disponible' : 'Saldo disponible'}: ${formatBillingAmount(data.account.balance, data.account.currency, lang)}`, body: lines.join('\n') },
-        { title: lang === 'en' ? 'Billing profile' : lang === 'it' ? 'Profilo di fatturazione' : lang === 'fr' ? 'Profil de facturation' : 'Perfil de facturación', body: [data.billingProfile?.companyName, data.billingProfile?.email, data.billingProfile?.address, data.billingProfile?.city, data.billingProfile?.zipCode, data.billingProfile?.country].filter(Boolean).join(' · ') || (lang === 'en' ? 'No billing profile configured.' : lang === 'it' ? 'Profilo di fatturazione non configurato.' : lang === 'fr' ? 'Aucun profil de facturation configuré.' : 'No hay perfil de facturación configurado.') }
-      ]
-    }, { publicNote: copy.publicNote });
+      issueDate: formatBillingDateForPdf(dateStamp, lang),
+      periodLabel,
+      account: data.account,
+      billingProfile: data.billingProfile,
+      summary: data.summary,
+      entries: pdfEntries,
+      subscriptions: pdfSubscriptions,
+      labels: copy
+    });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="doordrop-estado-cuenta-${dateStamp}.pdf"`);
     res.setHeader('Cache-Control', 'private, no-store');

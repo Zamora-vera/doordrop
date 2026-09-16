@@ -1174,3 +1174,333 @@ export function docsToPdfBuffer(doc: DocBundle, options: { publicNote?: string }
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefPos}\n%%EOF`;
   return Buffer.from(pdf, 'latin1');
 }
+
+/* -------------------------------------------------------------------------- */
+/* Customer billing statement PDF                                              */
+/* -------------------------------------------------------------------------- */
+
+export type BillingPdfEntry = {
+  createdAt?: string | null;
+  title?: string;
+  direction?: string;
+  status?: string;
+  amount?: number;
+  currency?: string;
+  reference?: string;
+};
+
+export type BillingPdfInput = {
+  lang: DocLang;
+  version: string;
+  issueDate: string;
+  periodLabel: string;
+  account: {
+    name?: string;
+    email?: string;
+    currency?: string;
+    balance?: number;
+  };
+  billingProfile?: {
+    companyName?: string;
+    email?: string;
+    address?: string;
+    city?: string;
+    zipCode?: string;
+    country?: string;
+  } | null;
+  summary: {
+    totalEntries?: number;
+    completedTopups?: number;
+    paidPayments?: number;
+  };
+  entries: BillingPdfEntry[];
+  subscriptions: Array<{
+    planName?: string;
+    status?: string;
+    currentPeriodEnd?: string | null;
+  }>;
+  labels: Record<string, string>;
+};
+
+/**
+ * Renders the customer-facing account statement using real persisted data.
+ * The visual language follows the supplied React references, but no sample
+ * invoice numbers, tax IDs, bank accounts, or supplier names are introduced.
+ */
+export function billingStatementToPdfBuffer(input: BillingPdfInput): Buffer {
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const margin = 42;
+  const contentWidth = pageWidth - margin * 2;
+  const right = pageWidth - margin;
+  const footerY = 24;
+  const bottomLimit = 55;
+  const font = 'F1';
+  const bold = 'F2';
+  const colors = {
+    ink: '0.17 0.20 0.24',
+    slate: '0.35 0.40 0.46',
+    muted: '0.50 0.55 0.61',
+    line: '0.88 0.90 0.93',
+    pale: '0.96 0.97 0.98',
+    blue: '0.10 0.36 0.92',
+    cyan: '0.00 0.58 0.78',
+    red: '0.89 0.11 0.14',
+    green: '0.05 0.52 0.34',
+    white: '1 1 1'
+  };
+  const label = (key: string, fallback: string) => String(input.labels?.[key] || fallback);
+  const langLocale = input.lang === 'en' ? 'en-US' : input.lang === 'it' ? 'it-IT' : input.lang === 'fr' ? 'fr-FR' : 'es-ES';
+  const currency = String(input.account?.currency || 'EUR').toUpperCase();
+  const safeText = (value: any) => String(value ?? '').replace(/\s+/g, ' ').trim();
+  const shorten = (value: any, max: number) => {
+    const text = safeText(value);
+    return text.length > max ? `${text.slice(0, Math.max(0, max - 1)).trim()}...` : text;
+  };
+  const dateText = (value: any) => {
+    if (!value) return '-';
+    try {
+      return new Intl.DateTimeFormat(langLocale, { dateStyle: 'medium' }).format(new Date(value));
+    } catch {
+      return shorten(value, 22) || '-';
+    }
+  };
+  const money = (amount: any, code = currency) => {
+    const number = Number(amount || 0);
+    try {
+      return new Intl.NumberFormat(langLocale, { style: 'currency', currency: String(code || currency).toUpperCase(), minimumFractionDigits: 2 }).format(number);
+    } catch {
+      return `${number.toFixed(2)} ${String(code || currency).toUpperCase()}`;
+    }
+  };
+  // Helvetica-Bold uppercase headings are wider than the average body glyph;
+  // use a conservative estimate so right-aligned titles never clip at A4 edge.
+  const textWidth = (value: any, size: number) => safeText(value).length * size * 0.58;
+
+  type Cmds = string[];
+  const pages: Cmds[] = [];
+  let cmds: Cmds = [];
+  let pageNumber = 1;
+  let y = pageHeight - margin;
+
+  const fillRect = (x: number, top: number, width: number, height: number, color: string) => {
+    cmds.push(`${color} rg`, `${x.toFixed(2)} ${(top - height).toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re`, 'f');
+  };
+  const strokeRect = (x: number, top: number, width: number, height: number, color: string, lineWidth = 0.7) => {
+    cmds.push(`${color} RG`, `${lineWidth} w`, `${x.toFixed(2)} ${(top - height).toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re`, 'S');
+  };
+  const line = (x1: number, y1: number, x2: number, y2: number, color = colors.line, lineWidth = 0.7) => {
+    cmds.push(`${color} RG`, `${lineWidth} w`, `${x1.toFixed(2)} ${y1.toFixed(2)} m`, `${x2.toFixed(2)} ${y2.toFixed(2)} l`, 'S');
+  };
+  const drawAt = (value: any, x: number, baseline: number, size: number, color = colors.ink, isBold = false, maxChars = 150) => {
+    const text = shorten(value, maxChars);
+    if (!text) return;
+    cmds.push(`${color} rg`, 'BT', `/${isBold ? bold : font} ${size} Tf`, `1 0 0 1 ${x.toFixed(2)} ${baseline.toFixed(2)} Tm`, `${pdfStringLiteral(text)} Tj`, 'ET');
+  };
+  const drawRight = (value: any, xRight: number, baseline: number, size: number, color = colors.ink, isBold = false, maxChars = 150) => {
+    const text = shorten(value, maxChars);
+    drawAt(text, Math.max(margin, xRight - textWidth(text, size)), baseline, size, color, isBold, maxChars);
+  };
+  const wrap = (value: any, maxChars: number) => {
+    const text = safeText(value);
+    if (!text) return [];
+    const result: string[] = [];
+    let rest = text;
+    while (rest.length > maxChars) {
+      let cut = rest.lastIndexOf(' ', maxChars);
+      if (cut < maxChars * 0.55) cut = maxChars;
+      result.push(rest.slice(0, cut));
+      rest = rest.slice(cut).trimStart();
+    }
+    if (rest) result.push(rest);
+    return result;
+  };
+  const drawWrapped = (value: any, x: number, startY: number, maxChars: number, size: number, color = colors.slate, lineHeight = 13, isBold = false) => {
+    let cursor = startY;
+    for (const part of wrap(value, maxChars)) {
+      drawAt(part, x, cursor, size, color, isBold, maxChars + 4);
+      cursor -= lineHeight;
+    }
+    return cursor;
+  };
+  const drawFooter = () => {
+    line(margin, footerY + 14, right, footerY + 14, colors.line, 0.6);
+    drawAt('DoorDrop', margin, footerY, 7.5, colors.ink, true, 30);
+    drawAt(`${label('footerNote', 'Documento informativo')}  |  doordrop.lat`, margin + 42, footerY, 7.2, colors.muted, false, 110);
+    drawRight(`${label('page', 'Página')} ${pageNumber}`, right, footerY, 7.2, colors.muted, false, 30);
+  };
+  const finishPage = () => {
+    drawFooter();
+    pages.push(cmds);
+    pageNumber += 1;
+  };
+  const startPage = (continuation = false) => {
+    cmds = [];
+    y = pageHeight - margin;
+    fillRect(0, pageHeight, pageWidth, 5, colors.blue);
+    fillRect(pageWidth - 150, pageHeight, 150, 5, colors.red);
+    if (continuation) {
+      drawAt('door', margin, y - 2, 16, colors.ink, true, 30);
+      drawAt('Drop', margin + 37, y - 2, 16, colors.red, true, 30);
+      drawRight(label('continuation', 'Estado de cuenta'), right, y - 2, 9, colors.slate, true, 45);
+      y -= 36;
+    }
+  };
+
+  const drawTableHeader = (top: number) => {
+    const widths = [72, 150, 72, 60, 82, 75];
+    const headers = [
+      label('date', 'Fecha'), label('concept', 'Concepto'), label('status', 'Estado'),
+      label('direction', 'Sentido'), label('amount', 'Importe'), label('referenceShort', 'Ref.')
+    ];
+    let x = margin;
+    fillRect(margin, top, contentWidth, 25, colors.ink);
+    headers.forEach((header, index) => {
+      if (index === 4) drawRight(header.toUpperCase(), x + widths[index] - 7, top - 16, 7.2, colors.white, true, 18);
+      else drawAt(header.toUpperCase(), x + 7, top - 16, 7.2, colors.white, true, 18);
+      x += widths[index];
+    });
+    return { widths, bottom: top - 25 };
+  };
+
+  startPage();
+  drawAt('door', margin, y - 2, 30, colors.ink, true, 30);
+  drawAt('Drop', margin + 66, y - 2, 30, colors.red, true, 30);
+  drawRight(label('statementTitle', 'Estado de cuenta').toUpperCase(), right, y - 2, 16, colors.ink, true, 32);
+  drawRight(`${label('issued', 'Emisión')}: ${input.issueDate}`, right, y - 24, 8.5, colors.slate, false, 60);
+  drawRight(`${label('period', 'Periodo')}: ${input.periodLabel}`, right, y - 38, 8.5, colors.slate, false, 80);
+  y -= 68;
+  line(margin, y, right, y, colors.line, 1);
+  y -= 26;
+
+  drawAt(label('preparedFor', 'Datos del cliente').toUpperCase(), margin, y, 8, colors.red, true, 34);
+  line(margin, y - 6, margin + 105, y - 6, colors.red, 1.4);
+  const profile = input.billingProfile || {};
+  const profileName = safeText(profile.companyName) || safeText(input.account?.name) || label('notConfigured', 'Perfil no configurado');
+  drawAt(profileName, margin, y - 27, 13, colors.ink, true, 55);
+  let profileY = y - 43;
+  for (const value of [profile.email || input.account?.email, profile.address, profile.city, [profile.zipCode, profile.country].filter(Boolean).join(' ')]) {
+    if (safeText(value)) {
+      drawAt(value, margin, profileY, 8.5, colors.slate, false, 76);
+      profileY -= 13;
+    }
+  }
+  const accountX = 340;
+  drawAt(label('account', 'Cuenta').toUpperCase(), accountX, y, 8, colors.red, true, 24);
+  line(accountX, y - 6, accountX + 52, y - 6, colors.red, 1.4);
+  drawAt(safeText(input.account?.email) || '-', accountX, y - 27, 9.5, colors.ink, true, 42);
+  drawAt(`${label('currency', 'Moneda')}: ${currency}`, accountX, y - 44, 8.5, colors.slate, false, 35);
+  drawAt(`${label('version', 'Versión')}: ${input.version}`, accountX, y - 59, 8.5, colors.muted, false, 35);
+  y = Math.min(profileY, y - 75) - 20;
+
+  drawAt(label('summary', 'Resumen del periodo').toUpperCase(), margin, y, 8, colors.muted, true, 40);
+  y -= 12;
+  const cardGap = 8;
+  const cardWidth = (contentWidth - cardGap * 3) / 4;
+  const cardHeight = 55;
+  const cards = [
+    [label('availableBalance', 'Saldo disponible'), money(input.account?.balance || 0), colors.blue],
+    [label('movements', 'Movimientos'), String(Number(input.summary?.totalEntries || 0)), colors.ink],
+    [label('topups', 'Recargas completadas'), String(Number(input.summary?.completedTopups || 0)), colors.cyan],
+    [label('payments', 'Pagos completados'), String(Number(input.summary?.paidPayments || 0)), colors.green]
+  ];
+  cards.forEach((card: any[], index) => {
+    const x = margin + index * (cardWidth + cardGap);
+    fillRect(x, y, cardWidth, cardHeight, index === 1 ? colors.ink : colors.pale);
+    strokeRect(x, y, cardWidth, cardHeight, index === 1 ? colors.ink : colors.line, 0.7);
+    drawAt(card[0], x + 10, y - 17, 7.2, index === 1 ? '0.82 0.85 0.88' : colors.muted, true, 28);
+    drawAt(card[1], x + 10, y - 39, index === 0 ? 12 : 15, index === 1 ? colors.white : card[2], true, 22);
+  });
+  y -= cardHeight + 27;
+
+  drawAt(label('activity', 'Detalle de movimientos').toUpperCase(), margin, y, 8, colors.red, true, 40);
+  line(margin, y - 6, margin + 135, y - 6, colors.red, 1.4);
+  y -= 22;
+  let table = drawTableHeader(y);
+  y = table.bottom;
+  const entries = Array.isArray(input.entries) ? input.entries : [];
+  const rows = entries.length ? entries : [{ title: label('noActivity', 'No hay movimientos registrados.'), direction: '', status: '', amount: 0, currency, reference: '', createdAt: null }];
+  rows.forEach((entry: BillingPdfEntry, index: number) => {
+    const rowHeight = 29;
+    if (y - rowHeight < bottomLimit) {
+      finishPage();
+      startPage(true);
+      drawAt(label('activity', 'Detalle de movimientos').toUpperCase(), margin, y, 8, colors.red, true, 40);
+      y -= 22;
+      table = drawTableHeader(y);
+      y = table.bottom;
+    }
+    const rowTop = y;
+    if (index % 2 === 1) fillRect(margin, rowTop, contentWidth, rowHeight, colors.pale);
+    const widths = table.widths;
+    const xPositions = widths.reduce((acc: number[], width: number, idx: number) => {
+      acc.push(idx === 0 ? margin : acc[idx - 1] + widths[idx - 1]);
+      return acc;
+    }, []);
+    drawAt(dateText(entry.createdAt), xPositions[0] + 7, rowTop - 18, 7.5, colors.slate, false, 15);
+    drawAt(entry.title || '-', xPositions[1] + 7, rowTop - 18, 7.8, colors.ink, true, 28);
+    drawAt(entry.status || '-', xPositions[2] + 7, rowTop - 18, 7.5, colors.slate, false, 14);
+    drawAt(entry.direction || '-', xPositions[3] + 7, rowTop - 18, 7.5, colors.slate, false, 12);
+    drawRight(`${entry.direction === label('incoming', 'Entrada') ? '+' : entry.direction === label('outgoing', 'Salida') ? '-' : ''}${money(entry.amount || 0, entry.currency || currency)}`, xPositions[4] + widths[4] - 7, rowTop - 18, 7.8, entry.direction === label('incoming', 'Entrada') ? colors.green : colors.ink, true, 18);
+    drawAt(entry.reference || '-', xPositions[5] + 7, rowTop - 18, 7.2, colors.muted, false, 12);
+    line(margin, rowTop - rowHeight, right, rowTop - rowHeight, colors.line, 0.45);
+    y -= rowHeight;
+  });
+  y -= 22;
+
+  const subscriptionHeight = 66;
+  if (y - subscriptionHeight < bottomLimit) {
+    finishPage();
+    startPage(true);
+    y -= 18;
+  }
+  fillRect(margin, y, contentWidth, subscriptionHeight, colors.pale);
+  strokeRect(margin, y, contentWidth, subscriptionHeight, colors.line, 0.7);
+  drawAt(label('subscriptions', 'Suscripciones').toUpperCase(), margin + 14, y - 18, 8, colors.red, true, 30);
+  const subscriptions = Array.isArray(input.subscriptions) ? input.subscriptions : [];
+  if (!subscriptions.length) {
+    drawAt(label('noSubscriptions', 'No hay suscripciones registradas.'), margin + 14, y - 42, 8.5, colors.slate, false, 92);
+  } else {
+    subscriptions.slice(0, 3).forEach((subscription, index) => {
+      const text = [subscription.planName, subscription.status, subscription.currentPeriodEnd ? `${label('renews', 'Renueva')} ${dateText(subscription.currentPeriodEnd)}` : ''].filter(Boolean).join(' - ');
+      drawAt(text, margin + 14, y - 40 - index * 13, 8.2, colors.slate, index === 0, 105);
+    });
+  }
+  y -= subscriptionHeight + 22;
+  drawWrapped(label('note', 'Documento informativo basado en los registros reales de DoorDrop.'), margin, y, 115, 7.5, colors.muted, 11, false);
+  finishPage();
+
+  const objects: string[] = [];
+  const add = (body: string) => {
+    objects.push(body);
+    return objects.length;
+  };
+  const font1 = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  const font2 = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+  const contentIds: number[] = [];
+  for (const pageCmds of pages) {
+    const stream = pageCmds.join('\n');
+    const len = Buffer.byteLength(stream, 'latin1');
+    contentIds.push(add(`<< /Length ${len} >>\nstream\n${stream}\nendstream`));
+  }
+  const pageIds: number[] = [];
+  for (const contentId of contentIds) {
+    pageIds.push(add(`<< /Type /Page /Parent 0 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Contents ${contentId} 0 R /Resources << /Font << /F1 ${font1} 0 R /F2 ${font2} 0 R >> >> >>`));
+  }
+  const kids = pageIds.map((id) => `${id} 0 R`).join(' ');
+  const pagesId = add(`<< /Type /Pages /Kids [ ${kids} ] /Count ${pageIds.length} >>`);
+  for (const pageId of pageIds) objects[pageId - 1] = objects[pageId - 1].replace('/Parent 0 0 R', `/Parent ${pagesId} 0 R`);
+  const catalogId = add(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`);
+
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [0];
+  for (let i = 0; i < objects.length; i++) {
+    offsets.push(Buffer.byteLength(pdf, 'latin1'));
+    pdf += `${i + 1} 0 obj\n${objects[i]}\nendobj\n`;
+  }
+  const xrefPos = Buffer.byteLength(pdf, 'latin1');
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= objects.length; i++) pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefPos}\n%%EOF`;
+  return Buffer.from(pdf, 'latin1');
+}
