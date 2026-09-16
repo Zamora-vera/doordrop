@@ -12,7 +12,7 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
     ...options.headers,
   };
 
-  const response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
+  const response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers, credentials: 'same-origin' });
   const raw = await response.text();
   let data: any = {};
   try {
@@ -64,6 +64,9 @@ export const api = {
   sendAdminWebmail: (data: any) => fetchAPI('/admin/webmail/send', { method: 'POST', body: JSON.stringify(data) }),
   saveAdminWebmailDraft: (data: any) => fetchAPI('/admin/webmail/drafts', { method: 'POST', body: JSON.stringify(data) }),
   login: (data: any) => fetchAPI('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
+  getPaypalAuthConfig: () => fetchAPI('/auth/paypal/config'),
+  startPaypalAuth: (mode: 'login' | 'register') => fetchAPI(`/auth/paypal/start?mode=${encodeURIComponent(mode)}`),
+  completePaypalAuth: () => fetchAPI('/auth/paypal/complete', { method: 'POST' }),
   forgotPassword: (data: { email: string }) => fetchAPI('/auth/forgot-password', { method: 'POST', body: JSON.stringify(data) }),
   resetPassword: (data: { token: string; newPassword: string }) => fetchAPI('/auth/reset-password', { method: 'POST', body: JSON.stringify(data) }),
   register: (data: any) => fetchAPI('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
@@ -177,7 +180,7 @@ export const api = {
   updateAdminAISettings: (ai: any) => fetchAPI('/admin/ai-settings', { method: 'PUT', body: JSON.stringify(ai) }),
   getCurrencies: () => fetchAPI('/currencies'),
   connectCard: (data: any) => fetchAPI('/user/connect-card', { method: 'POST', body: JSON.stringify(data) }),
-  connectPaypal: (data: any) => fetchAPI('/user/connect-paypal', { method: 'POST', body: JSON.stringify(data) }),
+  startPaypalLink: () => fetchAPI('/user/paypal/connect'),
   rechargeWallet: (amount: number, paymentProvider: 'polar' | 'paypal' = 'polar') => fetchAPI('/user/recharge', { method: 'POST', body: JSON.stringify({ amount, paymentProvider }) }),
   getAddressBook: (type?: string) => fetchAPI('/address-book' + (type ? `?type=${type}` : '')),
   saveAddressBook: (data: any) => fetchAPI('/address-book', { method: 'POST', body: JSON.stringify(data) }),

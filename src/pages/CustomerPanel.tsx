@@ -3290,9 +3290,7 @@ const CustomerSettings = () => {
   // Wallet and safety forms
   const [rechargeLoading, setRechargeLoading] = useState(false);
   const [cardForm, setCardForm] = useState({ cardNumber: '', expiryDate: '', cvv: '', cardholderName: '' });
-  const [paypalEmailInput, setPaypalEmailInput] = useState('');
   const [showCardModal, setShowCardModal] = useState(false);
-  const [showPaypalModal, setShowPaypalModal] = useState(false);
   const [actionSuccess, setActionSuccess] = useState('');
   const [actionError, setActionError] = useState('');
   const [subscriptionPlans, setSubscriptionPlans] = useState<any[]>([]);
@@ -3453,19 +3451,13 @@ const CustomerSettings = () => {
     }
   };
 
-  const handleConnectPaypalSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleConnectPaypal = async () => {
     setActionError('');
     setActionSuccess('');
     try {
-      const res = await api.connectPaypal({ email: paypalEmailInput });
-      if (res.success) {
-        const mergedUser = { ...profile, ...res.user };
-        setProfile(mergedUser);
-        setShowPaypalModal(false);
-        setPaypalEmailInput('');
-        setActionSuccess('¡Excelente! Tu cuenta de PayPal de respaldo ha sido vinculada con éxito.');
-      }
+      const res = await api.startPaypalLink();
+      if (!res?.url) throw new Error('PayPal no está disponible en este momento.');
+      window.location.assign(res.url);
     } catch (e: any) {
       setActionError(e.message || 'Ocurrió un error al vincular tu cuenta de PayPal.');
     }
@@ -3674,7 +3666,7 @@ const CustomerSettings = () => {
                               </div>
                           </div>
                           <button 
-                            onClick={() => setShowPaypalModal(true)}
+                            onClick={handleConnectPaypal}
                             className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${profile?.paypalConnected ? 'border-gray-200 hover:bg-gray-100 text-gray-600 dark:border-gray-700 dark:hover:bg-gray-800 dark:text-gray-300' : 'border-blue-500 hover:bg-blue-50 dark:border-neon-cyan dark:hover:bg-neon-cyan/10 text-blue-600 dark:text-neon-cyan'}`}
                           >
                               {profile?.paypalConnected ? 'Cambiar Cuenta' : 'Vincular PayPal'}
@@ -3782,40 +3774,6 @@ const CustomerSettings = () => {
                 </button>
                 <button type="submit" className="flex-1 py-3 bg-gradient-to-r from-pink-500 to-orange-400 dark:from-neon-pink dark:to-[#9D00FF] text-white font-bold rounded-xl shadow hover:opacity-90 transition-all text-sm">
                   Vincular Tarjeta
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* PayPal linking Modal */}
-      {showPaypalModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-dark-900 rounded-3xl border border-gray-200 dark:border-gray-800 shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="p-6 bg-blue-600 text-white flex justify-between items-center">
-              <div>
-                <h3 className="font-bold text-lg flex items-center gap-2"><i className="fa-brands fa-paypal"></i> Vincular PayPal de Respaldo</h3>
-                <p className="text-xs text-white/80 mt-1">Respaldo automático para cuentas con más de 5 envíos activos.</p>
-              </div>
-              <button onClick={() => setShowPaypalModal(false)} className="p-1 rounded-full hover:bg-white/10 text-white transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleConnectPaypalSubmit} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Correo Electrónico de PayPal</label>
-                <input required type="email" placeholder="ejemplo@paypal.com" value={paypalEmailInput} onChange={e => setPaypalEmailInput(e.target.value)} className="input-dynamic" />
-              </div>
-              <p className="text-[10px] text-gray-400 dark:text-gray-500 leading-relaxed">
-                * Al conectar tu cuenta, autorizas a EnvíoX a gestionar cobros autorizados relacionados con ajustes logísticos de tus envíos.
-              </p>
-              <div className="pt-4 flex gap-3">
-                <button type="button" onClick={() => setShowPaypalModal(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 dark:bg-dark-800 dark:hover:bg-dark-700 text-gray-700 dark:text-gray-300 font-bold rounded-xl transition-all text-sm">
-                  Cancelar
-                </button>
-                <button type="submit" className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow hover:opacity-90 transition-all text-sm">
-                  Vincular Cuenta
                 </button>
               </div>
             </form>

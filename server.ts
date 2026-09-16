@@ -6309,6 +6309,113 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+function publicPaypalAuthUser(user: any) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    currency: normalizeCurrencyCode(user.currency || 'EUR'),
+    status: user.status || 'active',
+    balance: Number(user.balance || 0),
+    businessType: user.business_type,
+    cardConnected: Boolean(user.card_connected),
+    paypalConnected: Boolean(user.paypal_connected),
+    paypalEmail: user.paypal_email || null,
+    preferredPaymentMethod: user.preferred_payment_method || 'wallet'
+  };
+}
+
+// PayPal Login / Register (OAuth 2.0 + OpenID Connect). This flow is separate
+// from PayPal Checkout: it authenticates the user and never creates a charge.
+app.get('/api/auth/paypal/config', async (_req, res) => {
+  try {
+    const keys = await ApiKeysRepo.get();
+    const config = paypalLoginConfig(keys);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ enabled: config.enabled, environment: config.environment, scopes: config.scopes });
+  } catch {
+    res.status(503).json({ enabled: false, error: 'PayPal no está disponible.' });
+  }
+});
+
+app.get('/api/auth/paypal/start', async (req, res) => {
+  try {
+    const mode = String(req.query.mode || 'login').trim().toLowerCase();
+    if (!['login', 'register'].includes(mode)) return res.status(400).json({ error: 'Flujo de autenticación no válido.' });
+    const clientIp = clientIpFromRequest(req).slice(0, 45);
+    if (!checkForgotPasswordRateLimit(`paypal_auth_ip_${clientIp}`, 20, 15 * 60 * 1000)) {
+      return res.status(429).json({ error: 'Demasiados intentos. Espera unos minutos antes de intentar nuevamente.' });
+    }
+    const result = await createPaypalAuthState(mode as 'login' | 'register', null, res);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (error: any) {
+    if (error?.code === 'PAYPAL_AUTH_UNAVAILABLE') return res.status(503).json({ error: 'PayPal no está disponible.' });
+    console.error('[auth/paypal/start] No se pudo iniciar el flujo.');
+    res.status(500).json({ error: 'No se pudo iniciar el acceso con PayPal.' });
+  }
+});
+
+app.get('/api/auth/paypal/callback', async (req, res) => {
+  const redirect = (status: string) => `${appBaseUrl()}/auth/paypal/callback?status=${encodeURIComponent(status)}`;
+  res.setHeader('Cache-Control', 'no-store');
+  const state = String(req.query.state || '').trim();
+  const stateCookie = getCookieValue(req, PAYPAL_AUTH_STATE_COOKIE);
+  const providerError = String(req.query.error || '').trim().toLowerCase();
+  if (providerError) {
+    clearPaypalAuthCookie(res, PAYPAL_AUTH_STATE_COOKIE);
+    return res.redirect(redirect(providerError === 'access_denied' ? 'cancelled' : 'failed'));
+  }
+  if (!state || !stateCookie || !constantTimeStringEqual(state, stateCookie)) {
+    clearPaypalAuthCookie(res, PAYPAL_AUTH_STATE_COOKIE);
+    return res.redirect(redirect('invalid_state'));
+  }
+
+  try {
+    const claimedState = await claimPaypalAuthState(state);
+    if (!claimedState) {
+      clearPaypalAuthCookie(res, PAYPAL_AUTH_STATE_COOKIE);
+      return res.redirect(redirect('expired'));
+    }
+    const code = String(req.query.code || '').trim();
+    if (!code || code.length > 4096) throw new Error('Código de autenticación inválido.');
+    const keys = await ApiKeysRepo.get();
+    const accessToken = await exchangePaypalLoginCode(code, keys);
+    const identity = await fetchPaypalLoginIdentity(accessToken, keys);
+    const user = await resolvePaypalUser(claimedState, identity);
+    const handoff = await createPaypalAuthHandoff(String(user.id));
+    clearPaypalAuthCookie(res, PAYPAL_AUTH_STATE_COOKIE);
+    setPaypalAuthCookie(res, PAYPAL_AUTH_HANDOFF_COOKIE, handoff, PAYPAL_AUTH_HANDOFF_TTL_MS);
+    return res.redirect(redirect('success'));
+  } catch (error: any) {
+    clearPaypalAuthCookie(res, PAYPAL_AUTH_STATE_COOKIE);
+    const safeCode = String(error?.message || '').includes('correo electrónico verificado') ? 'email_unverified' : 'failed';
+    console.error(`[auth/paypal/callback] Flujo rechazado: ${safeCode}`);
+    return res.redirect(redirect(safeCode));
+  }
+});
+
+app.post('/api/auth/paypal/complete', async (req, res) => {
+  try {
+    const handoff = getCookieValue(req, PAYPAL_AUTH_HANDOFF_COOKIE);
+    if (!handoff || handoff.length > 256) {
+      return res.status(401).json({ error: 'El acceso con PayPal expiró. Inténtalo nuevamente.' });
+    }
+    const user = await consumePaypalAuthHandoff(handoff);
+    clearPaypalAuthCookie(res, PAYPAL_AUTH_HANDOFF_COOKIE);
+    if (!user || user.role !== 'customer' || (user.status && user.status !== 'active')) {
+      return res.status(401).json({ error: 'La cuenta no está disponible.' });
+    }
+    const token = generateToken({ userId: user.id, role: user.role, authTokenVersion: Number(user.auth_token_version || 1) });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ user: publicPaypalAuthUser(user), token });
+  } catch {
+    clearPaypalAuthCookie(res, PAYPAL_AUTH_HANDOFF_COOKIE);
+    res.status(500).json({ error: 'No se pudo completar el acceso con PayPal.' });
+  }
+});
+
 // 3. Perfil de Usuario
 
 // =============================================================================
@@ -7972,33 +8079,23 @@ app.post('/api/user/connect-card', authMiddleware, async (req: any, res) => {
   }
 });
 
-// 5. Conectar PayPal
-app.post('/api/user/connect-paypal', authMiddleware, async (req: any, res) => {
+// 5. Vincular PayPal mediante OAuth. El antiguo endpoint que aceptaba un
+// correo escrito manualmente queda cerrado para evitar estados falsos.
+app.get('/api/user/paypal/connect', authMiddleware, async (req: any, res) => {
   try {
-    const { email } = req.body;
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ error: 'Por favor ingresa un correo de PayPal válido.' });
-    }
-    
-    await UserRepo.update(req.user.id, {
-      paypal_connected: 1,
-      paypal_email: email
-    });
-
-    const updatedUser = await UserRepo.getById(req.user.id);
-    res.json({
-      success: true,
-      user: {
-        id: updatedUser.id,
-        balance: Number(updatedUser.balance),
-        paypalConnected: true,
-        paypalEmail: email
-      }
-    });
-  } catch (error) {
-    console.error('[Error] connect-paypal:', error);
-    res.status(500).json({ error: 'Error al conectar la cuenta de PayPal.' });
+    if (req.user.role !== 'customer') return res.status(403).json({ error: 'Solo las cuentas de cliente pueden vincular PayPal.' });
+    const result = await createPaypalAuthState('link', String(req.user.id), res);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (error: any) {
+    if (error?.code === 'PAYPAL_AUTH_UNAVAILABLE') return res.status(503).json({ error: 'PayPal no está disponible.' });
+    console.error('[user/paypal/connect] No se pudo iniciar la vinculación.');
+    res.status(500).json({ error: 'No se pudo iniciar la vinculación con PayPal.' });
   }
+});
+
+app.post('/api/user/connect-paypal', authMiddleware, async (_req: any, res) => {
+  res.status(410).json({ error: 'La vinculación manual fue retirada. Usa la autorización segura de PayPal.' });
 });
 
 
@@ -13623,6 +13720,297 @@ function ship24goPayPalCredentialsReady(keys: any) {
 
 function ship24goPayPalIntegrationEnabled(keys: any) {
   return keys?.paymentPaypalEnabled !== 0 && ship24goPayPalCredentialsReady(keys);
+}
+
+const PAYPAL_AUTH_PROVIDER = 'paypal';
+const PAYPAL_AUTH_STATE_COOKIE = 'doordrop_paypal_auth_state';
+const PAYPAL_AUTH_HANDOFF_COOKIE = 'doordrop_paypal_auth_handoff';
+const PAYPAL_AUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const PAYPAL_AUTH_HANDOFF_TTL_MS = 5 * 60 * 1000;
+
+function paypalAuthCookieSecure() {
+  return String(process.env.APP_URL || '').startsWith('https://') || process.env.NODE_ENV === 'production';
+}
+
+function appendSetCookie(res: any, cookie: string) {
+  const existing = res.getHeader('Set-Cookie');
+  const cookies = Array.isArray(existing) ? existing.map(String) : (existing ? [String(existing)] : []);
+  res.setHeader('Set-Cookie', [...cookies, cookie]);
+}
+
+function setPaypalAuthCookie(res: any, name: string, value: string, maxAge: number) {
+  const flags = [`${name}=${encodeURIComponent(value)}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${Math.max(0, Math.floor(maxAge / 1000))}`];
+  if (paypalAuthCookieSecure()) flags.push('Secure');
+  appendSetCookie(res, flags.join('; '));
+}
+
+function clearPaypalAuthCookie(res: any, name: string) {
+  const flags = [`${name}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0'];
+  if (paypalAuthCookieSecure()) flags.push('Secure');
+  appendSetCookie(res, flags.join('; '));
+}
+
+function hashPaypalAuthValue(value: string) {
+  return crypto.createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
+}
+
+function constantTimeStringEqual(left: string, right: string) {
+  const leftHash = Buffer.from(hashPaypalAuthValue(left), 'hex');
+  const rightHash = Buffer.from(hashPaypalAuthValue(right), 'hex');
+  return crypto.timingSafeEqual(leftHash, rightHash);
+}
+
+function paypalLoginConfig(keys: any) {
+  const environment = String(keys?.paypalEnvironment || process.env.PAYPAL_ENV || 'sandbox').toLowerCase() === 'production' || String(keys?.paypalEnvironment || process.env.PAYPAL_ENV || '').toLowerCase() === 'live'
+    ? 'production'
+    : 'sandbox';
+  const configured = ship24goPayPalIntegrationEnabled(keys);
+  const host = environment === 'production' ? 'www.paypal.com' : 'www.sandbox.paypal.com';
+  return {
+    enabled: configured,
+    environment,
+    authorizationEndpoint: `https://${host}/connect`,
+    redirectUri: `${appBaseUrl()}/api/auth/paypal/callback`,
+    scopes: ['openid', 'profile', 'email']
+  };
+}
+
+function buildPaypalLoginUrl(config: any, state: string) {
+  const clientId = String(config?.clientId || '').trim();
+  const query = new URLSearchParams({
+    flowEntry: 'static',
+    client_id: clientId,
+    response_type: 'code',
+    scope: 'openid profile email',
+    redirect_uri: String(config.redirectUri),
+    state
+  });
+  return `${config.authorizationEndpoint}?${query.toString()}`;
+}
+
+async function createPaypalAuthState(flow: 'login' | 'register' | 'link', userId: string | null, res: any) {
+  const keys = await ApiKeysRepo.get();
+  const config = paypalLoginConfig(keys);
+  if (!config.enabled) {
+    const error: any = new Error('PayPal no está disponible.');
+    error.code = 'PAYPAL_AUTH_UNAVAILABLE';
+    throw error;
+  }
+
+  const state = crypto.randomBytes(32).toString('base64url');
+  const stateId = generateId('oauth_');
+  await pool.query('DELETE FROM oauth_login_states WHERE expires_at < NOW() OR (consumed_at IS NOT NULL AND consumed_at < DATE_SUB(NOW(), INTERVAL 1 DAY))');
+  await pool.query(
+    `INSERT INTO oauth_login_states (id, provider_code, user_id, state_hash, flow, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [stateId, PAYPAL_AUTH_PROVIDER, userId || null, hashPaypalAuthValue(state), flow, new Date(Date.now() + PAYPAL_AUTH_STATE_TTL_MS)]
+  );
+  setPaypalAuthCookie(res, PAYPAL_AUTH_STATE_COOKIE, state, PAYPAL_AUTH_STATE_TTL_MS);
+
+  return {
+    url: buildPaypalLoginUrl({ ...config, clientId: String(keys?.paypalClientId || process.env.PAYPAL_CLIENT_ID || '').trim() }, state),
+    environment: config.environment
+  };
+}
+
+async function claimPaypalAuthState(state: string) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [rows]: any = await conn.query(
+      `SELECT id, user_id, flow
+         FROM oauth_login_states
+        WHERE provider_code = ? AND state_hash = ? AND consumed_at IS NULL AND expires_at > NOW()
+        LIMIT 1 FOR UPDATE`,
+      [PAYPAL_AUTH_PROVIDER, hashPaypalAuthValue(state)]
+    );
+    if (!rows.length) {
+      await conn.rollback();
+      return null;
+    }
+    await conn.query('UPDATE oauth_login_states SET consumed_at = NOW() WHERE id = ?', [rows[0].id]);
+    await conn.commit();
+    return { userId: rows[0].user_id ? String(rows[0].user_id) : null, flow: String(rows[0].flow || 'login') };
+  } catch (error) {
+    await conn.rollback().catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+}
+
+async function exchangePaypalLoginCode(code: string, keys: any) {
+  const clientId = String(keys?.paypalClientId || process.env.PAYPAL_CLIENT_ID || '').trim();
+  const clientSecret = String(keys?.paypalClientSecret || process.env.PAYPAL_CLIENT_SECRET || '').trim();
+  if (!clientId || !clientSecret) throw new Error('PayPal no está disponible.');
+  const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+  const response = await fetchWithTimeout(`${ship24goPayPalApiBase(keys?.paypalEnvironment)}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${basicAuth}`, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: new URLSearchParams({ grant_type: 'authorization_code', code }).toString()
+  });
+  const data: any = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.access_token) throw new Error('PayPal no pudo completar la autenticación.');
+  return String(data.access_token);
+}
+
+async function fetchPaypalLoginIdentity(accessToken: string, keys: any) {
+  const response = await fetchWithTimeout(`${ship24goPayPalApiBase(keys?.paypalEnvironment)}/v1/identity/oauth2/userinfo?schema=paypalv1.1`, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }
+  });
+  const data: any = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error('PayPal no pudo devolver el perfil.');
+
+  const subject = String(data?.user_id || data?.sub || '').trim().slice(0, 255);
+  const email = String(data?.email || '').trim().toLowerCase().slice(0, 191);
+  const emailVerified = data?.email_verified === true || String(data?.email_verified || '').toLowerCase() === 'true';
+  const name = String(data?.name || [data?.given_name, data?.family_name].filter(Boolean).join(' ') || email.split('@')[0] || '').trim().slice(0, 191);
+  const country = String(data?.address?.country_code || data?.country_code || '').trim().toUpperCase().slice(0, 2);
+  const locale = String(data?.locale || '').trim().slice(0, 20);
+  const avatarUrl = String(data?.picture || '').trim().slice(0, 1024);
+  if (!subject || !email || !emailVerified) throw new Error('PayPal no entregó un correo electrónico verificado.');
+
+  return {
+    subject,
+    email,
+    emailVerified,
+    name: name || 'Cliente DoorDrop',
+    country,
+    locale,
+    avatarUrl,
+    profile: { subject, email, emailVerified, name: name || 'Cliente DoorDrop', country, locale, avatarUrl }
+  };
+}
+
+async function resolvePaypalUser(state: { userId: string | null; flow: string }, identity: any) {
+  const conn = await pool.getConnection();
+  let created = false;
+  let user: any = null;
+  try {
+    await conn.beginTransaction();
+    const [identityRows]: any = await conn.query(
+      `SELECT id, user_id FROM user_auth_identities
+        WHERE provider_code = ? AND provider_subject = ?
+        LIMIT 1 FOR UPDATE`,
+      [PAYPAL_AUTH_PROVIDER, identity.subject]
+    );
+
+    if (identityRows.length) {
+      if (state.userId && String(identityRows[0].user_id) !== String(state.userId)) throw new Error('La cuenta de PayPal ya está vinculada a otro usuario.');
+      const [rows]: any = await conn.query('SELECT * FROM users WHERE id = ? LIMIT 1 FOR UPDATE', [identityRows[0].user_id]);
+      user = rows[0] || null;
+    } else {
+      if (state.flow === 'link' && !state.userId) throw new Error('La vinculación de PayPal expiró.');
+      if (state.userId) {
+        const [rows]: any = await conn.query('SELECT * FROM users WHERE id = ? LIMIT 1 FOR UPDATE', [state.userId]);
+        user = rows[0] || null;
+      } else {
+        const [rows]: any = await conn.query('SELECT * FROM users WHERE email = ? LIMIT 1 FOR UPDATE', [identity.email]);
+        user = rows[0] || null;
+      }
+    }
+
+    if (user && user.role !== 'customer') throw new Error('Las cuentas operativas no pueden acceder con PayPal.');
+    if (!user) {
+      const userId = generateId('usr_');
+      await conn.query(
+        `INSERT INTO users
+          (id, email, password_hash, name, phone, country, currency, role, business_type, balance, paypal_connected, paypal_email, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'EUR', 'customer', 'Solo quiero enviar paquetes', 0.00, 1, ?, 'active')`,
+        [userId, identity.email, hashPassword(crypto.randomBytes(32).toString('hex')), identity.name, '', identity.country || 'ES', identity.email]
+      );
+      const [rows]: any = await conn.query('SELECT * FROM users WHERE id = ? LIMIT 1 FOR UPDATE', [userId]);
+      user = rows[0] || null;
+      created = true;
+    }
+    if (!user || (user.status && user.status !== 'active')) throw new Error('La cuenta DoorDrop no está disponible.');
+
+    const [userIdentityRows]: any = await conn.query(
+      `SELECT id, provider_subject FROM user_auth_identities
+        WHERE provider_code = ? AND user_id = ?
+        LIMIT 1 FOR UPDATE`,
+      [PAYPAL_AUTH_PROVIDER, user.id]
+    );
+    if (userIdentityRows.length && String(userIdentityRows[0].provider_subject) !== identity.subject) throw new Error('Esta cuenta ya tiene otro PayPal vinculado.');
+
+    if (identityRows.length) {
+      await conn.query(
+        `UPDATE user_auth_identities
+            SET email = ?, display_name = ?, avatar_url = ?, profile_json = ?
+          WHERE id = ?`,
+        [identity.email, identity.name, identity.avatarUrl || null, JSON.stringify(identity.profile), identityRows[0].id]
+      );
+    } else {
+      await conn.query(
+        `INSERT INTO user_auth_identities
+          (id, user_id, provider_code, provider_subject, email, display_name, avatar_url, profile_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [generateId('identity_'), user.id, PAYPAL_AUTH_PROVIDER, identity.subject, identity.email, identity.name, identity.avatarUrl || null, JSON.stringify(identity.profile)]
+      );
+    }
+    await conn.query('UPDATE users SET paypal_connected = 1, paypal_email = ? WHERE id = ?', [identity.email, user.id]);
+    const [freshRows]: any = await conn.query('SELECT * FROM users WHERE id = ? LIMIT 1', [user.id]);
+    user = freshRows[0] || user;
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback().catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+
+  if (created) {
+    await sendNotificationEvent({
+      eventCode: 'user_registered',
+      entityType: 'user',
+      entityId: String(user.id),
+      userId: String(user.id),
+      audience: 'customer',
+      toEmail: user.email,
+      recipientName: user.name,
+      language: normalizeMailLanguage(identity.locale || identity.country || 'ES'),
+      variables: { userName: user.name, userEmail: user.email }
+    }).catch(() => {});
+  }
+  return user;
+}
+
+async function createPaypalAuthHandoff(userId: string) {
+  const handoff = crypto.randomBytes(32).toString('base64url');
+  await pool.query('DELETE FROM oauth_login_handoffs WHERE expires_at < NOW() OR (consumed_at IS NOT NULL AND consumed_at < DATE_SUB(NOW(), INTERVAL 1 DAY))');
+  await pool.query(
+    `INSERT INTO oauth_login_handoffs (id, user_id, token_hash, return_path, expires_at)
+     VALUES (?, ?, ?, '/panel', ?)`,
+    [generateId('handoff_'), userId, hashPaypalAuthValue(handoff), new Date(Date.now() + PAYPAL_AUTH_HANDOFF_TTL_MS)]
+  );
+  return handoff;
+}
+
+async function consumePaypalAuthHandoff(handoff: string) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [rows]: any = await conn.query(
+      `SELECT h.id, h.user_id, h.return_path, u.*
+         FROM oauth_login_handoffs h
+         INNER JOIN users u ON u.id = h.user_id
+        WHERE h.token_hash = ? AND h.consumed_at IS NULL AND h.expires_at > NOW()
+        LIMIT 1 FOR UPDATE`,
+      [hashPaypalAuthValue(handoff)]
+    );
+    if (!rows.length) {
+      await conn.rollback();
+      return null;
+    }
+    await conn.query('UPDATE oauth_login_handoffs SET consumed_at = NOW() WHERE id = ?', [rows[0].id]);
+    await conn.commit();
+    return rows[0];
+  } catch (error) {
+    await conn.rollback().catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
 }
 
 function ship24goPayPalUnavailableMessage(keys: any) {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import { 
   Package, CheckCircle2, Mail, Lock, User, Phone, ArrowLeft, ArrowRight, 
@@ -100,6 +100,64 @@ const AuthSidebar = () => {
     </div>
   );
 };
+
+function PayPalMark({ className = 'w-5 h-5' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" role="img" aria-label="PayPal" fill="none">
+      <path fill="#003087" d="M7.3 3.25h6.1c3.25 0 5.2 1.65 4.62 4.55-.53 2.69-2.46 4.34-5.56 4.34H10.6l-.96 4.85H6.08L7.3 3.25Z" />
+      <path fill="#009CDE" d="M10.25 7.22h5.07c2.25 0 3.7.95 3.63 2.66-.1 2.12-1.7 3.54-4.5 3.54h-2.25l-.87 4.33H8.46l1.79-10.53Z" />
+      <path fill="#012169" d="M9.75 6.16h4.83c1.24 0 2.24.23 2.98.68-.68-1.75-2.36-2.72-4.85-2.72H8.02L6.08 16.99h2.2l.99-5.02h1.58l.4-2h-1.58l.08-.43Z" />
+    </svg>
+  );
+}
+
+function PayPalAuthButton({ mode, onError }: { mode: 'login' | 'register'; onError?: (message: string) => void }) {
+  const { t } = useI18n();
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    api.getPaypalAuthConfig()
+      .then((config: any) => { if (active) setEnabled(Boolean(config?.enabled)); })
+      .catch(() => { if (active) setEnabled(false); });
+    return () => { active = false; };
+  }, []);
+
+  if (!enabled) return null;
+
+  const start = async () => {
+    setLoading(true);
+    onError?.('');
+    try {
+      const result = await api.startPaypalAuth(mode);
+      if (!result?.url) throw new Error(t('paypal_auth_error'));
+      window.location.assign(result.url);
+    } catch (err: any) {
+      onError?.(err.message || t('paypal_auth_error'));
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+        <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+        <span>{t('or_continue_with')}</span>
+        <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+      </div>
+      <button
+        type="button"
+        onClick={start}
+        disabled={loading}
+        className="mt-4 w-full flex items-center justify-center gap-2.5 rounded-xl border border-[#0070ba] bg-white py-3 px-4 text-sm font-semibold text-[#003087] shadow-sm transition-all hover:bg-slate-50 active:scale-[0.98] disabled:cursor-wait disabled:opacity-60 focus:outline-none focus:ring-4 focus:ring-[#009cde]/20"
+      >
+        <PayPalMark />
+        <span>{loading ? t('paypal_auth_loading') : t('continue_with_paypal')}</span>
+      </button>
+    </div>
+  );
+}
 
 const Login = () => {
   const { t } = useI18n();
@@ -251,6 +309,8 @@ const Login = () => {
               </button>
             </form>
 
+            <PayPalAuthButton mode="login" onError={setError} />
+
             <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-700/50 text-center">
               <Link to="/auth/register" state={location.state || undefined} className="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-500 flex items-center justify-center gap-1.5 transition-colors">
                 <span>{t('noAccount')}</span>
@@ -376,6 +436,8 @@ const Register = () => {
                   <h3 className="text-xl font-bold text-slate-900 dark:text-white">{t('account_data_title')}</h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">{t('account_data_desc')}</p>
                 </div>
+
+                <PayPalAuthButton mode="register" onError={setError} />
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
@@ -1114,6 +1176,62 @@ const ResetPassword = () => {
   );
 };
 
+const PaypalAuthCallback = () => {
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const status = new URLSearchParams(location.search).get('status');
+    if (status && status !== 'success') {
+      setLoading(false);
+      setError(status === 'cancelled' ? t('paypal_auth_cancelled') : t('paypal_auth_error'));
+      return;
+    }
+
+    let active = true;
+    api.completePaypalAuth()
+      .then((res: any) => {
+        if (!active) return;
+        setAuthToken(res.token);
+        const next = resolvePostAuthNavigation(undefined);
+        navigate(next.path, next.state ? { state: next.state, replace: true } : { replace: true });
+      })
+      .catch((err: any) => {
+        if (!active) return;
+        setError(err.message || t('paypal_auth_error'));
+        setLoading(false);
+      });
+    return () => { active = false; };
+  }, [location.search, navigate, t]);
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center px-4 font-sans">
+      <div className="w-full max-w-md rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-8 text-center shadow-xl">
+        <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#009cde]/20 bg-white shadow-sm">
+          <PayPalMark className="h-8 w-8" />
+        </div>
+        {loading ? (
+          <>
+            <h1 className="text-xl font-bold text-slate-900 dark:text-white">{t('paypal_auth_pending')}</h1>
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{t('paypal_auth_loading')}</p>
+          </>
+        ) : (
+          <>
+            <h1 className="text-xl font-bold text-slate-900 dark:text-white">{t('paypal_auth_error')}</h1>
+            <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{error}</p>
+            <Link to="/auth/login" className="mt-6 inline-flex rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700">
+              {t('back_to_login')}
+            </Link>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 
 export default function AuthPages() {
   return (
@@ -1122,6 +1240,7 @@ export default function AuthPages() {
       <Route path="/register" element={<Register />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/paypal/callback" element={<PaypalAuthCallback />} />
     </Routes>
   );
 }
