@@ -2094,6 +2094,99 @@ Object.entries(marketplaceCopy).forEach(([locale, copy]) => {
 });
 // ---- END MARKETPLACE & GLOBAL HEADER TRANSLATIONS ----
 
+// ---- CUSTOMER BILLING AREA TRANSLATIONS ----
+const billingCopy: Record<string, Record<string, string>> = {
+  es: {
+    billing_nav: 'Facturación', wallet_payments_nav: 'Saldo y pagos',
+    billing_eyebrow: 'Cuenta y documentos', billing_title: 'Facturación',
+    billing_subtitle: 'Consulta tus movimientos reales, recargas, pagos y suscripciones desde un solo lugar.',
+    billing_available_balance: 'Saldo disponible', billing_movements: 'Movimientos registrados',
+    billing_topups_completed: 'Recargas completadas', billing_payments_paid: 'Pagos completados',
+    billing_activity_title: 'Actividad de facturación', billing_activity_desc: 'Registros reales asociados a tu cuenta autenticada.',
+    billing_edit_profile: 'Editar datos de facturación', billing_date: 'Fecha', billing_concept: 'Concepto',
+    billing_status: 'Estado', billing_amount: 'Importe', billing_reference: 'Referencia', billing_previous: 'Anterior',
+    billing_next: 'Siguiente', billing_page: 'Página', billing_loading: 'Cargando movimientos...',
+    billing_empty_title: 'Todavía no hay movimientos', billing_empty_desc: 'Cuando exista una recarga, pago o cargo de envío aparecerá aquí.',
+    billing_profile_title: 'Datos de facturación', billing_profile_desc: 'Se utilizan en tus documentos comerciales y comprobantes.',
+    billing_profile_missing: 'Completa tus datos de facturación para que aparezcan en los documentos.',
+    billing_subscriptions_title: 'Suscripciones', billing_no_subscriptions: 'No tienes suscripciones registradas.',
+    billing_renews: 'Próximo periodo:', billing_no_period: 'Periodo no disponible', billing_disclaimer: 'Este documento es un estado de cuenta informativo basado en los registros reales de DoorDrop. No sustituye una factura fiscal cuando la normativa local requiera numeración o datos fiscales adicionales.',
+    billing_download_pdf: 'Descargar estado de cuenta PDF', billing_download_csv: 'Exportar Excel (CSV)', billing_generating: 'Generando...',
+    billing_retry: 'Reintentar', billing_load_error: 'No se pudo cargar el estado de cuenta.', billing_export_error: 'No se pudo generar el documento.',
+    billing_status_pending: 'Pendiente', billing_status_completed: 'Completado', billing_status_paid: 'Pagado',
+    billing_status_failed: 'Fallido', billing_status_refunded: 'Reembolsado', billing_status_cancelled: 'Cancelado',
+    billing_status_active: 'Activo', billing_status_canceled: 'Cancelado', billing_status_unknown: 'Registrado'
+  },
+  en: {
+    billing_nav: 'Billing', wallet_payments_nav: 'Balance & payments',
+    billing_eyebrow: 'Account and documents', billing_title: 'Billing',
+    billing_subtitle: 'Review your real activity, top-ups, payments and subscriptions in one place.',
+    billing_available_balance: 'Available balance', billing_movements: 'Recorded movements',
+    billing_topups_completed: 'Completed top-ups', billing_payments_paid: 'Completed payments',
+    billing_activity_title: 'Billing activity', billing_activity_desc: 'Real records associated with your authenticated account.',
+    billing_edit_profile: 'Edit billing details', billing_date: 'Date', billing_concept: 'Concept',
+    billing_status: 'Status', billing_amount: 'Amount', billing_reference: 'Reference', billing_previous: 'Previous',
+    billing_next: 'Next', billing_page: 'Page', billing_loading: 'Loading activity...',
+    billing_empty_title: 'No activity yet', billing_empty_desc: 'A top-up, payment or shipment charge will appear here when recorded.',
+    billing_profile_title: 'Billing details', billing_profile_desc: 'Used on your commercial documents and payment records.',
+    billing_profile_missing: 'Complete your billing details so they can appear on documents.',
+    billing_subscriptions_title: 'Subscriptions', billing_no_subscriptions: 'You have no recorded subscriptions.',
+    billing_renews: 'Next period:', billing_no_period: 'Period unavailable', billing_disclaimer: 'This is an informational account statement based on DoorDrop records. It does not replace a tax invoice where local rules require additional fiscal data or numbering.',
+    billing_download_pdf: 'Download PDF statement', billing_download_csv: 'Export to Excel (CSV)', billing_generating: 'Generating...',
+    billing_retry: 'Retry', billing_load_error: 'Could not load the account statement.', billing_export_error: 'Could not generate the document.',
+    billing_status_pending: 'Pending', billing_status_completed: 'Completed', billing_status_paid: 'Paid',
+    billing_status_failed: 'Failed', billing_status_refunded: 'Refunded', billing_status_cancelled: 'Cancelled',
+    billing_status_active: 'Active', billing_status_canceled: 'Canceled', billing_status_unknown: 'Recorded'
+  },
+  it: {
+    billing_nav: 'Fatturazione', wallet_payments_nav: 'Saldo e pagamenti',
+    billing_eyebrow: 'Conto e documenti', billing_title: 'Fatturazione',
+    billing_subtitle: 'Consulta movimenti reali, ricariche, pagamenti e abbonamenti in un unico spazio.',
+    billing_available_balance: 'Saldo disponibile', billing_movements: 'Movimenti registrati',
+    billing_topups_completed: 'Ricariche completate', billing_payments_paid: 'Pagamenti completati',
+    billing_activity_title: 'Attività di fatturazione', billing_activity_desc: 'Registrazioni reali associate al tuo account autenticato.',
+    billing_edit_profile: 'Modifica dati di fatturazione', billing_date: 'Data', billing_concept: 'Voce',
+    billing_status: 'Stato', billing_amount: 'Importo', billing_reference: 'Riferimento', billing_previous: 'Precedente',
+    billing_next: 'Successiva', billing_page: 'Pagina', billing_loading: 'Caricamento movimenti...',
+    billing_empty_title: 'Nessun movimento ancora', billing_empty_desc: 'Una ricarica, un pagamento o un addebito di spedizione apparirà qui quando verrà registrato.',
+    billing_profile_title: 'Dati di fatturazione', billing_profile_desc: 'Utilizzati per i documenti commerciali e le ricevute di pagamento.',
+    billing_profile_missing: 'Completa i dati di fatturazione per visualizzarli nei documenti.',
+    billing_subscriptions_title: 'Abbonamenti', billing_no_subscriptions: 'Non hai abbonamenti registrati.',
+    billing_renews: 'Prossimo periodo:', billing_no_period: 'Periodo non disponibile', billing_disclaimer: 'Questo è un estratto conto informativo basato sui registri reali di DoorDrop. Non sostituisce una fattura fiscale quando la normativa locale richiede dati o numerazione aggiuntivi.',
+    billing_download_pdf: 'Scarica estratto conto PDF', billing_download_csv: 'Esporta in Excel (CSV)', billing_generating: 'Generazione...',
+    billing_retry: 'Riprova', billing_load_error: 'Impossibile caricare l’estratto conto.', billing_export_error: 'Impossibile generare il documento.',
+    billing_status_pending: 'In attesa', billing_status_completed: 'Completato', billing_status_paid: 'Pagato',
+    billing_status_failed: 'Fallito', billing_status_refunded: 'Rimborsato', billing_status_cancelled: 'Annullato',
+    billing_status_active: 'Attivo', billing_status_canceled: 'Annullato', billing_status_unknown: 'Registrato'
+  },
+  fr: {
+    billing_nav: 'Facturation', wallet_payments_nav: 'Solde et paiements',
+    billing_eyebrow: 'Compte et documents', billing_title: 'Facturation',
+    billing_subtitle: 'Consultez vos mouvements réels, recharges, paiements et abonnements au même endroit.',
+    billing_available_balance: 'Solde disponible', billing_movements: 'Mouvements enregistrés',
+    billing_topups_completed: 'Recharges terminées', billing_payments_paid: 'Paiements terminés',
+    billing_activity_title: 'Activité de facturation', billing_activity_desc: 'Enregistrements réels associés à votre compte authentifié.',
+    billing_edit_profile: 'Modifier les données de facturation', billing_date: 'Date', billing_concept: 'Libellé',
+    billing_status: 'Statut', billing_amount: 'Montant', billing_reference: 'Référence', billing_previous: 'Précédente',
+    billing_next: 'Suivante', billing_page: 'Page', billing_loading: 'Chargement des mouvements...',
+    billing_empty_title: 'Aucun mouvement pour le moment', billing_empty_desc: 'Une recharge, un paiement ou un débit d’expédition apparaîtra ici lorsqu’il sera enregistré.',
+    billing_profile_title: 'Données de facturation', billing_profile_desc: 'Utilisées dans vos documents commerciaux et justificatifs de paiement.',
+    billing_profile_missing: 'Complétez vos données de facturation pour les afficher dans les documents.',
+    billing_subscriptions_title: 'Abonnements', billing_no_subscriptions: 'Aucun abonnement enregistré.',
+    billing_renews: 'Prochaine période :', billing_no_period: 'Période indisponible', billing_disclaimer: 'Ce document est un relevé informatif basé sur les registres réels de DoorDrop. Il ne remplace pas une facture fiscale lorsque la réglementation locale exige des données ou une numérotation supplémentaires.',
+    billing_download_pdf: 'Télécharger le relevé PDF', billing_download_csv: 'Exporter vers Excel (CSV)', billing_generating: 'Génération...',
+    billing_retry: 'Réessayer', billing_load_error: 'Impossible de charger le relevé.', billing_export_error: 'Impossible de générer le document.',
+    billing_status_pending: 'En attente', billing_status_completed: 'Terminé', billing_status_paid: 'Payé',
+    billing_status_failed: 'Échec', billing_status_refunded: 'Remboursé', billing_status_cancelled: 'Annulé',
+    billing_status_active: 'Actif', billing_status_canceled: 'Annulé', billing_status_unknown: 'Enregistré'
+  }
+};
+
+Object.entries(billingCopy).forEach(([locale, copy]) => {
+  (translations as any)[locale] = { ...((translations as any)[locale] || translations.es), ...copy };
+});
+// ---- END CUSTOMER BILLING AREA TRANSLATIONS ----
+
 
 export const availableLanguages: Array<{ code: Language; label: string; short: string; flag: string; flagUrl: string; countryCode: string }> = [
   { code: 'it', label: 'Italiano', short: 'IT', flag: '🇮🇹', flagUrl: 'https://flagsapi.com/IT/flat/32.png', countryCode: 'IT' },

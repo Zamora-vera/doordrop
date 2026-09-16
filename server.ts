@@ -7370,6 +7370,421 @@ app.post('/api/user/settings', authMiddleware, async (req: any, res) => {
 });
 
 
+// Cliente: estado de cuenta y movimientos reales.
+// No existe una tabla fiscal de facturas en DoorDrop; este módulo expone
+// únicamente registros contables persistidos para el usuario autenticado.
+type DoorDropBillingLanguage = 'es' | 'en' | 'it' | 'fr';
+
+function normalizeBillingLanguage(value: any): DoorDropBillingLanguage {
+  const code = String(value || 'es').toLowerCase().slice(0, 2);
+  return code === 'en' || code === 'it' || code === 'fr' ? code : 'es';
+}
+
+const billingServerCopy: Record<DoorDropBillingLanguage, Record<string, string>> = {
+  es: {
+    title: 'Estado de cuenta DoorDrop',
+    subtitle: 'Movimientos reales de tu saldo, recargas, pagos y suscripciones.',
+    publicNote: 'Documento informativo de DoorDrop — estado de cuenta de la cuenta autenticada.',
+    walletCredit: 'Abono en monedero',
+    walletDebit: 'Cargo de envío',
+    walletRefund: 'Reembolso',
+    walletHold: 'Retención temporal',
+    walletRelease: 'Liberación de saldo',
+    topup: 'Recarga de saldo',
+    payment: 'Pago',
+    subscription: 'Suscripción',
+    unknown: 'Movimiento de cuenta',
+    incoming: 'Entrada',
+    outgoing: 'Salida',
+    pending: 'Pendiente',
+    completed: 'Completado',
+    paid: 'Pagado',
+    failed: 'Fallido',
+    refunded: 'Reembolsado',
+    cancelled: 'Cancelado',
+    active: 'Activo',
+    canceled: 'Cancelado'
+  },
+  en: {
+    title: 'DoorDrop account statement',
+    subtitle: 'Real activity from your balance, top-ups, payments and subscriptions.',
+    publicNote: 'DoorDrop informational document — statement for the authenticated account.',
+    walletCredit: 'Wallet credit',
+    walletDebit: 'Shipment charge',
+    walletRefund: 'Refund',
+    walletHold: 'Temporary hold',
+    walletRelease: 'Balance release',
+    topup: 'Balance top-up',
+    payment: 'Payment',
+    subscription: 'Subscription',
+    unknown: 'Account activity',
+    incoming: 'Incoming',
+    outgoing: 'Outgoing',
+    pending: 'Pending',
+    completed: 'Completed',
+    paid: 'Paid',
+    failed: 'Failed',
+    refunded: 'Refunded',
+    cancelled: 'Cancelled',
+    active: 'Active',
+    canceled: 'Canceled'
+  },
+  it: {
+    title: 'Estratto conto DoorDrop',
+    subtitle: 'Movimenti reali del saldo, ricariche, pagamenti e abbonamenti.',
+    publicNote: 'Documento informativo DoorDrop — estratto del conto autenticato.',
+    walletCredit: 'Accredito sul wallet',
+    walletDebit: 'Addebito spedizione',
+    walletRefund: 'Rimborso',
+    walletHold: 'Blocco temporaneo',
+    walletRelease: 'Sblocco saldo',
+    topup: 'Ricarica saldo',
+    payment: 'Pagamento',
+    subscription: 'Abbonamento',
+    unknown: 'Movimento del conto',
+    incoming: 'Entrata',
+    outgoing: 'Uscita',
+    pending: 'In attesa',
+    completed: 'Completato',
+    paid: 'Pagato',
+    failed: 'Fallito',
+    refunded: 'Rimborsato',
+    cancelled: 'Annullato',
+    active: 'Attivo',
+    canceled: 'Annullato'
+  },
+  fr: {
+    title: 'Relevé de compte DoorDrop',
+    subtitle: 'Activité réelle du solde, recharges, paiements et abonnements.',
+    publicNote: 'Document informatif DoorDrop — relevé du compte authentifié.',
+    walletCredit: 'Crédit du portefeuille',
+    walletDebit: 'Débit d’expédition',
+    walletRefund: 'Remboursement',
+    walletHold: 'Blocage temporaire',
+    walletRelease: 'Libération du solde',
+    topup: 'Recharge du solde',
+    payment: 'Paiement',
+    subscription: 'Abonnement',
+    unknown: 'Mouvement du compte',
+    incoming: 'Entrée',
+    outgoing: 'Sortie',
+    pending: 'En attente',
+    completed: 'Terminé',
+    paid: 'Payé',
+    failed: 'Échec',
+    refunded: 'Remboursé',
+    cancelled: 'Annulé',
+    active: 'Actif',
+    canceled: 'Annulé'
+  }
+};
+
+function billingDateFilter(query: any) {
+  const from = String(query?.from || '').trim();
+  const to = String(query?.to || '').trim();
+  const validDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const clauses: string[] = [];
+  const values: any[] = [];
+  if (validDate(from)) {
+    clauses.push('created_at >= ?');
+    values.push(`${from} 00:00:00`);
+  }
+  if (validDate(to)) {
+    clauses.push('created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+    values.push(`${to} 00:00:00`);
+  }
+  return { sql: clauses.length ? ` AND ${clauses.join(' AND ')}` : '', values };
+}
+
+function billingEntryStatus(value: any, fallback = 'completed') {
+  return String(value || fallback).trim().toLowerCase() || fallback;
+}
+
+function billingWalletDescription(type: string, _fallback: string, copy: Record<string, string>) {
+  const key = type === 'credit' ? 'walletCredit'
+    : type === 'debit' ? 'walletDebit'
+      : type === 'refund' ? 'walletRefund'
+        : type === 'hold' ? 'walletHold'
+          : type === 'release' ? 'walletRelease' : 'unknown';
+  // Customer statements use public accounting concepts only. Internal
+  // descriptions can contain provider, supplier, or routing details.
+  return copy[key];
+}
+
+function billingEntryReference(value: any) {
+  const reference = String(value || '').trim();
+  return reference ? reference.slice(0, 80) : '';
+}
+
+function billingEntryDate(value: any) {
+  if (value instanceof Date) return value.toISOString();
+  return value ? String(value) : null;
+}
+
+function billingEntrySortDate(value: any) {
+  const stamp = Date.parse(String(value || ''));
+  return Number.isFinite(stamp) ? stamp : 0;
+}
+
+async function loadUserBillingData(userId: string, query: any = {}, includeAll = false) {
+  await ensureShip24GoBillingColumns();
+  const [userRows]: any = await pool.query(
+    'SELECT id, name, email, currency, balance FROM users WHERE id = ? AND role = \'customer\' LIMIT 1',
+    [userId]
+  );
+  const user = userRows?.[0];
+  if (!user) {
+    const error: any = new Error('Cliente no encontrado.');
+    error.code = 'CUSTOMER_NOT_FOUND';
+    throw error;
+  }
+
+  const [companyRows]: any = await pool.query(
+    'SELECT id, company_name, address, city, zip_code, country, phone, email FROM companies WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
+    [userId]
+  );
+  const filter = billingDateFilter(query);
+  const limit = includeAll ? 1000 : Math.max(1, Math.min(100, Number(query?.pageSize || 25)));
+  const page = includeAll ? 1 : Math.max(1, Number(query?.page || 1));
+
+  const [walletRows]: any = await pool.query(
+    `SELECT id, type, amount, currency, description, reference_type, reference_id, status, created_at
+       FROM wallet_transactions
+      WHERE user_id = ?${filter.sql}
+      ORDER BY created_at DESC
+      LIMIT 1000`,
+    [userId, ...filter.values]
+  );
+  const [topupRows]: any = await pool.query(
+    `SELECT id, amount, currency, method, status, external_reference, payment_provider, provider_reference, created_at
+       FROM wallet_topups
+      WHERE user_id = ?${filter.sql}
+      ORDER BY created_at DESC
+      LIMIT 1000`,
+    [userId, ...filter.values]
+  );
+  const [paymentRows]: any = await pool.query(
+    `SELECT id, shipment_id, provider, external_payment_id, amount, currency, status, purpose, plan_id, subscription_id, created_at
+       FROM payments
+      WHERE user_id = ?${filter.sql}
+      ORDER BY created_at DESC
+      LIMIT 1000`,
+    [userId, ...filter.values]
+  );
+  const [subscriptionRows]: any = await pool.query(
+    `SELECT sub.id, sub.plan_id, COALESCE(pl.name, sub.plan_id) AS plan_name, sub.provider, sub.status,
+            sub.current_period_start, sub.current_period_end, sub.created_at
+       FROM subscriptions sub
+       LEFT JOIN plans pl ON pl.id = sub.plan_id
+      WHERE sub.user_id = ?${filter.sql.replaceAll('created_at', 'sub.created_at')}
+      ORDER BY sub.created_at DESC
+      LIMIT 100`,
+    [userId, ...filter.values]
+  );
+
+  const copy = billingServerCopy[normalizeBillingLanguage(query?.lang)];
+  const entries: any[] = [];
+  for (const row of walletRows || []) {
+    const type = String(row.type || '').toLowerCase();
+    const incoming = type === 'credit' || type === 'refund' || type === 'release';
+    const date = billingEntryDate(row.created_at);
+    entries.push({
+      id: String(row.id),
+      source: 'wallet',
+      type: type || 'movement',
+      title: billingWalletDescription(type, row.description, copy),
+      description: billingWalletDescription(type, row.description, copy),
+      direction: incoming ? 'incoming' : 'outgoing',
+      amount: roundMoney(Number(row.amount || 0)),
+      currency: normalizeCurrencyCode(row.currency || user.currency || 'EUR'),
+      status: billingEntryStatus(row.status),
+      referenceType: String(row.reference_type || '').trim(),
+      reference: billingEntryReference(row.reference_id),
+      createdAt: date
+    });
+  }
+  for (const row of topupRows || []) {
+    const date = billingEntryDate(row.created_at);
+    entries.push({
+      id: String(row.id),
+      source: 'topup',
+      type: 'topup',
+      title: copy.topup,
+      description: copy.topup,
+      direction: 'incoming',
+      amount: roundMoney(Number(row.amount || 0)),
+      currency: normalizeCurrencyCode(row.currency || user.currency || 'EUR'),
+      status: billingEntryStatus(row.status, 'pending'),
+      referenceType: 'wallet_topup',
+      reference: billingEntryReference(row.provider_reference || row.external_reference || row.id),
+      createdAt: date
+    });
+  }
+  for (const row of paymentRows || []) {
+    const status = billingEntryStatus(row.status, 'pending');
+    const incoming = status === 'refunded';
+    const purpose = String(row.purpose || '').toLowerCase();
+    const title = purpose === 'subscription' ? copy.subscription : copy.payment;
+    const date = billingEntryDate(row.created_at);
+    entries.push({
+      id: String(row.id),
+      source: 'payment',
+      type: purpose || 'payment',
+      title,
+      description: title,
+      direction: incoming ? 'incoming' : 'outgoing',
+      amount: roundMoney(Number(row.amount || 0)),
+      currency: normalizeCurrencyCode(row.currency || user.currency || 'EUR'),
+      status,
+      referenceType: purpose || 'payment',
+      reference: billingEntryReference(row.external_payment_id || row.id),
+      shipmentId: row.shipment_id ? String(row.shipment_id) : '',
+      planId: row.plan_id ? String(row.plan_id) : '',
+      subscriptionId: row.subscription_id ? String(row.subscription_id) : '',
+      createdAt: date
+    });
+  }
+
+  entries.sort((a, b) => billingEntrySortDate(b.createdAt) - billingEntrySortDate(a.createdAt));
+  const totalEntries = entries.length;
+  const offset = includeAll ? 0 : (page - 1) * limit;
+  const visibleEntries = entries.slice(offset, offset + limit);
+
+  const credits = (walletRows || []).reduce((sum: number, row: any) => {
+    const type = String(row.type || '').toLowerCase();
+    return sum + (type === 'credit' || type === 'refund' || type === 'release' ? Number(row.amount || 0) : 0);
+  }, 0);
+  const debits = (walletRows || []).reduce((sum: number, row: any) => {
+    const type = String(row.type || '').toLowerCase();
+    return sum + (type === 'debit' || type === 'hold' ? Number(row.amount || 0) : 0);
+  }, 0);
+  const paidPayments = (paymentRows || []).filter((row: any) => billingEntryStatus(row.status) === 'paid');
+  const completedTopups = (topupRows || []).filter((row: any) => billingEntryStatus(row.status, 'pending') === 'completed');
+
+  return {
+    account: {
+      id: String(user.id),
+      name: String(user.name || ''),
+      email: String(user.email || ''),
+      currency: normalizeCurrencyCode(user.currency || 'EUR'),
+      balance: roundMoney(Number(user.balance || 0))
+    },
+    billingProfile: companyRows?.[0] ? {
+      id: String(companyRows[0].id),
+      companyName: String(companyRows[0].company_name || ''),
+      address: String(companyRows[0].address || ''),
+      city: String(companyRows[0].city || ''),
+      zipCode: String(companyRows[0].zip_code || ''),
+      country: String(companyRows[0].country || ''),
+      phone: String(companyRows[0].phone || ''),
+      email: String(companyRows[0].email || '')
+    } : null,
+    summary: {
+      walletCredits: roundMoney(credits),
+      walletDebits: roundMoney(debits),
+      paidPayments: paidPayments.length,
+      completedTopups: completedTopups.length,
+      totalEntries
+    },
+    entries: visibleEntries,
+    subscriptions: (subscriptionRows || []).map((row: any) => ({
+      id: String(row.id),
+      planId: String(row.plan_id || ''),
+      planName: String(row.plan_name || row.plan_id || ''),
+      provider: String(row.provider || '').trim(),
+      status: billingEntryStatus(row.status, 'active'),
+      currentPeriodStart: billingEntryDate(row.current_period_start),
+      currentPeriodEnd: billingEntryDate(row.current_period_end),
+      createdAt: billingEntryDate(row.created_at)
+    })),
+    pagination: {
+      page,
+      pageSize: limit,
+      total: totalEntries,
+      totalPages: Math.max(1, Math.ceil(totalEntries / limit))
+    }
+  };
+}
+
+function billingCsvCell(value: any) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+function formatBillingAmount(amount: number, currency: string, lang: DoorDropBillingLanguage) {
+  const locale = lang === 'en' ? 'en-US' : lang === 'fr' ? 'fr-FR' : lang === 'it' ? 'it-IT' : 'es-ES';
+  try {
+    return new Intl.NumberFormat(locale, { style: 'currency', currency: normalizeCurrencyCode(currency), minimumFractionDigits: 2 }).format(amount);
+  } catch {
+    return `${Number(amount || 0).toFixed(2)} ${normalizeCurrencyCode(currency)}`;
+  }
+}
+
+app.get('/api/user/billing', authMiddleware, async (req: any, res) => {
+  try {
+    const data = await loadUserBillingData(String(req.user.id), req.query || {});
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json(data);
+  } catch (error: any) {
+    if (error?.code === 'CUSTOMER_NOT_FOUND') return res.status(404).json({ error: 'Cliente no encontrado.' });
+    console.error('[user/billing] error:', error?.message || error);
+    res.status(500).json({ error: 'No se pudo cargar el estado de cuenta.' });
+  }
+});
+
+app.get('/api/user/billing/export', authMiddleware, async (req: any, res) => {
+  try {
+    const format = String(req.query?.format || 'csv').toLowerCase();
+    if (format !== 'csv' && format !== 'pdf') return res.status(400).json({ error: 'Formato de exportación no disponible.' });
+    const lang = normalizeBillingLanguage(req.query?.lang);
+    const data = await loadUserBillingData(String(req.user.id), { ...(req.query || {}), lang }, true);
+    const copy = billingServerCopy[lang];
+    const dateStamp = new Date().toISOString().slice(0, 10);
+
+    if (format === 'csv') {
+      const headers = lang === 'en'
+        ? ['Date', 'Concept', 'Direction', 'Status', 'Amount', 'Currency', 'Reference']
+        : lang === 'it'
+          ? ['Data', 'Voce', 'Direzione', 'Stato', 'Importo', 'Valuta', 'Riferimento']
+          : lang === 'fr'
+            ? ['Date', 'Libellé', 'Sens', 'Statut', 'Montant', 'Devise', 'Référence']
+            : ['Fecha', 'Concepto', 'Sentido', 'Estado', 'Importe', 'Moneda', 'Referencia'];
+      const rows = data.entries.map((entry: any) => [
+        entry.createdAt || '', entry.title, copy[entry.direction] || entry.direction,
+        copy[entry.status] || entry.status, Number(entry.amount || 0).toFixed(2), entry.currency, entry.reference
+      ]);
+      const csv = [headers, ...rows].map((row) => row.map(billingCsvCell).join(',')).join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="doordrop-estado-cuenta-${dateStamp}.csv"`);
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.send(`\uFEFF${csv}`);
+    }
+
+    const lines = data.entries.length
+      ? data.entries.map((entry: any) => `${entry.createdAt || ''} | ${entry.title} | ${copy[entry.direction] || entry.direction} | ${copy[entry.status] || entry.status} | ${formatBillingAmount(entry.amount, entry.currency, lang)} | ${entry.reference || '—'}`)
+      : [lang === 'en' ? 'No account activity found.' : lang === 'it' ? 'Nessun movimento trovato.' : lang === 'fr' ? 'Aucun mouvement trouvé.' : 'No hay movimientos registrados.'];
+    const pdf = docsToPdfBuffer({
+      lang,
+      title: copy.title,
+      subtitle: `${copy.subtitle} · ${data.account.email}`,
+      version: APP_VERSION,
+      updated: dateStamp,
+      sections: [
+        { title: `${lang === 'en' ? 'Available balance' : lang === 'it' ? 'Saldo disponibile' : lang === 'fr' ? 'Solde disponible' : 'Saldo disponible'}: ${formatBillingAmount(data.account.balance, data.account.currency, lang)}`, body: lines.join('\n') },
+        { title: lang === 'en' ? 'Billing profile' : lang === 'it' ? 'Profilo di fatturazione' : lang === 'fr' ? 'Profil de facturation' : 'Perfil de facturación', body: [data.billingProfile?.companyName, data.billingProfile?.email, data.billingProfile?.address, data.billingProfile?.city, data.billingProfile?.zipCode, data.billingProfile?.country].filter(Boolean).join(' · ') || (lang === 'en' ? 'No billing profile configured.' : lang === 'it' ? 'Profilo di fatturazione non configurato.' : lang === 'fr' ? 'Aucun profil de facturation configuré.' : 'No hay perfil de facturación configurado.') }
+      ]
+    }, { publicNote: copy.publicNote });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="doordrop-estado-cuenta-${dateStamp}.pdf"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.send(pdf);
+  } catch (error: any) {
+    if (error?.code === 'CUSTOMER_NOT_FOUND') return res.status(404).json({ error: 'Cliente no encontrado.' });
+    console.error('[user/billing/export] error:', error?.message || error);
+    res.status(500).json({ error: 'No se pudo generar el documento.' });
+  }
+});
+
+
 // 3B. Integraciones Ecart API (tiendas ecommerce)
 let ecartSchemaReady = false;
 

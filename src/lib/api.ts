@@ -78,6 +78,36 @@ export const api = {
   resetPassword: (data: { token: string; newPassword: string }) => fetchAPI('/auth/reset-password', { method: 'POST', body: JSON.stringify(data) }),
   register: (data: any) => fetchAPI('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
   getProfile: () => fetchAPI('/user/profile'),
+  getUserBilling: (params: any = {}) => {
+    const query = new URLSearchParams();
+    Object.entries(params || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && String(value).trim() !== '') query.set(key, String(value));
+    });
+    return fetchAPI(`/user/billing${query.toString() ? `?${query.toString()}` : ''}`);
+  },
+  downloadUserBillingExport: async (format: 'csv' | 'pdf', lang: string, params: any = {}) => {
+    const query = new URLSearchParams({ format, lang });
+    Object.entries(params || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && String(value).trim() !== '') query.set(key, String(value));
+    });
+    const token = getAuthToken();
+    const response = await fetch(`${API_BASE}/user/billing/export?${query.toString()}`, {
+      headers: token ? { Authorization: token } : {},
+      credentials: 'same-origin'
+    });
+    if (!response.ok) {
+      let message = 'No se pudo generar el documento.';
+      try {
+        const data = await response.json();
+        message = data.error || data.message || message;
+      } catch {}
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `doordrop-estado-cuenta.${format}`;
+    return { blob, filename };
+  },
   updateUserSettings: (data: any) => fetchAPI('/user/settings', { method: 'POST', body: JSON.stringify(data) }),
   getStores: () => fetchAPI('/stores'),
   getEcartConnectUrl: () => fetchAPI('/integrations/ecart/connect-url'),

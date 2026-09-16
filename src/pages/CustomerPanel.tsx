@@ -644,7 +644,8 @@ const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile, isSidebarCollaps
       title: sectionCopy.account,
       items: [
         { name: 'Integraciones', path: '/panel/stores', icon: Plug },
-        { name: 'Facturación & Saldo', path: '/panel/settings', icon: Wallet },
+        { name: t('billing_nav'), path: '/panel/billing', icon: FileText },
+        { name: t('wallet_payments_nav'), path: '/panel/settings', icon: Wallet },
         { name: t('tickets_support'), path: '/panel/tickets', icon: LifeBuoy },
         { name: t('ai_copilot'), path: '/panel/copilot', icon: Sparkles },
         { name: 'API Docs', path: '/panel/api-docs', icon: BookOpen },
@@ -3105,6 +3106,194 @@ const Shipments = () => {
 
 
 
+const CustomerBilling = () => {
+  const { t, language } = useI18n();
+  const { format } = useCurrency();
+  const [data, setData] = useState<any>(null);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState<'pdf' | 'csv' | ''>('');
+  const [error, setError] = useState('');
+
+  const uiLanguage = String(language || 'es').slice(0, 2);
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await api.getUserBilling({ page, pageSize: 25, lang: uiLanguage });
+      setData(result);
+    } catch (e: any) {
+      setError(e?.message || t('billing_load_error'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [page, uiLanguage]);
+
+  const download = async (format: 'pdf' | 'csv') => {
+    setExporting(format);
+    setError('');
+    try {
+      const result = await api.downloadUserBillingExport(format, uiLanguage);
+      const url = URL.createObjectURL(result.blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = result.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e: any) {
+      setError(e?.message || t('billing_export_error'));
+    } finally {
+      setExporting('');
+    }
+  };
+
+  const account = data?.account || {};
+  const summary = data?.summary || {};
+  const pagination = data?.pagination || { page: 1, totalPages: 1 };
+  const entries = Array.isArray(data?.entries) ? data.entries : [];
+  const subscriptions = Array.isArray(data?.subscriptions) ? data.subscriptions : [];
+  const accountCurrency = String(account.currency || 'EUR').toUpperCase();
+
+  const formatDate = (value: any) => {
+    if (!value) return '—';
+    try {
+      return new Intl.DateTimeFormat(uiLanguage === 'en' ? 'en-US' : uiLanguage === 'fr' ? 'fr-FR' : uiLanguage === 'it' ? 'it-IT' : 'es-ES', {
+        dateStyle: 'medium', timeStyle: 'short'
+      }).format(new Date(value));
+    } catch {
+      return String(value);
+    }
+  };
+
+  const statusLabel = (status: string) => {
+    const key = `billing_status_${String(status || '').toLowerCase()}`;
+    const translated = t(key);
+    return translated === key ? String(status || t('billing_status_unknown')) : translated;
+  };
+
+  return (
+    <div className="py-2 md:py-4 space-y-6">
+      <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-5">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.25em] text-blue-600 dark:text-neon-cyan">{t('billing_eyebrow')}</p>
+          <h1 className="text-3xl md:text-4xl font-black text-gray-900 dark:text-white mt-2">{t('billing_title')}</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-2xl">{t('billing_subtitle')}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => download('pdf')} disabled={Boolean(exporting)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs font-black text-gray-800 shadow-sm transition hover:border-blue-300 hover:text-blue-600 disabled:opacity-60 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-100">
+            <FileText className="w-4 h-4" /> {exporting === 'pdf' ? t('billing_generating') : t('billing_download_pdf')}
+          </button>
+          <button type="button" onClick={() => download('csv')} disabled={Boolean(exporting)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-xs font-black text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60">
+            <Download className="w-4 h-4" /> {exporting === 'csv' ? t('billing_generating') : t('billing_download_csv')}
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="flex items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300"><span>{error}</span><button type="button" onClick={load} className="inline-flex items-center gap-1 underline"><RotateCw className="w-4 h-4" /> {t('billing_retry')}</button></div>}
+
+      {loading ? <div className="glass-panel rounded-3xl p-12 text-center text-gray-500 dark:text-gray-400">{t('billing_loading')}</div> : (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="glass-panel rounded-2xl border border-blue-100 dark:border-blue-900/40 p-5">
+              <p className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">{t('billing_available_balance')}</p>
+              <p className="mt-2 text-2xl font-black text-blue-600 dark:text-neon-cyan">{format(Number(account.balance || 0), accountCurrency)}</p>
+            </div>
+            <div className="glass-panel rounded-2xl p-5">
+              <p className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">{t('billing_movements')}</p>
+              <p className="mt-2 text-2xl font-black text-gray-900 dark:text-white">{Number(summary.totalEntries || 0)}</p>
+            </div>
+            <div className="glass-panel rounded-2xl p-5">
+              <p className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">{t('billing_topups_completed')}</p>
+              <p className="mt-2 text-2xl font-black text-gray-900 dark:text-white">{Number(summary.completedTopups || 0)}</p>
+            </div>
+            <div className="glass-panel rounded-2xl p-5">
+              <p className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">{t('billing_payments_paid')}</p>
+              <p className="mt-2 text-2xl font-black text-gray-900 dark:text-white">{Number(summary.paidPayments || 0)}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_.65fr] gap-6">
+            <section className="glass-panel rounded-3xl border border-gray-200 dark:border-gray-800 overflow-hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-gray-100 dark:border-gray-800 px-5 md:px-7 py-5">
+                <div>
+                  <h2 className="text-xl font-black text-gray-900 dark:text-white">{t('billing_activity_title')}</h2>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('billing_activity_desc')}</p>
+                </div>
+                <Link to="/panel/settings" className="text-xs font-black text-blue-600 dark:text-neon-cyan hover:underline">{t('billing_edit_profile')}</Link>
+              </div>
+
+              {entries.length === 0 ? <div className="p-12 text-center text-sm text-gray-500 dark:text-gray-400"><FileText className="w-10 h-10 mx-auto mb-3 text-gray-300 dark:text-gray-700" /><p className="font-black text-gray-700 dark:text-gray-200">{t('billing_empty_title')}</p><p className="mt-1">{t('billing_empty_desc')}</p></div> : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[720px] text-left">
+                    <thead className="bg-gray-50/80 dark:bg-dark-800/70 text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      <tr>
+                        <th className="px-5 md:px-7 py-3 font-black">{t('billing_date')}</th>
+                        <th className="px-4 py-3 font-black">{t('billing_concept')}</th>
+                        <th className="px-4 py-3 font-black">{t('billing_status')}</th>
+                        <th className="px-4 py-3 font-black text-right">{t('billing_amount')}</th>
+                        <th className="px-5 md:px-7 py-3 font-black">{t('billing_reference')}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                      {entries.map((entry: any) => {
+                        const incoming = entry.direction === 'incoming';
+                        return (
+                          <tr key={`${entry.source}-${entry.id}`} className="align-top hover:bg-gray-50/60 dark:hover:bg-dark-800/40">
+                            <td className="px-5 md:px-7 py-4 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDate(entry.createdAt)}</td>
+                            <td className="px-4 py-4">
+                              <p className="text-sm font-black text-gray-900 dark:text-white">{entry.title}</p>
+                              {entry.description && entry.description !== entry.title && <p className="mt-1 max-w-[220px] truncate text-xs text-gray-500 dark:text-gray-400" title={entry.description}>{entry.description}</p>}
+                            </td>
+                            <td className="px-4 py-4"><span className="inline-flex rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[10px] font-black text-gray-600 dark:border-gray-700 dark:bg-dark-800 dark:text-gray-300">{statusLabel(entry.status)}</span></td>
+                            <td className={`px-4 py-4 text-right text-sm font-black whitespace-nowrap ${incoming ? 'text-emerald-600 dark:text-neon-green' : 'text-gray-900 dark:text-white'}`}>{incoming ? '+' : '-'}{format(Number(entry.amount || 0), String(entry.currency || accountCurrency).toUpperCase())}</td>
+                            <td className="px-5 md:px-7 py-4 text-xs font-mono text-gray-500 dark:text-gray-400 max-w-[150px] truncate" title={entry.reference || ''}>{entry.reference || '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-3 border-t border-gray-100 dark:border-gray-800 px-5 md:px-7 py-4 text-xs font-black text-gray-500 dark:text-gray-400">
+                <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page <= 1 || loading} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-dark-800"><ChevronLeft className="w-4 h-4" /> {t('billing_previous')}</button>
+                <span>{t('billing_page')} {page} / {Math.max(1, Number(pagination.totalPages || 1))}</span>
+                <button type="button" onClick={() => setPage((current) => current + 1)} disabled={page >= Number(pagination.totalPages || 1) || loading} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-dark-800">{t('billing_next')} <ChevronRight className="w-4 h-4" /></button>
+              </div>
+            </section>
+
+            <aside className="space-y-6">
+              <section className="glass-panel rounded-3xl border border-gray-200 dark:border-gray-800 p-5 md:p-6">
+                <h2 className="text-lg font-black text-gray-900 dark:text-white">{t('billing_profile_title')}</h2>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{t('billing_profile_desc')}</p>
+                {data?.billingProfile ? <div className="mt-5 space-y-3 text-sm">
+                  <p className="font-black text-gray-900 dark:text-white">{data.billingProfile.companyName || account.name}</p>
+                  <p className="text-gray-600 dark:text-gray-300">{data.billingProfile.email || account.email}</p>
+                  {[data.billingProfile.address, data.billingProfile.city, data.billingProfile.zipCode, data.billingProfile.country].filter(Boolean).length > 0 && <p className="text-gray-500 dark:text-gray-400">{[data.billingProfile.address, data.billingProfile.city, data.billingProfile.zipCode, data.billingProfile.country].filter(Boolean).join(' · ')}</p>}
+                </div> : <p className="mt-5 rounded-xl bg-amber-50 px-3 py-3 text-xs font-bold text-amber-700 dark:bg-amber-950/20 dark:text-amber-300">{t('billing_profile_missing')}</p>}
+                <Link to="/panel/settings" className="mt-5 inline-flex text-xs font-black text-blue-600 dark:text-neon-cyan hover:underline">{t('billing_edit_profile')} →</Link>
+              </section>
+
+              <section className="glass-panel rounded-3xl border border-gray-200 dark:border-gray-800 p-5 md:p-6">
+                <h2 className="text-lg font-black text-gray-900 dark:text-white">{t('billing_subscriptions_title')}</h2>
+                {subscriptions.length === 0 ? <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">{t('billing_no_subscriptions')}</p> : <div className="mt-4 space-y-3">{subscriptions.map((subscription: any) => <div key={subscription.id} className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 dark:border-gray-800 dark:bg-dark-800/50"><div className="flex items-start justify-between gap-3"><p className="text-sm font-black text-gray-900 dark:text-white">{subscription.planName}</p><span className="text-[10px] font-black uppercase text-blue-600 dark:text-neon-cyan">{statusLabel(subscription.status)}</span></div><p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{subscription.currentPeriodEnd ? `${t('billing_renews')} ${formatDate(subscription.currentPeriodEnd)}` : t('billing_no_period')}</p></div>)}</div>}
+              </section>
+            </aside>
+          </div>
+
+          <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">{t('billing_disclaimer')}</p>
+        </>
+      )}
+    </div>
+  );
+};
+
+
 const CustomerWalletTransfer = () => {
   const { t, language } = useI18n();
   const { format } = useCurrency();
@@ -4045,6 +4234,7 @@ export default function CustomerPanel() {
             <Route path="/marketplace/*" element={<SellerPanel profile={profile} onProfileUpdated={() => api.getProfile().then(res => setProfile(res.user)).catch(() => {})} />} />
             <Route path="/omnichannel/*" element={<OmnichannelApp profile={profile} />} />
             <Route path="/stores" element={<Stores />} />
+            <Route path="/billing" element={<CustomerBilling />} />
             <Route path="/settings/wallet" element={<CustomerWalletTransfer />} />
             <Route path="/settings" element={<CustomerSettings />} />
             <Route path="/tickets" element={<CustomerTickets />} />

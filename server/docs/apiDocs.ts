@@ -7,7 +7,7 @@
  * Internal aggregation is presented only as "DoorDrop network".
  */
 
-export type DocLang = 'en' | 'es' | 'it';
+export type DocLang = 'en' | 'es' | 'it' | 'fr';
 export type DocSection = { title: string; body: string };
 export type DocBundle = {
   lang: DocLang;
@@ -1056,7 +1056,7 @@ function pdfStringLiteral(input: string): string {
   return out + ')';
 }
 
-export function docsToPdfBuffer(doc: DocBundle): Buffer {
+export function docsToPdfBuffer(doc: DocBundle, options: { publicNote?: string } = {}): Buffer {
   const pageWidth = 595;
   const pageHeight = 842;
   const margin = 48;
@@ -1112,7 +1112,10 @@ export function docsToPdfBuffer(doc: DocBundle): Buffer {
   drawText(doc.subtitle, fontSize, false);
   drawText(`Version ${doc.version}  |  ${doc.updated}  |  ${doc.lang.toUpperCase()}  |  doordrop.lat`, 8.5, false);
   y -= 6;
-  drawText('Public multi-carrier API — show FedEx, UPS, DHL, Correos, BRT, InPost... never wholesale channels.', 8.5, false);
+  const publicNote = options.publicNote === undefined
+    ? 'Public multi-carrier API — show FedEx, UPS, DHL, Correos, BRT, InPost... never wholesale channels.'
+    : String(options.publicNote || '');
+  if (publicNote) drawText(publicNote, 8.5, false);
   y -= 10;
 
   for (const section of doc.sections) {
