@@ -2,7 +2,7 @@ import { OmnichannelApp } from './OmnichannelApp';
 /* ship24go-cache-bust-1789141438 */
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
-import { BookOpen, Bot, MessageSquare, Users, LayoutDashboard, Package, Calculator, Store, Settings, LogOut, Plus, Search, Moon, Sun, Wallet, ChartPie, Plug, Box, Globe, ChevronDown, ChevronLeft, ChevronRight, Menu, X, CheckCircle, Code, LifeBuoy, Sparkles, CreditCard, Crown, ShieldCheck, Trash2, Truck, ArrowLeft, User, MapPin, Pencil, Download, RotateCw, Clock, Eye, FileText, Info, Percent, ChevronUp, Filter } from 'lucide-react';
+import { BookOpen, Bot, MessageSquare, Users, LayoutDashboard, Package, Calculator, Store, Settings, LogOut, Plus, Search, Moon, Sun, Wallet, ChartPie, Plug, Box, Globe, ChevronDown, ChevronLeft, ChevronRight, Menu, X, CheckCircle, Check, Code, LifeBuoy, Sparkles, CreditCard, Crown, ShieldCheck, Trash2, Truck, ArrowLeft, User, MapPin, Pencil, Download, RotateCw, Clock, Eye, FileText, Info, Percent, ChevronUp, Filter } from 'lucide-react';
 import { api, removeAuthToken, getAuthToken, setAuthToken } from '../lib/api';
 import { loadGuestQuoteSession, clearGuestQuoteSession, guestSessionToPanelState } from '../lib/guestQuoteSession';
 import { useI18n } from '../lib/i18n';
@@ -619,7 +619,9 @@ const Sidebar = ({ isMobileMenuOpen, toggleMobileMenu, profile, isSidebarCollaps
         ? { principal: 'Principal', sales: 'Ventes et canaux', account: 'Compte et aide', collapse: 'Réduire le menu', expand: 'Développer le menu', close: 'Fermer le menu', logout: 'Se déconnecter', active: 'Compte actif', marketplace: 'Marketplace', omnichannel: 'Omnicanal + IA', liveChat: 'Chat omnicanal en direct', team: 'Équipe et employés', integrations: 'Intégrations', apiDocs: 'Documentation API', activeView: 'Vue client active', backAdmin: 'Retour au Super Admin', primaryNav: 'Navigation principale', panelSections: 'Sections du tableau de bord', loading: 'Chargement...' }
       : language === 'de'
           ? { principal: 'Übersicht', sales: 'Verkauf & Kanäle', account: 'Konto & Hilfe', collapse: 'Menü einklappen', expand: 'Menü ausklappen', close: 'Menü schließen', logout: 'Abmelden', active: 'Aktives Konto', marketplace: 'Marketplace', omnichannel: 'Omnichannel + KI', liveChat: 'Live-Chat Omnichannel', team: 'Team & Mitarbeitende', integrations: 'Integrationen', apiDocs: 'API-Dokumentation', activeView: 'Aktive Kundenansicht', backAdmin: 'Zurück zum Super Admin', primaryNav: 'Hauptnavigation', panelSections: 'Dashboard-Bereiche', loading: 'Wird geladen...' }
-          : { principal: 'Principal', sales: 'Ventas y canales', account: 'Cuenta y ayuda', collapse: 'Contraer menú', expand: 'Expandir menú', close: 'Cerrar menú', logout: 'Cerrar sesión', active: 'Cuenta activa', marketplace: 'Marketplace', omnichannel: 'Omnicanal + IA', liveChat: 'Chat omnicanal en vivo', team: 'Equipo y empleados', integrations: 'Integraciones', apiDocs: 'Documentación API', activeView: 'Vista de cliente activa', backAdmin: 'Volver al Super Admin', primaryNav: 'Navegación principal', panelSections: 'Secciones del panel', loading: 'Cargando...' };
+          : language === 'zh'
+            ? { principal: '主要功能', sales: '销售与渠道', account: '账户与帮助', collapse: '收起菜单', expand: '展开菜单', close: '关闭菜单', logout: '退出登录', active: '账户已启用', marketplace: 'Marketplace', omnichannel: '全渠道 + AI', liveChat: '全渠道实时聊天', team: '团队与员工', integrations: '集成', apiDocs: 'API 文档', activeView: '当前客户视图', backAdmin: '返回超级管理员', primaryNav: '主导航', panelSections: '面板栏目', loading: '正在加载...' }
+            : { principal: 'Principal', sales: 'Ventas y canales', account: 'Cuenta y ayuda', collapse: 'Contraer menú', expand: 'Expandir menú', close: 'Cerrar menú', logout: 'Cerrar sesión', active: 'Cuenta activa', marketplace: 'Marketplace', omnichannel: 'Omnicanal + IA', liveChat: 'Chat omnicanal en vivo', team: 'Equipo y empleados', integrations: 'Integraciones', apiDocs: 'Documentación API', activeView: 'Vista de cliente activa', backAdmin: 'Volver al Super Admin', primaryNav: 'Navegación principal', panelSections: 'Secciones del panel', loading: 'Cargando...' };
 
   const menuSections = [
     {
@@ -783,10 +785,10 @@ const Dashboard = ({ profile }: any) => {
   const gridColor = isDark ? 'rgba(148, 163, 184, 0.12)' : 'rgba(148, 163, 184, 0.22)';
 
   const lineChartData = {
-    labels: dailyRows.length ? dailyRows.map((row: any) => new Date(row.day).toLocaleDateString('es-DO', { day: '2-digit', month: 'short' })) : ['No hay registros todavía'],
+    labels: dailyRows.length ? dailyRows.map((row: any) => new Date(row.day).toLocaleDateString(language, { day: '2-digit', month: 'short' })) : [t('customer_dashboard_no_records')],
     datasets: [
       {
-        label: 'Envíos',
+        label: t('customer_dashboard_shipments_month'),
         data: dailyRows.length ? dailyRows.map((row: any) => Number(row.shipments || 0)) : [0],
         borderColor: '#06b6d4',
         backgroundColor: 'rgba(6, 182, 212, 0.12)',
@@ -798,10 +800,10 @@ const Dashboard = ({ profile }: any) => {
   };
 
   const countriesChartData = {
-    labels: countryRows.length ? countryRows.map((row: any) => getCountryName(row.country)) : ['No hay registros todavía'],
+    labels: countryRows.length ? countryRows.map((row: any) => getCountryName(row.country)) : [t('customer_dashboard_no_records')],
     datasets: [
       {
-        label: 'Destinos',
+        label: t('customer_dashboard_main_destinations'),
         data: countryRows.length ? countryRows.map((row: any) => Number(row.shipments || 0)) : [0],
         backgroundColor: ['#2563eb', '#06b6d4', '#14b8a6', '#8b5cf6', '#f59e0b', '#22c55e'],
         borderRadius: 12,
@@ -845,50 +847,50 @@ const Dashboard = ({ profile }: any) => {
         <div>
           <div className="flex flex-wrap items-center gap-2 mb-2">
             <p className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-neon-cyan/10 text-blue-700 dark:text-neon-cyan text-xs font-black uppercase tracking-[0.22em]">
-              <ChartPie className="w-4 h-4" /> {language === 'it' ? 'Pannello Cliente' : 'Panel del cliente'}
+              <ChartPie className="w-4 h-4" /> {t('customer_dashboard_badge')}
             </p>
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-xs font-black">
               <ShieldCheck className="w-3.5 h-3.5" />
-              <span>{language === 'it' ? 'Account Unificato: Spedizioni & Vendite' : 'Cuenta Unificada: Envíos & Ventas'}</span>
+              <span>{t('customer_dashboard_unified')}</span>
             </span>
           </div>
           <h1 className="text-3xl md:text-4xl font-black text-gray-900 dark:text-white">
-            {language === 'it' ? 'Benvenuto' : 'Bienvenido'}{profile?.name ? `, ${profile.name.split(" ")[0]}` : ''}!
+            {t('customer_dashboard_welcome').replace(/[!！]\s*$/, '')}{profile?.name ? `, ${profile.name.split(" ")[0]}` : ''}!
           </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">Tus envíos, saldo y destinos principales en tiempo real.</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('customer_dashboard_subtitle')}</p>
         </div>
         <button onClick={loadDashboard} className="px-5 py-3 rounded-2xl glass-panel text-sm font-black text-gray-700 dark:text-gray-200 hover:border-blue-300 dark:hover:border-neon-cyan/50 transition-colors">
-          Actualizar panel
+          {t('customer_dashboard_refresh')}
         </button>
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div className="glass-panel p-5 sm:p-6 rounded-3xl border-l-4 border-l-blue-500 dark:border-l-neon-cyan relative overflow-hidden group md:col-span-1">
               <div className="absolute right-[-10%] top-[-20%] text-blue-500/10 dark:text-neon-cyan/10 text-9xl group-hover:scale-110 transition-transform"><Wallet /></div>
-              <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Saldo disponible</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">{t('customer_dashboard_balance')}</p>
               <h3 className="font-display text-4xl font-bold text-gray-900 dark:text-white mb-4">{format(Number(profile?.balance || 0), accountCurrency)}</h3>
-              <Link to="/panel/settings" className="text-xs font-bold text-blue-600 dark:text-neon-cyan uppercase tracking-wider hover:underline">Recargar saldo →</Link>
+              <Link to="/panel/settings" className="text-xs font-bold text-blue-600 dark:text-neon-cyan uppercase tracking-wider hover:underline">{t('customer_dashboard_recharge')}</Link>
           </div>
 
           <div className="glass-panel p-5 sm:p-6 rounded-3xl relative overflow-hidden">
               <div className="absolute right-4 top-6 text-pink-500/20 dark:text-neon-pink/20 text-4xl"><Box /></div>
-              <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Envíos este mes</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">{t('customer_dashboard_shipments_month')}</p>
               <h3 className="font-display text-4xl font-bold text-gray-900 dark:text-white mb-2">{loading ? '—' : (reports?.summary?.totalShipments || shipments.length)}</h3>
-              <p className="text-xs text-green-500 font-medium">Actividad registrada en tu cuenta.</p>
+              <p className="text-xs text-green-500 font-medium">{t('customer_dashboard_activity_registered')}</p>
           </div>
 
           <div className="glass-panel p-5 sm:p-6 rounded-3xl relative overflow-hidden">
-              <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Entregados</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">{t('customer_dashboard_delivered')}</p>
               <h3 className="font-display text-4xl font-bold text-gray-900 dark:text-white mb-2">{delivered}</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Envíos finalizados correctamente.</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('customer_dashboard_delivered_desc')}</p>
           </div>
 
           <div className="glass-panel p-5 sm:p-6 rounded-3xl border-l-4 border-l-green-500 relative overflow-hidden">
-              <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Estado del servicio</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">{t('customer_dashboard_service_status')}</p>
               <h3 className="font-display text-xl font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div> Operativo
+                <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div> {t('customer_dashboard_operational')}
               </h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Conexión con agencias disponible.</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('customer_dashboard_service_available')}</p>
           </div>
       </div>
 
@@ -896,8 +898,8 @@ const Dashboard = ({ profile }: any) => {
         <div className="xl:col-span-2 glass-panel rounded-3xl p-4 sm:p-6">
           <div className="flex items-center justify-between gap-3 mb-6">
             <div>
-              <h3 className="text-lg font-black text-gray-900 dark:text-white">Actividad de envíos</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Movimiento de los últimos 7 días.</p>
+              <h3 className="text-lg font-black text-gray-900 dark:text-white">{t('customer_dashboard_shipment_activity')}</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('customer_dashboard_last_7_days')}</p>
             </div>
             <span className="px-3 py-1 rounded-full bg-blue-50 dark:bg-neon-cyan/10 text-blue-700 dark:text-neon-cyan text-xs font-black">Chart.js</span>
           </div>
@@ -907,13 +909,13 @@ const Dashboard = ({ profile }: any) => {
         </div>
 
         <div className="glass-panel rounded-3xl p-4 sm:p-6">
-          <h3 className="text-lg font-black text-gray-900 dark:text-white mb-1">Estado de tus envíos</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-6">Resumen por operación.</p>
+           <h3 className="text-lg font-black text-gray-900 dark:text-white mb-1">{t('customer_dashboard_shipment_status')}</h3>
+           <p className="text-xs text-gray-500 dark:text-gray-400 mb-6">{t('customer_dashboard_summary')}</p>
           <div className="space-y-4">
             {[
-              { label: 'Pendientes', value: pending, className: 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300' },
-              { label: 'En tránsito', value: transit, className: 'bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300' },
-              { label: 'Entregados', value: delivered, className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' },
+              { label: t('customer_dashboard_pending'), value: pending, className: 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300' },
+              { label: t('customer_dashboard_in_transit'), value: transit, className: 'bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300' },
+              { label: t('customer_dashboard_delivered'), value: delivered, className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between rounded-2xl border border-gray-100 dark:border-gray-800 p-4">
                 <span className="text-sm font-bold text-gray-600 dark:text-gray-300">{item.label}</span>
@@ -926,8 +928,8 @@ const Dashboard = ({ profile }: any) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="glass-panel rounded-3xl p-4 sm:p-6">
-          <h3 className="text-lg font-black text-gray-900 dark:text-white mb-1">Tus destinos principales</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-6">Países donde más estás enviando.</p>
+           <h3 className="text-lg font-black text-gray-900 dark:text-white mb-1">{t('customer_dashboard_main_destinations')}</h3>
+           <p className="text-xs text-gray-500 dark:text-gray-400 mb-6">{t('customer_dashboard_main_destinations_desc')}</p>
           <div className="h-80">
             <Bar options={horizontalChartOptions} data={countriesChartData} />
           </div>
@@ -938,17 +940,17 @@ const Dashboard = ({ profile }: any) => {
             <div className="w-16 h-16 bg-blue-100 text-blue-600 dark:bg-neon-cyan/20 dark:text-neon-cyan rounded-full flex items-center justify-center text-3xl mx-auto mb-4">
               <Package className="w-8 h-8" />
             </div>
-            <h3 className="text-lg font-bold mb-2 dark:text-white">Crea tu primer envío</h3>
-            <p className="text-gray-500 dark:text-gray-400 text-sm mb-6 max-w-md mx-auto">Obtén cotizaciones de múltiples agencias y genera tu etiqueta desde un solo lugar.</p>
+             <h3 className="text-lg font-bold mb-2 dark:text-white">{t('customer_dashboard_first_shipment')}</h3>
+             <p className="text-gray-500 dark:text-gray-400 text-sm mb-6 max-w-md mx-auto">{t('customer_dashboard_first_shipment_desc')}</p>
             <Link to="/panel/quote" className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600 dark:from-neon-cyan dark:to-neon-green text-white dark:text-gray-900 py-3 px-8 rounded-xl font-bold shadow-lg transition-transform hover:-translate-y-1">
               <Plus className="w-5 h-5" />
-              Nuevo envío
+               {t('customer_dashboard_new_shipment')}
             </Link>
           </div>
         ) : (
           <div className="glass-panel p-4 sm:p-6 rounded-3xl">
-            <h3 className="text-lg font-black text-gray-900 dark:text-white mb-1">Actividad reciente</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-6">Últimos movimientos de tu cuenta.</p>
+             <h3 className="text-lg font-black text-gray-900 dark:text-white mb-1">{t('customer_dashboard_recent_activity')}</h3>
+             <p className="text-xs text-gray-500 dark:text-gray-400 mb-6">{t('customer_dashboard_recent_activity_desc')}</p>
             <div className="space-y-4">
                {shipments.slice(0, 5).map(s => (
                   <div key={s.id} className="flex items-center justify-between p-4 border border-gray-100 dark:border-gray-800 rounded-2xl">
@@ -1206,7 +1208,8 @@ const Quote = () => {
       setLoadingPhase(t('quote_loading_ready') || 'Listo');
       const returnedQuotes = providerResults.flatMap((result: any) => result.status === 'fulfilled' && Array.isArray(result.value?.quotes) ? result.value.quotes : []);
       if (returnedQuotes.length === 0) {
-        const message = providerResults.find((result: any) => result.status === 'fulfilled' && result.value?.message)?.value?.message;
+        const messageResult = providerResults.find((result: any) => result.status === 'fulfilled' && result.value?.message);
+        const message = messageResult?.status === 'fulfilled' ? messageResult.value.message : undefined;
         setError(message || t('quote_no_options') || 'No encontramos opciones disponibles para esta ruta.');
       }
       setTimeout(scrollToResults, 60);
@@ -3577,6 +3580,7 @@ const CustomerSettings = () => {
   const [profile, setProfile] = useState<any>(null);
   const [company, setCompany] = useState<any>(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [languageSaving, setLanguageSaving] = useState(false);
   const [billingForm, setBillingForm] = useState({
     name: '', phone: '', country: 'ES', currency: 'EUR', businessType: '', preferredPaymentMethod: 'wallet',
     companyName: '', billingEmail: '', billingPhone: '', address: '', city: '', zipCode: '', billingCountry: 'ES'
@@ -3785,6 +3789,7 @@ const CustomerSettings = () => {
     setActionSuccess('');
     try {
       const res = await api.updateUserSettings({
+        language,
         name: billingForm.name,
         phone: billingForm.phone,
         country: billingForm.country,
@@ -3812,6 +3817,23 @@ const CustomerSettings = () => {
     }
   };
 
+  const handleLanguageChange = async (nextLanguage: string) => {
+    const previousLanguage = language;
+    setLanguage(nextLanguage as any);
+    setLanguageSaving(true);
+    setActionError('');
+    try {
+      const res = await api.updateUserSettings({ language: nextLanguage });
+      if (res.user) setProfile((current: any) => ({ ...(current || {}), ...res.user }));
+      if (res.company) setCompany(res.company);
+    } catch (e: any) {
+      setLanguage(previousLanguage);
+      setActionError(e.message || t('customer_settings_settings_error'));
+    } finally {
+      setLanguageSaving(false);
+    }
+  };
+
   return (
     <div className="py-2 md:py-4">
       <h1 className="text-3xl font-black text-gray-900 dark:text-white mb-8">{t('customer_settings_title')}</h1>
@@ -3819,7 +3841,7 @@ const CustomerSettings = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <div className="glass-panel rounded-2xl p-5 border border-gray-200 dark:border-gray-800">
           <label className="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('customer_settings_language_label')}</label>
-          <select value={language} onChange={(e) => setLanguage(e.target.value as any)} className="input-dynamic font-bold">
+          <select value={language} disabled={languageSaving} onChange={(e) => handleLanguageChange(e.target.value)} className="input-dynamic font-bold disabled:opacity-60">
             {availableLanguages.map((item) => <option key={item.code} value={item.code}>{item.flag} {item.label}</option>)}
           </select>
           <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2">{t('customer_settings_language_help')}</p>

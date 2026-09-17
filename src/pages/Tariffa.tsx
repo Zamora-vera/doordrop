@@ -505,7 +505,8 @@ export default function DoorDropTariffa() {
       const providerResults = await Promise.allSettled(PROGRESSIVE_QUOTE_PROVIDER_CODES.map(receiveProviderResponse));
       if (requestSequence.current !== requestId) return;
       if (!responses.length) {
-        const firstError = providerResults.find((result: any) => result.status === 'fulfilled' && result.value?.message)?.value?.message;
+        const firstErrorResult = providerResults.find((result: any) => result.status === 'fulfilled' && result.value?.message);
+        const firstError = firstErrorResult?.status === 'fulfilled' ? firstErrorResult.value.message : undefined;
         throw new Error(firstError || copy.noResults);
       }
     } catch (requestError: any) {

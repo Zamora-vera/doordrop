@@ -18,12 +18,14 @@ export const Landing = () => {
   const navigate = useNavigate();
   const { brand } = useBrand();
   const supportWhatsAppHref = getSupportWhatsAppUrl(language);
-  const landingLanguage = language.startsWith('it') ? 'it' : language.startsWith('en') ? 'en' : language.startsWith('fr') ? 'fr' : 'es';
+  const landingLanguage = language.startsWith('it') ? 'it' : language.startsWith('en') ? 'en' : language.startsWith('fr') ? 'fr' : language.startsWith('de') ? 'de' : language.startsWith('zh') ? 'zh' : 'es';
   const omnichannelAnnouncement = {
     es: { badge: 'NUEVO', label: 'Omnicanal + AI', text: 'WhatsApp, Instagram, Facebook y Telegram en un solo lugar.', cta: 'Descubrir' },
     it: { badge: 'NOVITÀ', label: 'Omnicanale + AI', text: 'WhatsApp, Instagram, Facebook e Telegram in un unico spazio.', cta: 'Scopri' },
     en: { badge: 'NEW', label: 'Omnichannel + AI', text: 'WhatsApp, Instagram, Facebook and Telegram in one place.', cta: 'Discover' },
-    fr: { badge: 'NOUVEAU', label: 'Omnicanal + IA', text: 'WhatsApp, Instagram, Facebook et Telegram au même endroit.', cta: 'Découvrir' }
+    fr: { badge: 'NOUVEAU', label: 'Omnicanal + IA', text: 'WhatsApp, Instagram, Facebook et Telegram au même endroit.', cta: 'Découvrir' },
+    de: { badge: 'NEU', label: 'Omnikanal + KI', text: 'WhatsApp, Instagram, Facebook und Telegram an einem Ort.', cta: 'Entdecken' },
+    zh: { badge: '新品', label: '全渠道 + AI', text: '在一个地方管理 WhatsApp、Instagram、Facebook 和 Telegram。', cta: '了解更多' }
   }[landingLanguage];
   
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
@@ -260,7 +262,7 @@ export const Landing = () => {
                   </Link>
                   <Link to="/marketplace" className="px-6 py-2 rounded-lg text-blue-600 dark:text-neon-cyan hover:text-blue-700 font-black text-sm transition-all hover:bg-white dark:hover:bg-dark-800 flex items-center gap-1.5">
                     <span>🛒 Marketplace</span>
-                    <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 font-black">Nuevo</span>
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 font-black">{t('marketplace_new_badge')}</span>
                   </Link>
                 </div>
                 <div className="flex items-center space-x-3 text-sm">
@@ -514,13 +516,13 @@ export const Landing = () => {
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
             <div className="space-y-3 max-w-2xl">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900 text-xs font-black text-blue-700 dark:text-blue-300 uppercase tracking-wider">
-                <span>🛒 Ecosistema Unificado</span>
+                <span>{t('homepage_marketplace_eyebrow')}</span>
               </div>
               <h2 className="text-3xl md:text-5xl font-black tracking-tight text-slate-900 dark:text-white">
                 DoorDrop Marketplace
               </h2>
               <p className="text-base text-slate-600 dark:text-slate-400 leading-relaxed">
-                El primer marketplace conectado directamente a la red logística de DoorDrop. Compra con protección garantizada y vende con etiquetas de envío generadas al instante.
+                {t('homepage_marketplace_description')}
               </p>
             </div>
             <div className="flex gap-3">
@@ -528,14 +530,14 @@ export const Landing = () => {
                 to="/marketplace"
                 className="px-6 py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-black text-sm shadow-md transition-all flex items-center gap-2"
               >
-                <span>Ver catálogo completo</span>
+                <span>{t('homepage_marketplace_catalog')}</span>
                 <span>→</span>
               </Link>
               <Link
                 to="/panel/marketplace"
                 className="px-6 py-3 rounded-2xl bg-white dark:bg-dark-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white font-bold text-sm hover:bg-slate-50 transition-all"
               >
-                Vender producto
+                {t('homepage_marketplace_sell')}
               </Link>
             </div>
           </div>

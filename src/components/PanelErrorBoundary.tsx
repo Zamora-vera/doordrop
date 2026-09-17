@@ -34,7 +34,7 @@ export class PanelErrorBoundary extends React.Component<Props, State> {
         </div>
       );
     }
-    return this.props.children;
+    return (this as React.Component<Props, State>).props.children;
   }
 }
 

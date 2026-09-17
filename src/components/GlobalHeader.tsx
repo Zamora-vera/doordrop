@@ -40,12 +40,14 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
   const [searchValue, setSearchValue] = useState(initialSearch);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const headerLanguage = language.startsWith('it') ? 'it' : language.startsWith('en') ? 'en' : language.startsWith('fr') ? 'fr' : 'es';
+  const headerLanguage = language.startsWith('it') ? 'it' : language.startsWith('en') ? 'en' : language.startsWith('fr') ? 'fr' : language.startsWith('de') ? 'de' : language.startsWith('zh') ? 'zh' : 'es';
   const omnichannelAnnouncement = {
     es: { badge: 'NUEVO', label: 'Omnicanal + AI', text: 'WhatsApp, Instagram, Facebook y Telegram en un solo lugar.', cta: 'Descubrir' },
     it: { badge: 'NOVITÀ', label: 'Omnicanale + AI', text: 'WhatsApp, Instagram, Facebook e Telegram in un unico spazio.', cta: 'Scopri' },
     en: { badge: 'NEW', label: 'Omnichannel + AI', text: 'WhatsApp, Instagram, Facebook and Telegram in one place.', cta: 'Discover' },
-    fr: { badge: 'NOUVEAU', label: 'Omnicanal + IA', text: 'WhatsApp, Instagram, Facebook et Telegram au même endroit.', cta: 'Découvrir' }
+    fr: { badge: 'NOUVEAU', label: 'Omnicanal + IA', text: 'WhatsApp, Instagram, Facebook et Telegram au même endroit.', cta: 'Découvrir' },
+    de: { badge: 'NEU', label: 'Omnikanal + KI', text: 'WhatsApp, Instagram, Facebook und Telegram an einem Ort.', cta: 'Entdecken' },
+    zh: { badge: '新品', label: '全渠道 + AI', text: '在一个地方管理 WhatsApp、Instagram、Facebook 和 Telegram。', cta: '了解更多' }
   }[headerLanguage];
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -114,7 +116,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
               type="text"
               value={searchValue}
               onChange={(e) => setSearchValue(e.target.value)}
-              placeholder={language === 'it' ? 'Cerca prodotti, console, tecnologia...' : 'Buscar productos, marcas, ciudades...'}
+              placeholder={t('header_marketplace_search')}
               className="w-full pl-10 pr-4 py-2 text-xs sm:text-sm bg-slate-100 dark:bg-dark-800 border border-slate-200 dark:border-slate-700 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white dark:focus:bg-dark-900 text-slate-900 dark:text-white transition-all"
             />
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -132,14 +134,14 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
                 className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-black bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-all"
               >
                 <PlusCircle className="w-3.5 h-3.5" />
-                <span>{language === 'it' ? 'Vendi' : 'Vender'}</span>
+                <span>{t('header_sell')}</span>
               </Link>
               <Link
                 to="/panel"
                 className="px-3.5 py-2 rounded-full text-xs font-black bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 transition-colors flex items-center gap-1.5"
               >
                 <User className="w-3.5 h-3.5" />
-                <span>{language === 'it' ? 'Mio Pannello' : 'Mi Panel'}</span>
+                <span>{t('header_panel')}</span>
               </Link>
             </div>
           ) : (
@@ -177,7 +179,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
               type="text"
               value={searchValue}
               onChange={(e) => setSearchValue(e.target.value)}
-              placeholder={language === 'it' ? 'Cerca nel marketplace...' : 'Buscar en el marketplace...'}
+              placeholder={t('header_marketplace_search')}
               className="w-full pl-9 pr-3 py-2 text-xs bg-slate-100 dark:bg-dark-800 border border-slate-200 dark:border-slate-700 rounded-xl"
             />
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -214,7 +216,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
               className="p-3 rounded-xl bg-cyan-50 dark:bg-cyan-950/50 text-cyan-700 dark:text-cyan-300 flex items-center gap-2"
             >
               <Sparkles className="w-4 h-4 text-cyan-600" />
-              <span>{language === 'it' ? 'Omnicanale + AI' : language === 'fr' ? 'Omnicanal + IA' : language === 'en' ? 'Omnichannel + AI' : 'Omnicanal + AI'}</span>
+              <span>{t('header_omnichannel')}</span>
             </Link>
             <Link
               to="/panel/marketplace"
@@ -222,7 +224,7 @@ export const GlobalHeader: React.FC<GlobalHeaderProps> = ({
               className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 flex items-center gap-2"
             >
               <PlusCircle className="w-4 h-4 text-emerald-600" />
-              <span>{language === 'it' ? 'Vendi Prodotto' : 'Vender Producto'}</span>
+              <span>{t('header_sell_product')}</span>
             </Link>
           </div>
         </div>

@@ -45,6 +45,25 @@ const COUNTRIES = [
   { code: 'GB', label: 'Reino Unido', flag: '🇬🇧' }
 ];
 
+const CONDITION_TRANSLATION_KEYS: Record<string, string> = {
+  new: 'marketplace_condition_new',
+  like_new: 'marketplace_condition_like_new',
+  excellent: 'marketplace_condition_excellent',
+  good: 'marketplace_condition_good',
+  used: 'marketplace_condition_used',
+  repair: 'marketplace_condition_repair'
+};
+
+const COUNTRY_TRANSLATION_KEYS: Record<string, string> = {
+  '': 'marketplace_all_countries', ES: 'marketplace_country_spain', IT: 'marketplace_country_italy', DE: 'marketplace_country_germany', GB: 'marketplace_country_uk'
+};
+
+const localizedConditionLabel = (condition: string, translate: (key: string) => string) =>
+  translate(CONDITION_TRANSLATION_KEYS[condition] || '') || CONDITIONS[condition]?.label || condition;
+
+const localizedCountryLabel = (code: string, translate: (key: string) => string) =>
+  translate(COUNTRY_TRANSLATION_KEYS[code] || '') || COUNTRIES.find((country) => country.code === code)?.label || code;
+
 export function Marketplace() {
   const { brand } = useBrand();
   const navigate = useNavigate();
@@ -275,36 +294,36 @@ export function Marketplace() {
         {/* Quick Filter Bar */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-200 dark:border-slate-800">
           <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-500">
-            <span className="text-slate-900 dark:text-white font-extrabold text-sm">{total} {total === 1 ? (language === 'it' ? 'prodotto' : 'producto') : (language === 'it' ? 'prodotti' : 'productos')}</span>
+            <span className="text-slate-900 dark:text-white font-extrabold text-sm">{total} {total === 1 ? t('marketplace_product_one') : t('marketplace_product_many')}</span>
             
             {currentCategory && (
               <span className="px-2.5 py-1 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 flex items-center gap-1 font-semibold">
-                {language === 'it' ? 'Categoria' : 'Categoría'}: {categories.find(c => c.slug === currentCategory)?.translated_name || currentCategory}
+                {t('marketplace_filter_category')}: {categories.find(c => c.slug === currentCategory)?.translated_name || currentCategory}
                 <button onClick={() => setCategoryFilter('')} className="ml-1 hover:text-red-500">×</button>
               </span>
             )}
             {currentCountry && (
               <span className="px-2.5 py-1 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 flex items-center gap-1 font-semibold">
-                {language === 'it' ? 'Paese' : 'País'}: {COUNTRIES.find(c => c.code === currentCountry)?.label}
+                {t('marketplace_filter_country')}: {localizedCountryLabel(currentCountry, t)}
                 <button onClick={() => setCountryFilter('')} className="ml-1 hover:text-red-500">×</button>
               </span>
             )}
             {currentCondition && (
               <span className="px-2.5 py-1 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-300 flex items-center gap-1 font-semibold">
-                {CONDITIONS[currentCondition]?.label || currentCondition}
+                {localizedConditionLabel(currentCondition, t)}
                 <button onClick={() => setConditionFilter('')} className="ml-1 hover:text-red-500">×</button>
               </span>
             )}
             {(currentMinPrice || currentMaxPrice) && (
               <span className="px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 flex items-center gap-1 font-semibold">
-                {language === 'it' ? 'Prezzo' : 'Precio'}: {currentMinPrice || '0'}€ - {currentMaxPrice || '∞'}€
+                {t('marketplace_filter_price')}: {currentMinPrice || '0'}€ - {currentMaxPrice || '∞'}€
                 <button onClick={() => { const p = new URLSearchParams(searchParams); p.delete('min'); p.delete('max'); setSearchParams(p); }} className="ml-1 hover:text-red-500">×</button>
               </span>
             )}
             {hasShipping && (
               <span className="px-2.5 py-1 rounded-full bg-blue-600 text-white flex items-center gap-1 font-semibold">
                 <Truck className="w-3 h-3" />
-                {t('marketplace_with_shipping') || (language === 'it' ? 'Con Spedizione DoorDrop' : 'Solo con envío DoorDrop')}
+                {t('marketplace_with_shipping') || t('marketplace_with_shipments_label')}
                 <button onClick={toggleShippingOnly} className="ml-1 hover:text-red-200">×</button>
               </span>
             )}
@@ -314,7 +333,7 @@ export function Marketplace() {
                 className="text-xs text-rose-600 dark:text-rose-400 hover:underline ml-2 flex items-center gap-1"
               >
                 <RotateCcw className="w-3 h-3" />
-                {t('marketplace_clean_filters') || (language === 'it' ? 'Reimposta filtri' : 'Limpiar filtros')}
+                {t('marketplace_clean_filters')}
               </button>
             )}
           </div>
@@ -331,7 +350,7 @@ export function Marketplace() {
               }`}
             >
               <Truck className="w-3.5 h-3.5" />
-              <span>{language === 'it' ? 'Con Spedizioni' : 'Con Envíos'}</span>
+              <span>{t('marketplace_with_shipments_label')}</span>
             </button>
 
             {/* Filter Modal Button */}
@@ -340,7 +359,7 @@ export function Marketplace() {
               className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-dark-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 flex items-center gap-1.5"
             >
               <SlidersHorizontal className="w-3.5 h-3.5 text-blue-600" />
-              <span>{t('marketplace_advanced_filters') || (language === 'it' ? 'Filtri avanzati' : 'Filtros avanzados')}</span>
+              <span>{t('marketplace_advanced_filters')}</span>
             </button>
 
             {/* Country Selector */}
@@ -357,7 +376,7 @@ export function Marketplace() {
                   }`}
                 >
                   <span className="text-sm mr-1">{c.flag}</span>
-                  <span className="hidden md:inline">{c.code || 'Todos'}</span>
+                  <span className="hidden md:inline">{c.code || t('marketplace_all_short')}</span>
                 </button>
               ))}
             </div>
@@ -368,10 +387,10 @@ export function Marketplace() {
               onChange={e => setSortFilter(e.target.value)}
               className="text-xs font-bold bg-white dark:bg-dark-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800 dark:text-slate-200"
             >
-              <option value="newest">Más recientes</option>
-              <option value="price_asc">Precio: Menor a Mayor</option>
-              <option value="price_desc">Precio: Mayor a Menor</option>
-              <option value="popular">Más populares</option>
+              <option value="newest">{t('marketplace_sort_newest')}</option>
+              <option value="price_asc">{t('marketplace_sort_price_asc')}</option>
+              <option value="price_desc">{t('marketplace_sort_price_desc')}</option>
+              <option value="popular">{t('marketplace_sort_popular')}</option>
             </select>
           </div>
         </div>
@@ -391,23 +410,23 @@ export function Marketplace() {
         ) : listings.length === 0 ? (
           <div className="text-center py-20 bg-white dark:bg-dark-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-8">
             <Package className="w-16 h-16 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
-            <h3 className="text-xl font-black text-slate-900 dark:text-white mb-2">No se encontraron productos</h3>
+            <h3 className="text-xl font-black text-slate-900 dark:text-white mb-2">{t('marketplace_no_products')}</h3>
             <p className="text-slate-500 dark:text-slate-400 text-sm max-w-md mx-auto mb-6">
-              Prueba a cambiar tus filtros de búsqueda o publica tu propio artículo para venderlo rápidamente con los envíos de DoorDrop.
+              {t('marketplace_no_products_desc')}
             </p>
             <div className="flex justify-center gap-3">
               <button
                 onClick={clearAllFilters}
                 className="px-5 py-2.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs"
               >
-                Limpiar todos los filtros
+                {t('marketplace_clear_all_filters')}
               </button>
               <Link
                 to="/panel/marketplace"
                 className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md transition-all"
               >
                 <PlusCircle className="w-4 h-4" />
-                <span>Publicar artículo</span>
+                <span>{t('marketplace_publish_item')}</span>
               </Link>
             </div>
           </div>
@@ -418,7 +437,8 @@ export function Marketplace() {
               // Never substitute a stock photo for a real listing image. The API
               // returns the provider's original URL when one is available.
               const cover = item.images?.[0]?.url || null;
-              const cond = CONDITIONS[item.condition] || CONDITIONS.good;
+              const conditionCode = item.condition || 'good';
+              const cond = CONDITIONS[conditionCode] || CONDITIONS.good;
               const isFav = favorites[item.id];
 
               return (
@@ -439,7 +459,7 @@ export function Marketplace() {
                     ) : (
                       <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-400 dark:text-slate-500">
                         <Package className="w-10 h-10" aria-hidden="true" />
-                        <span className="text-[11px] font-semibold">Imagen no disponible</span>
+                         <span className="text-[11px] font-semibold">{t('marketplace_image_unavailable')}</span>
                       </div>
                     )}
 
@@ -448,7 +468,7 @@ export function Marketplace() {
                       {item.shipping_available === 1 && (
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black bg-blue-600 text-white backdrop-blur-md shadow-md">
                           <Truck className="w-3 h-3" />
-                          <span>Envío DoorDrop</span>
+                          <span>{t('marketplace_shipping_badge')}</span>
                         </span>
                       )}
                     </div>
@@ -468,7 +488,7 @@ export function Marketplace() {
                     {/* Condition badge */}
                     <div className="absolute bottom-2.5 left-2.5">
                       <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${cond.color} shadow-sm backdrop-blur-sm`}>
-                        {cond.label}
+                        {localizedConditionLabel(conditionCode, t)}
                       </span>
                     </div>
                   </div>
@@ -483,7 +503,7 @@ export function Marketplace() {
                         </span>
                         {item.negotiable === 1 && (
                           <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-1.5 py-0.5 rounded">
-                            Negociable
+                             {t('marketplace_negotiable')}
                           </span>
                         )}
                       </div>
@@ -503,7 +523,7 @@ export function Marketplace() {
                       {item.seller?.verification_level === 'verified' && (
                         <div className="flex items-center gap-0.5 text-blue-600 dark:text-blue-400 font-bold shrink-0" title="Vendedor verificado">
                           <ShieldCheck className="w-3.5 h-3.5" />
-                          <span className="text-[10px]">Verificado</span>
+                           <span className="text-[10px]">{t('marketplace_verified_short')}</span>
                         </div>
                       )}
                     </div>
@@ -522,7 +542,7 @@ export function Marketplace() {
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
                 <SlidersHorizontal className="w-4 h-4 text-blue-600" />
-                <span>Filtros de Búsqueda</span>
+                <span>{t('marketplace_search_filters')}</span>
               </h3>
               <button onClick={() => setShowFiltersModal(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
@@ -531,14 +551,14 @@ export function Marketplace() {
 
             {/* Rango de precio */}
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Rango de precio (€)</label>
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">{t('marketplace_price_range')}</label>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <input
                     type="number"
                     value={minPriceInput}
                     onChange={e => setMinPriceInput(e.target.value)}
-                    placeholder="Mínimo €"
+                    placeholder={t('marketplace_price_min')}
                     className="w-full p-2.5 bg-slate-100 dark:bg-dark-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold"
                   />
                 </div>
@@ -547,7 +567,7 @@ export function Marketplace() {
                     type="number"
                     value={maxPriceInput}
                     onChange={e => setMaxPriceInput(e.target.value)}
-                    placeholder="Máximo €"
+                    placeholder={t('marketplace_price_max')}
                     className="w-full p-2.5 bg-slate-100 dark:bg-dark-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold"
                   />
                 </div>
@@ -556,7 +576,7 @@ export function Marketplace() {
 
             {/* Estado del producto */}
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Estado del producto</label>
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">{t('marketplace_condition')}</label>
               <div className="flex flex-wrap gap-1.5">
                 {Object.entries(CONDITIONS).map(([key, info]) => {
                   const selected = currentCondition === key;
@@ -571,7 +591,7 @@ export function Marketplace() {
                           : 'bg-slate-100 dark:bg-dark-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
                       }`}
                     >
-                      {info.label}
+                      {localizedConditionLabel(key, t)}
                     </button>
                   );
                 })}
@@ -584,14 +604,14 @@ export function Marketplace() {
                 onClick={clearAllFilters}
                 className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
               >
-                Restablecer
+                {t('marketplace_reset')}
               </button>
               <button
                 type="button"
                 onClick={handlePriceApply}
                 className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md"
               >
-                Aplicar filtros
+                {t('marketplace_apply')}
               </button>
             </div>
           </div>

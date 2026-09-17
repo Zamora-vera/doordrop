@@ -151,6 +151,9 @@ export const api = {
   polarListWebhooks: () => fetchAPI('/admin/polar/webhooks'),
   getAdminSettings: () => fetchAPI('/admin/settings'),
   getAdminEcartStatus: () => fetchAPI('/admin/integrations/ecartapi/status'),
+  getAdminPodStatus: () => fetchAPI('/pod/admin/status'),
+  triggerAdminPodSync: (data: any = {}) => fetchAPI('/pod/admin/sync', { method: 'POST', body: JSON.stringify(data) }),
+  updateAdminPodSettings: (data: any) => fetchAPI('/pod/admin/settings', { method: 'PUT', body: JSON.stringify(data) }),
   testAdminEcart: () => fetchAPI('/admin/integrations/ecartapi/test', { method: 'POST' }),
   getSpedireProIntegration: () => fetchAPI('/admin/spedirepro/integration'),
   getSpedireProWallet: (params: any = {}) => {

@@ -121,7 +121,8 @@ export function OmnichannelApp({ profile }: { profile: any }) {
     language?.startsWith('it') ? 'it' :
       language?.startsWith('en') ? 'en' :
         language?.startsWith('de') ? 'de' :
-          language?.startsWith('fr') ? 'fr' : 'es'
+        language?.startsWith('fr') ? 'fr' :
+          language?.startsWith('zh') ? 'zh' : 'es'
   );
 
   // Multi-language text dictionary
@@ -345,6 +346,50 @@ export function OmnichannelApp({ profile }: { profile: any }) {
       walletPay: 'Payer avec le solde DoorDrop',
       currentPlanBadge: 'VOTRE FORFAIT ACTUEL',
       upgradePlan: 'Passer à ce forfait'
+    },
+    zh: {
+      badge: 'DoorDrop 全渠道 + AI 员工',
+      title: '全渠道客户服务与 24/7 AI 员工',
+      desc: '连接 WhatsApp、Instagram、Facebook 和 Telegram，自动处理销售、实时配送报价和客户咨询。',
+      tabDashboard: '概览',
+      tabChannels: '已连接渠道',
+      tabInbox: '统一收件箱',
+      tabComments: '评论与私信',
+      tabAi: 'AI 员工',
+      tabPublishing: '自动发布',
+      tabTeam: '团队与员工',
+      tabPlans: '套餐与价格',
+      managePlans: '管理套餐',
+      activePlan: '当前有效套餐',
+      activeChannels: '活跃渠道',
+      conversations: '对话',
+      processedMessages: '已处理消息',
+      aiEmployee: 'AI 员工',
+      unlimited: '包含无限量',
+      noChannels: '尚未连接渠道',
+      noChannelsDesc: '连接 WhatsApp Business、Instagram 或 Messenger，在一个收件箱中服务客户。',
+      connectFirst: '连接第一个渠道',
+      connectChannel: '连接渠道',
+      connected: '已连接',
+      disconnect: '断开连接',
+      aiActive: 'AI 正在回复',
+      humanHandoff: '转接人工',
+      selectConv: '请从列表中选择一个对话',
+      writeMsg: '输入消息...',
+      send: '发送',
+      aiConfigTitle: 'DoorDrop AI 员工设置',
+      aiConfigDesc: '由 AI 驱动，结合您的商品目录和 DoorDrop 实时配送报价。',
+      assistantName: '助手名称',
+      tone: '沟通语气',
+      mainLang: '主要语言',
+      businessKnowledge: '业务信息与政策（知识库）',
+      faqs: '常见问题（FAQ）',
+      saveAi: '保存 AI 设置',
+      savedSuccess: '设置已成功保存。',
+      polarCheckout: '安全订阅',
+      walletPay: '使用 DoorDrop 余额支付',
+      currentPlanBadge: '当前套餐',
+      upgradePlan: '选择此套餐'
     }
   }[lang];
 
@@ -433,7 +478,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
         contact_name: newConvName.trim() || 'Cliente Directo',
         contact_phone: newConvPhone.trim(),
         platform: newConvPlatform,
-        initial_message: newConvMsg.trim() || '¡Hola! Gracias por contactarnos en DoorDrop. ¿En qué podemos ayudarte hoy?'
+        initial_message: newConvMsg.trim() || translate('omni_default_initial_message')
       });
       setShowNewConvModal(false);
       setNewConvName('');
@@ -943,7 +988,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
               </span>
               <span className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
                 <MessageSquare className="w-4 h-4 text-blue-600" />
-                Live Chat Omnicanal
+                {translate('omni_live_chat_title')}
               </span>
             </div>
             <span className="hidden sm:inline text-xs text-slate-300 dark:text-slate-700">|</span>
@@ -958,21 +1003,21 @@ export function OmnichannelApp({ profile }: { profile: any }) {
               className="text-xs font-bold px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition flex items-center gap-1.5 shadow-sm"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Nuevo Chat</span>
+              <span>{translate('omni_new_chat')}</span>
             </button>
             <button
               onClick={() => setActiveTab('team')}
               className="text-xs font-semibold px-2.5 py-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition flex items-center gap-1.5 border border-slate-200 dark:border-slate-800"
             >
               <Users className="w-3.5 h-3.5 text-blue-500" />
-              <span className="hidden md:inline">Equipo</span>
+              <span className="hidden md:inline">{translate('omni_team')}</span>
             </button>
             <button
               onClick={() => setActiveTab('dashboard')}
               className="text-xs font-semibold px-2.5 py-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition flex items-center gap-1.5 border border-slate-200 dark:border-slate-800"
             >
               <Settings className="w-3.5 h-3.5 text-slate-500" />
-              <span>Configuración</span>
+              <span>{translate('omni_settings')}</span>
             </button>
           </div>
         </div>
@@ -999,7 +1044,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                   <div className="flex items-center space-x-2.5">
                     <h1 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
                       <MessageSquare className="w-4 h-4 text-blue-600" />
-                      <span>Bandeja Unificada</span>
+                      <span>{translate('omni_inbox')}</span>
                     </h1>
                     {conversations.reduce((acc, curr) => acc + (Number(curr.unread_count) || 0), 0) > 0 && (
                       <span className="relative flex h-5 min-w-[20px] px-1.5 items-center justify-center rounded-full bg-blue-600 text-[11px] font-bold text-white shadow-sm shadow-blue-500/50 animate-pulse">
@@ -1011,7 +1056,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                   <div className="flex items-center space-x-1">
                     <button
                       onClick={() => setSoundEnabled(!soundEnabled)}
-                      title={soundEnabled ? 'Silenciar notificaciones' : 'Activar sonido'}
+                      title={soundEnabled ? translate('omni_mute_notifications') : translate('omni_enable_sound')}
                       className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                     >
                       {soundEnabled ? (
@@ -1023,7 +1068,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
 
                     <button
                       onClick={loadInbox}
-                      title="Refrescar conversaciones"
+                      title={translate('omni_refresh_conversations')}
                       className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                     >
                       <RefreshCw className="w-4 h-4" />
@@ -1032,7 +1077,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                     {/* Desktop Quick Collapse */}
                     <button
                       onClick={() => setIsSidebarCollapsed(true)}
-                      title="Ocultar barra lateral"
+                      title={translate('omni_hide_sidebar')}
                       className="hidden md:flex p-1.5 rounded-lg text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                     >
                       <PanelLeftClose className="w-4 h-4" />
@@ -1047,7 +1092,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                     type="text"
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
-                    placeholder="Buscar cliente, mensaje o teléfono..."
+                    placeholder={translate('omni_search')}
                     className="w-full h-9 pl-9 pr-8 bg-slate-100 dark:bg-slate-800/70 text-xs rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40 border border-transparent dark:border-slate-700/50 transition"
                   />
                   {searchQuery && (
@@ -1070,7 +1115,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                         : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700/80'
                     }`}
                   >
-                    Todos
+                    {translate('omni_all')}
                   </button>
 
                   <button
@@ -1081,7 +1126,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                         : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700/80'
                     }`}
                   >
-                    Sin leer
+                    {translate('omni_unread')}
                   </button>
 
                   <button
@@ -1158,9 +1203,9 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                       <MessageSquare className="w-6 h-6" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-xs text-slate-900 dark:text-white">Bandeja Vacía</h4>
+                      <h4 className="font-bold text-xs text-slate-900 dark:text-white">{translate('omni_empty_inbox')}</h4>
                       <p className="text-[11px] text-slate-400 mt-0.5 max-w-[200px] mx-auto">
-                        Sin conversaciones activas. Conecta tus canales o inicia un chat de prueba.
+                        {translate('omni_empty_inbox_desc')}
                       </p>
                     </div>
                     <div className="pt-2 space-y-2">
@@ -1168,13 +1213,13 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                         onClick={() => setShowNewConvModal(true)}
                         className="w-full py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow-xs flex items-center justify-center gap-1.5"
                       >
-                        <Plus className="w-3.5 h-3.5" /> Iniciar Chat / Prueba
+                        <Plus className="w-3.5 h-3.5" /> {translate('omni_start_test_chat')}
                       </button>
                       <button
                         onClick={() => setActiveTab('channels')}
                         className="w-full py-1.5 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition"
                       >
-                        Conectar Canales
+                        {translate('omni_connect_channels')}
                       </button>
                     </div>
                   </div>
@@ -1236,16 +1281,16 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                                     : 'text-slate-800 dark:text-slate-200'
                                 }`}
                               >
-                                {contact.contact_name || 'Cliente'}
+                                {contact.contact_name || translate('omni_client')}
                               </span>
                               <span className="text-[10px] text-slate-400 shrink-0 font-medium ml-1">
-                                {contact.last_message_at ? new Date(contact.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'reciente'}
+                                {contact.last_message_at ? new Date(contact.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : translate('omni_recent')}
                               </span>
                             </div>
 
                             {/* Last message snippet */}
                             <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mb-1.5 leading-relaxed">
-                              {contact.last_message || 'Nuevo mensaje'}
+                              {contact.last_message || translate('omni_new_message')}
                             </p>
 
                             {/* Agent Attending Chip & Unread Bubble */}
@@ -1329,7 +1374,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                     <div className="min-w-0">
                       <div className="flex items-center space-x-1.5 sm:space-x-2">
                         <h2 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white truncate">
-                          {selectedConv.contact_name || 'Cliente'}
+                          {selectedConv.contact_name || translate('omni_client')}
                         </h2>
                         <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-500/20 shrink-0" />
                       </div>
@@ -1616,7 +1661,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                           handleSendMessage();
                         }
                       }}
-                      placeholder="Escribe un mensaje..."
+                      placeholder={translate('omni_message_placeholder')}
                       className="flex-1 max-h-28 bg-transparent text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none py-1.5 px-1"
                     />
 
@@ -1642,9 +1687,9 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                     <MessageSquare className="w-8 h-8" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-slate-900 dark:text-white">Centro de Mensajería Omnicanal</h3>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white">{translate('omni_workspace_title')}</h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                      Atiende a tus clientes de WhatsApp, Instagram, Facebook y Telegram en un solo lugar con asistencia autónoma de un agente AI o tus operadores humanos.
+                      {translate('omni_workspace_desc')}
                     </p>
                   </div>
                   <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-2">
@@ -1652,13 +1697,13 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                       onClick={() => setShowNewConvModal(true)}
                       className="w-full sm:w-auto px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow flex items-center justify-center gap-1.5"
                     >
-                      <Plus className="w-4 h-4" /> Iniciar Chat de Prueba
+                      <Plus className="w-4 h-4" /> {translate('omni_start_test_chat')}
                     </button>
                     <button
                       onClick={() => setActiveTab('channels')}
                       className="w-full sm:w-auto px-4 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-700/50 transition flex items-center justify-center gap-1.5"
                     >
-                      <Share2 className="w-4 h-4 text-blue-500" /> Conectar Canales
+                      <Share2 className="w-4 h-4 text-blue-500" /> {translate('omni_connect_channels')}
                     </button>
                   </div>
                 </div>
@@ -1678,7 +1723,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                   <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
                     <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center space-x-2">
                       <UserCheck className="w-4 h-4 text-blue-600" />
-                      <span>Ficha & Transferencia</span>
+                      <span>{translate('omni_transfer_sheet')}</span>
                     </h3>
                     <button
                       onClick={() => setShowInfoDrawer(false)}
@@ -1693,11 +1738,11 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                     <div className="p-3.5 rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-800/80 dark:to-slate-800/30 border border-slate-200 dark:border-slate-700 space-y-2.5">
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-[11px] text-slate-500 uppercase tracking-wider">
-                          Agente Asignado
+                          {translate('omni_agent_assigned')}
                         </span>
                         <span className="flex items-center space-x-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                          <span>Activo</span>
+                          <span>{translate('omni_active')}</span>
                         </span>
                       </div>
 
@@ -1709,17 +1754,17 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                         </div>
                         <div>
                           <h5 className="font-bold text-slate-900 dark:text-white text-xs">
-                            {selectedConv.assigned_agent_name || (selectedConv.ai_active === 1 ? 'Agente AI' : 'Sin asignar')}
+                            {selectedConv.assigned_agent_name || (selectedConv.ai_active === 1 ? translate('omni_agent_ai') : translate('omni_unassigned'))}
                           </h5>
                           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                            {selectedConv.assigned_agent_type === 'ai' || selectedConv.ai_active === 1 ? 'Inteligencia Artificial Ventas' : 'Operador Humano'}
+                            {selectedConv.assigned_agent_type === 'ai' || selectedConv.ai_active === 1 ? translate('omni_sales_ai') : translate('omni_human_operator')}
                           </p>
                         </div>
                       </div>
 
                       {/* Agent re-assignment options */}
                       <div className="pt-2 border-t border-slate-200/80 dark:border-slate-700/60 space-y-1.5">
-                        <p className="text-[10px] font-semibold text-slate-400">Transferir a otro miembro del equipo:</p>
+                        <p className="text-[10px] font-semibold text-slate-400">{translate('omni_transfer_to_member')}</p>
                         <div className="space-y-1 max-h-48 overflow-y-auto">
                           {teamMembers.map(agent => (
                             <button
@@ -1740,7 +1785,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                                 <span className="truncate">{agent.name}</span>
                               </span>
                               <span className="text-[9px] opacity-75 shrink-0 ml-1">
-                                {agent.type === 'ai' ? 'Auto AI' : 'Humano'}
+                                {agent.type === 'ai' ? translate('omni_auto_ai') : translate('omni_human')}
                               </span>
                             </button>
                           ))}
@@ -1756,19 +1801,19 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                         {(selectedConv.contact_name || 'CL').slice(0, 2).toUpperCase()}
                       </div>
                       <h4 className="font-bold text-sm text-slate-900 dark:text-white">
-                        {selectedConv.contact_name || 'Cliente'}
+                        {selectedConv.contact_name || translate('omni_customer_unknown')}
                       </h4>
-                      <p className="text-[11px] text-slate-400 capitalize">Canal {selectedConv.platform}</p>
+                      <p className="text-[11px] text-slate-400 capitalize">{translate('omni_channel_prefix')} {selectedConv.platform}</p>
                     </div>
 
                     <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[11px]">
                       <div className="flex items-center space-x-2 text-slate-600 dark:text-slate-400">
                         <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        <span>{selectedConv.contact_phone || 'Sin número registrado'}</span>
+                        <span>{selectedConv.contact_phone || translate('omni_no_phone')}</span>
                       </div>
                       <div className="flex items-center space-x-2 text-slate-600 dark:text-slate-400">
                         <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        <span className="truncate">{selectedConv.contact_id || 'ID de contacto: ' + selectedConv.id}</span>
+                        <span className="truncate">{selectedConv.contact_id || translate('omni_contact_id_prefix') + selectedConv.id}</span>
                       </div>
                     </div>
                   </div>
@@ -1795,13 +1840,13 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <span>Catálogo Marketplace DoorDrop</span>
+                    <span>{translate('omni_catalog_title')}</span>
                     <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-semibold">
-                      Inventario Real
+                      {translate('omni_live_inventory')}
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Productos reales listos para compartir con foto y generar orden SafePay
+                    {translate('omni_catalog_desc')}
                   </p>
                 </div>
               </div>
@@ -1821,19 +1866,19 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                   type="text"
                   value={catalogSearch}
                   onChange={e => setCatalogSearch(e.target.value)}
-                  placeholder="Buscar por título o SKU..."
+                  placeholder={translate('omni_catalog_search_placeholder')}
                   className="w-full pl-9 pr-3 py-1.5 text-xs rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white placeholder-slate-400"
                 />
               </div>
               <div className="flex items-center space-x-2 text-xs text-slate-500 w-full sm:w-auto justify-between sm:justify-end">
                 <span>
-                  {catalogProducts.filter(p => !catalogSearch || p.title.toLowerCase().includes(catalogSearch.toLowerCase()) || p.sku.toLowerCase().includes(catalogSearch.toLowerCase())).length} productos disponibles
+                  {catalogProducts.filter(p => !catalogSearch || p.title.toLowerCase().includes(catalogSearch.toLowerCase()) || p.sku.toLowerCase().includes(catalogSearch.toLowerCase())).length} {translate('omni_products_available')}
                 </span>
                 <button
                   onClick={loadCatalogProducts}
                   disabled={loadingCatalog}
                   className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-white dark:hover:bg-slate-800 transition"
-                  title="Recargar catálogo"
+                  title={translate('omni_reload_catalog')}
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${loadingCatalog ? 'animate-spin' : ''}`} />
                 </button>
@@ -1845,12 +1890,12 @@ export function OmnichannelApp({ profile }: { profile: any }) {
               {loadingCatalog ? (
                 <div className="py-16 text-center text-slate-400 space-y-2">
                   <RefreshCw className="w-6 h-6 animate-spin mx-auto text-blue-500" />
-                  <p className="text-xs">Cargando inventario en vivo del marketplace...</p>
+                  <p className="text-xs">{translate('omni_loading_inventory')}</p>
                 </div>
               ) : catalogProducts.length === 0 ? (
                 <div className="py-16 text-center text-slate-400 space-y-2">
                   <ShoppingBag className="w-8 h-8 mx-auto text-slate-300" />
-                  <p className="text-xs">No hay productos cargados en este momento.</p>
+                  <p className="text-xs">{translate('omni_no_products')}</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1888,7 +1933,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                             </div>
                             <div className="flex items-center space-x-1.5 mt-1 text-[10px]">
                               <span className={`px-1.5 py-0.5 rounded font-medium ${product.quantity > 0 ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400' : 'bg-rose-50 text-rose-600'}`}>
-                                {product.quantity > 0 ? `${product.quantity} en stock` : 'Agotado'}
+                                {product.quantity > 0 ? `${product.quantity} ${translate('omni_stock')}` : translate('omni_out_of_stock')}
                               </span>
                               <span className="text-slate-400 truncate">{product.category}</span>
                             </div>
@@ -1902,7 +1947,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                             className="py-1.5 px-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 text-[11px] font-semibold transition flex items-center justify-center gap-1"
                           >
                             <Send className="w-3 h-3" />
-                            <span>Enviar Ficha</span>
+                            <span>{translate('omni_send_product_card')}</span>
                           </button>
                           <button
                             onClick={() => handleSendCheckout(product)}
@@ -1936,8 +1981,8 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                   <Plus className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">Nueva Conversación</h3>
-                  <p className="text-xs text-slate-400">Inicia un chat con un cliente o ejecuta una prueba en vivo</p>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">{translate('omni_new_conversation_title')}</h3>
+                  <p className="text-xs text-slate-400">{translate('omni_new_conversation_desc')}</p>
                 </div>
               </div>
               <button
@@ -1951,33 +1996,33 @@ export function OmnichannelApp({ profile }: { profile: any }) {
             <div className="p-4 sm:p-5 space-y-3.5 text-xs">
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Nombre del Cliente
+                  {translate('omni_customer_name')}
                 </label>
                 <input
                   type="text"
                   value={newConvName}
                   onChange={e => setNewConvName(e.target.value)}
-                  placeholder="Ej. Juan Pérez / Cliente VIP"
+                  placeholder={translate('omni_customer_name_placeholder')}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Teléfono / ID de Contacto
+                  {translate('omni_contact_id')}
                 </label>
                 <input
                   type="text"
                   value={newConvPhone}
                   onChange={e => setNewConvPhone(e.target.value)}
-                  placeholder="Ej. +1 (809) 555-0123"
+                  placeholder={translate('omni_contact_id_placeholder')}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Canal de Entrada
+                  {translate('omni_inbound_channel')}
                 </label>
                 <select
                   value={newConvPlatform}
@@ -1994,13 +2039,13 @@ export function OmnichannelApp({ profile }: { profile: any }) {
 
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Mensaje Inicial del Cliente
+                  {translate('omni_initial_customer_message')}
                 </label>
                 <textarea
                   rows={2}
                   value={newConvMsg}
                   onChange={e => setNewConvMsg(e.target.value)}
-                  placeholder="Ej. Hola, vi sus productos y me gustaría consultar disponibilidad."
+                  placeholder={translate('omni_initial_customer_message_placeholder')}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                 />
               </div>
@@ -2011,7 +2056,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                   onClick={() => setShowNewConvModal(false)}
                   className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 font-semibold"
                 >
-                  Cancelar
+                  {translate('omni_cancel')}
                 </button>
                 <button
                   type="button"
@@ -2020,7 +2065,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                   className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-md transition flex items-center gap-1.5"
                 >
                   {creatingConv ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                  <span>Crear y Abrir Chat</span>
+                  <span>{translate('omni_create_open_chat')}</span>
                 </button>
               </div>
             </div>
@@ -2054,7 +2099,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
               onClick={() => setActiveTab('inbox')}
               className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-sm shadow-md transition-all flex items-center gap-2"
             >
-              <MessageSquare className="w-4 h-4" /> Abrir Live Chat
+              <MessageSquare className="w-4 h-4" /> {translate('omni_open_live_chat')}
             </button>
             <button
               onClick={() => setActiveTab('plans')}
@@ -2065,7 +2110,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
             <button
               onClick={loadDashboard}
               className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-all"
-              title="Actualizar datos"
+              title={translate('omni_refresh_data')}
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
@@ -2159,7 +2204,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 onClick={() => navigate('/panel/settings')}
                 className="px-3.5 py-1.5 rounded-xl bg-white dark:bg-gray-800 text-gray-900 dark:text-white hover:bg-gray-100 font-bold text-xs shadow-sm border border-gray-200 dark:border-gray-700"
               >
-                Recargar Saldo
+                {translate('omni_recharge_balance')}
               </button>
             </div>
 
@@ -2192,7 +2237,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 <h3 className="text-base font-black text-gray-900 dark:text-white uppercase">
                   {data?.subscription?.is_active
                     ? (data.subscription.plan_code === 'omni3' ? 'DoorDrop Omni 3 (WhatsApp + IG + FB)' : data.subscription.plan_code === 'duo' ? 'DoorDrop Duo' : 'WhatsApp Dedicated')
-                    : 'Sin suscripción Omnicanal activa'}
+                    : translate('customer_dashboard_no_subscription')}
                 </h3>
               </div>
             </div>
@@ -2205,14 +2250,14 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 </div>
                 <div className={`text-[11px] font-semibold flex items-center gap-1 justify-end ${data?.subscription?.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
                   <span className={`w-2 h-2 rounded-full ${data?.subscription?.is_active ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
-                  {data?.subscription?.is_active ? 'Activo' : 'Requiere suscripción'}
+                  {data?.subscription?.is_active ? translate('omni_active') : translate('omni_subscription_required')}
                 </div>
               </div>
               <button
                 onClick={() => setActiveTab('plans')}
                 className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow"
               >
-                Cambiar Plan
+                {translate('omni_change_plan')}
               </button>
             </div>
           </div>
@@ -2227,7 +2272,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
               <div className="text-2xl font-black mt-2 text-gray-900 dark:text-white">
                 {data?.metrics?.total_channels || 0} <span className="text-sm font-normal text-gray-400">/ {data?.metrics?.channels_limit ?? 0}</span>
               </div>
-              <p className="text-xs text-gray-500 mt-1">{data?.subscription?.is_active ? 'Canales incluidos en tu plan' : 'Activa un plan para conectar canales'}</p>
+              <p className="text-xs text-gray-500 mt-1">{data?.subscription?.is_active ? translate('omni_channels_included') : translate('omni_activate_channels')}</p>
             </div>
 
             <div className="p-5 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-sm">
@@ -2239,7 +2284,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 {data?.metrics?.conversations?.total_conversations || 0}
               </div>
               <p className="text-xs text-indigo-500 font-medium mt-1">
-                {data?.metrics?.conversations?.total_unread || 0} sin leer
+                {data?.metrics?.conversations?.total_unread || 0} {translate('omni_unread').toLowerCase()}
               </p>
             </div>
 
@@ -2252,7 +2297,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 {data?.metrics?.messages?.total_messages || 0}
               </div>
               <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium mt-1">
-                {data?.subscription?.is_active ? t.unlimited : 'Disponible con suscripción activa'}
+                {data?.subscription?.is_active ? t.unlimited : translate('omni_messages_available')}
               </p>
             </div>
 
@@ -2266,7 +2311,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 </div>
                 <p className="text-xs text-purple-600 dark:text-purple-400 font-medium mt-1 flex items-center gap-1">
                  <span className={`w-2 h-2 rounded-full inline-block ${data?.subscription?.is_active ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
-                 {data?.subscription?.is_active ? '24/7 En línea' : 'Requiere una suscripción activa'}
+                 {data?.subscription?.is_active ? translate('omni_ai_online') : translate('omni_ai_subscription_required')}
                 </p>
             </div>
           </div>
@@ -2327,28 +2372,28 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                   <Bot className="w-4 h-4" /> DeepSeek AI DoorDrop
                 </div>
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                  {data?.subscription?.is_active ? 'Herramientas Conectadas' : 'Capacidades disponibles al activar'}
+                  {data?.subscription?.is_active ? translate('omni_tools_connected') : translate('omni_capabilities_after_activation')}
                 </h3>
                 <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
                   {data?.subscription?.is_active
-                    ? 'Tu empleado virtual consulta directamente la base de datos de DoorDrop para responder con precisión:'
-                    : 'Activa una suscripción para habilitar el empleado virtual y sus herramientas:'}
+                    ? translate('omni_tools_intro_active')
+                    : translate('omni_tools_intro_inactive')}
                 </p>
                 <div className="space-y-2 mt-4 text-xs font-medium text-gray-700 dark:text-gray-300">
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Búsqueda de órdenes y pedidos
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> {translate('omni_orders_search')}
                   </div>
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Consulta de tracking en vivo
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> {translate('omni_live_tracking')}
                   </div>
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Cotizador de envíos DoorDrop
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> {translate('omni_shipping_quote')}
                   </div>
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Catálogo de productos y stock
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> {translate('omni_product_catalog')}
                   </div>
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Traspaso a agente humano
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> {translate('omni_human_handoff')}
                   </div>
                 </div>
               </div>
@@ -2357,7 +2402,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                 onClick={() => setActiveTab('ai')}
                 className="mt-6 w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition shadow flex items-center justify-center gap-2"
               >
-                <Sliders className="w-4 h-4" /> Personalizar Empleado AI
+                <Sliders className="w-4 h-4" /> {translate('omni_customize_ai')}
               </button>
             </div>
           </div>
@@ -2373,7 +2418,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
             <div>
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">{t.tabChannels}</h2>
               <p className="text-xs text-gray-500 mt-0.5">
-                Conecta tus canales oficiales mediante OAuth directo para recibir y enviar mensajes sin interrupciones.
+                {translate('omni_channels_intro')}
               </p>
             </div>
             <div className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
@@ -2383,10 +2428,10 @@ export function OmnichannelApp({ profile }: { profile: any }) {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
-              { id: 'whatsapp', name: 'WhatsApp Business', desc: 'Mensajería directa, catálogos y automatización.', badge: 'Recomendado' },
-              { id: 'instagram', name: 'Instagram DM', desc: 'Bandeja de directos, historias y comentarios.', badge: 'Popular' },
-              { id: 'facebook', name: 'Facebook Messenger', desc: 'Atención a clientes desde tu Fan Page oficial.', badge: 'Meta' },
-              { id: 'telegram', name: 'Telegram Bot', desc: 'Atención rápida con bot oficial y canales.', badge: 'Directo' }
+              { id: 'whatsapp', name: 'WhatsApp Business', desc: translate('omni_whatsapp_desc'), badge: translate('omni_channel_recommended') },
+              { id: 'instagram', name: 'Instagram DM', desc: translate('omni_instagram_desc'), badge: translate('omni_channel_popular') },
+              { id: 'facebook', name: 'Facebook Messenger', desc: translate('omni_facebook_desc'), badge: translate('omni_channel_meta') },
+              { id: 'telegram', name: 'Telegram Bot', desc: translate('omni_telegram_desc'), badge: translate('omni_channel_direct') }
             ].map(ch => {
               const connected = data?.accounts?.find((a: any) => a.platform === ch.id);
               return (
@@ -2445,17 +2490,17 @@ export function OmnichannelApp({ profile }: { profile: any }) {
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-sm">
             <div>
               <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                <Users className="w-5 h-5 text-blue-600" /> Equipo y Empleados (Humanos & Agentes AI)
+                <Users className="w-5 h-5 text-blue-600" /> {translate('omni_team_heading')}
               </h2>
               <p className="text-xs text-gray-500 mt-1">
-                Gestiona a tus operadores de atención al cliente y a tus agentes virtuales de ventas. Asigna roles, canales y permisos de transferencia.
+                {translate('omni_team_desc')}
               </p>
             </div>
             <button
               onClick={() => setShowAddMemberModal(true)}
               className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center gap-2 shadow self-start md:self-auto"
             >
-              <Plus className="w-4 h-4" /> Agregar Miembro
+              <Plus className="w-4 h-4" /> {translate('omni_add_member')}
             </button>
           </div>
 
@@ -2465,39 +2510,39 @@ export function OmnichannelApp({ profile }: { profile: any }) {
               <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-100 to-indigo-100 dark:from-blue-950 dark:to-indigo-950 flex items-center justify-center mb-6 shadow-lg">
                 <Users className="w-10 h-10 text-blue-600 dark:text-blue-400" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Tu equipo está vacío</h3>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">{translate('omni_team_empty')}</h3>
               <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md mb-6 leading-relaxed">
-                Aún no has registrado agentes ni operadores. Agrega miembros para asignar conversaciones, transferir chats y escalar tu atención al cliente.
+                {translate('omni_team_empty_desc')}
               </p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <button
                   onClick={() => { setNewMemberType('human'); setShowAddMemberModal(true); }}
                   className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition flex items-center gap-2 shadow-lg shadow-blue-600/20"
                 >
-                  <Plus className="w-4 h-4" /> Agregar Operador Humano
+                  <Plus className="w-4 h-4" /> {translate('omni_add_human')}
                 </button>
                 <button
                   onClick={() => { setNewMemberType('ai'); setShowAddMemberModal(true); }}
                   className="px-5 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-sm font-bold transition flex items-center gap-2 shadow-lg shadow-purple-600/20"
                 >
-                  <Bot className="w-4 h-4" /> Crear Agente Virtual AI
+                  <Bot className="w-4 h-4" /> {translate('omni_create_ai')}
                 </button>
               </div>
               <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-2xl">
                 <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/50">
                   <div className="text-2xl mb-1">👤</div>
-                  <h4 className="text-xs font-bold text-gray-900 dark:text-white">Operador</h4>
-                  <p className="text-[11px] text-gray-500">Atiende chats en vivo, cierra ventas, da soporte</p>
+                  <h4 className="text-xs font-bold text-gray-900 dark:text-white">{translate('omni_role_operator')}</h4>
+                  <p className="text-[11px] text-gray-500">{translate('omni_role_operator_desc')}</p>
                 </div>
                 <div className="p-4 rounded-xl bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/50">
                   <div className="text-2xl mb-1">🤖</div>
-                  <h4 className="text-xs font-bold text-gray-900 dark:text-white">Agente AI</h4>
-                  <p className="text-[11px] text-gray-500">Responde 24/7, vende catálogo, gestiona consultas</p>
+                  <h4 className="text-xs font-bold text-gray-900 dark:text-white">{translate('omni_role_ai')}</h4>
+                  <p className="text-[11px] text-gray-500">{translate('omni_role_ai_desc')}</p>
                 </div>
                 <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50">
                   <div className="text-2xl mb-1">🔄</div>
-                  <h4 className="text-xs font-bold text-gray-900 dark:text-white">Transferir</h4>
-                  <p className="text-[11px] text-gray-500">Pasa conversaciones entre humanos y AI</p>
+                  <h4 className="text-xs font-bold text-gray-900 dark:text-white">{translate('omni_role_transfer')}</h4>
+                  <p className="text-[11px] text-gray-500">{translate('omni_role_transfer_desc')}</p>
                 </div>
               </div>
             </div>
@@ -2549,9 +2594,9 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                     </div>
                   )}
                   <div className="flex items-center justify-between pt-1">
-                    <span className="text-[11px] text-gray-400">Estado operativo:</span>
+                    <span className="text-[11px] text-gray-400">{translate('omni_operational_status')}:</span>
                     <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Online
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> {translate('omni_online')}
                     </span>
                   </div>
                 </div>
@@ -2561,7 +2606,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                     onClick={() => handleDeleteMember(member.id || member.member_id)}
                     className="w-full py-1.5 rounded-lg border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 text-xs font-semibold transition"
                   >
-                    Desactivar Acceso
+                    {translate('omni_disable_access')}
                   </button>
                 )}
               </div>
@@ -2575,7 +2620,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
               <div className="w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-800 p-6 space-y-4">
                 <div className="flex items-center justify-between pb-3 border-b border-gray-200 dark:border-gray-800">
                   <h3 className="font-bold text-base text-gray-900 dark:text-white flex items-center gap-2">
-                    <Users className="w-5 h-5 text-blue-600" /> Registrar Nuevo Miembro
+                    <Users className="w-5 h-5 text-blue-600" /> {translate('omni_register_member')}
                   </h3>
                   <button onClick={() => setShowAddMemberModal(false)} className="text-gray-400 hover:text-gray-600">
                     <X className="w-4 h-4" />
@@ -2584,42 +2629,42 @@ export function OmnichannelApp({ profile }: { profile: any }) {
 
                 <form onSubmit={handleCreateMember} className="space-y-3">
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Nombre Completo</label>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">{translate('omni_full_name')}</label>
                     <input
                       type="text"
                       required
                       value={newMemberName}
                       onChange={e => setNewMemberName(e.target.value)}
-                      placeholder="Ej. Laura Méndez"
+                      placeholder={translate('omni_full_name_placeholder')}
                       className="w-full px-3 py-2 text-xs rounded-xl border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-white"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Cargo / Especialidad</label>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">{translate('omni_role_specialty')}</label>
                     <input
                       type="text"
                       value={newMemberRole}
                       onChange={e => setNewMemberRole(e.target.value)}
-                      placeholder="Ej. Ventas VIP y Cierre"
+                      placeholder={translate('omni_role_placeholder')}
                       className="w-full px-3 py-2 text-xs rounded-xl border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-white"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Tipo de Empleado</label>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">{translate('omni_employee_type')}</label>
                     <select
                       value={newMemberType}
                       onChange={e => setNewMemberType(e.target.value as any)}
                       className="w-full px-3 py-2 text-xs rounded-xl border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-white"
                     >
-                      <option value="human">👤 Operador Humano</option>
-                      <option value="ai">🤖 Agente Virtual AI</option>
+                      <option value="human">👤 {translate('omni_human_option')}</option>
+                      <option value="ai">🤖 {translate('omni_ai_option')}</option>
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Correo Electrónico</label>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">{translate('omni_email')}</label>
                     <input
                       type="email"
                       value={newMemberEmail}
@@ -2646,13 +2691,13 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                       onClick={() => setShowAddMemberModal(false)}
                       className="px-4 py-2 rounded-xl text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
                     >
-                      Cancelar
+                      {translate('omni_cancel')}
                     </button>
                     <button
                       type="submit"
                       className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow"
                     >
-                      Guardar Miembro
+                      {translate('omni_save_member')}
                     </button>
                   </div>
                 </form>

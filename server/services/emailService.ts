@@ -214,11 +214,12 @@ function normalizeNotificationEmail(value: any): string {
 function normalizeNotificationLanguage(value: any): string {
   const rawValue = String(value || '').trim().toLowerCase().replace('_', '-');
   const raw = rawValue.slice(0, 2);
-  if (['es', 'it', 'en', 'de', 'fr'].includes(raw)) return raw;
+  if (['es', 'it', 'en', 'de', 'fr', 'zh'].includes(raw)) return raw;
   const countryLanguage: Record<string, string> = {
     us: 'en', gb: 'en', ca: 'en', au: 'en',
     it: 'it', de: 'de', at: 'de', ch: 'de',
     fr: 'fr', be: 'fr',
+    cn: 'zh', hk: 'zh', mo: 'zh', tw: 'zh',
     es: 'es', mx: 'es', do: 'es', co: 'es', ar: 'es', cl: 'es', pe: 'es'
   };
   return countryLanguage[raw] || 'es';

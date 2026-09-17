@@ -3124,13 +3124,14 @@ function detectLanguageFromRequest(req: any): string {
 
 
 
-function normalizeMailLanguage(value: any): 'es' | 'en' | 'it' | 'fr' | 'de' {
+function normalizeMailLanguage(value: any): 'es' | 'en' | 'it' | 'fr' | 'de' | 'zh' {
   const lang = String(value || '').trim().replace('_', '-').slice(0, 2).toLowerCase();
-  if (['es', 'en', 'it', 'fr', 'de'].includes(lang)) return lang as any;
-  const countryLanguage: Record<string, 'es' | 'en' | 'it' | 'fr' | 'de'> = {
+  if (['es', 'en', 'it', 'fr', 'de', 'zh'].includes(lang)) return lang as any;
+  const countryLanguage: Record<string, 'es' | 'en' | 'it' | 'fr' | 'de' | 'zh'> = {
     us: 'en', gb: 'en', ca: 'en', au: 'en',
     it: 'it', de: 'de', at: 'de', ch: 'de',
     fr: 'fr', be: 'fr',
+    cn: 'zh', hk: 'zh', mo: 'zh', tw: 'zh',
     es: 'es', mx: 'es', do: 'es', co: 'es', ar: 'es', cl: 'es', pe: 'es'
   };
   if (countryLanguage[lang]) return countryLanguage[lang];
@@ -7303,10 +7304,8 @@ app.post('/api/user/settings', authMiddleware, async (req: any, res) => {
     await ensureWalletCurrencySchema();
     const allowedPaymentMethods = ['wallet', 'card', 'paypal'];
     const billing = req.body?.billing || {};
-    const requestedCurrency = normalizeCurrencyCode(req.body?.currency || req.user.currency || 'EUR');
-    const preferredPaymentMethod = allowedPaymentMethods.includes(String(req.body?.preferredPaymentMethod || '').toLowerCase())
-      ? String(req.body.preferredPaymentMethod).toLowerCase()
-      : 'wallet';
+    const hasBillingPayload = Object.prototype.hasOwnProperty.call(req.body || {}, 'billing');
+    const requestedPaymentMethod = String(req.body?.preferredPaymentMethod || '').toLowerCase();
 
     const conn = await pool.getConnection();
     try {
@@ -7315,6 +7314,11 @@ app.post('/api/user/settings', authMiddleware, async (req: any, res) => {
       const currentUser = userRows?.[0];
       if (!currentUser) throw new Error('No se pudo encontrar la cuenta.');
       const currentCurrency = normalizeCurrencyCode(currentUser.currency || 'EUR');
+      const requestedCurrency = normalizeCurrencyCode(req.body?.currency || currentUser.currency || 'EUR');
+      const preferredPaymentMethod = allowedPaymentMethods.includes(requestedPaymentMethod)
+        ? requestedPaymentMethod
+        : String(currentUser.preferred_payment_method || 'wallet').toLowerCase();
+      const requestedLanguage = normalizeMailLanguage(req.body?.language || currentUser.language || currentUser.country || 'ES');
       const country = String(req.body?.country || currentUser.country || 'ES').toUpperCase().slice(0, 2);
       const nextName = String(req.body?.name || currentUser.name || '').trim().slice(0, 191) || currentUser.name;
       const nextPhone = String(req.body?.phone ?? currentUser.phone ?? '').trim().slice(0, 50);
@@ -7335,9 +7339,9 @@ app.post('/api/user/settings', authMiddleware, async (req: any, res) => {
       }
       await conn.query(
         `UPDATE users
-         SET name = ?, phone = ?, country = ?, currency = ?, balance = ?, business_type = ?, preferred_payment_method = ?
+         SET name = ?, phone = ?, country = ?, currency = ?, balance = ?, business_type = ?, preferred_payment_method = ?, language = ?
          WHERE id = ?`,
-        [nextName, nextPhone, country, requestedCurrency, nextBalance, nextBusinessType, preferredPaymentMethod, currentUser.id]
+        [nextName, nextPhone, country, requestedCurrency, nextBalance, nextBusinessType, preferredPaymentMethod, requestedLanguage, currentUser.id]
       );
       await conn.commit();
     } catch (error) {
@@ -7349,38 +7353,41 @@ app.post('/api/user/settings', authMiddleware, async (req: any, res) => {
 
     const existingCompany = await CompanyRepo.getByUserId(req.user.id);
     const updatedBaseUser = await UserRepo.getById(req.user.id);
-    const country = String(updatedBaseUser?.country || req.user.country || 'ES').toUpperCase().slice(0, 2);
-    const companyPayload = {
-      company_name: String(billing.companyName || req.body?.name || updatedBaseUser?.name || req.user.name || '').trim().slice(0, 191),
-      email: String(billing.email || updatedBaseUser?.email || req.user.email || '').trim().slice(0, 191),
-      phone: String(billing.phone || req.body?.phone || updatedBaseUser?.phone || '').trim().slice(0, 50),
-      address: String(billing.address || '').trim().slice(0, 255),
-      city: String(billing.city || '').trim().slice(0, 120),
-      zip_code: String(billing.zipCode || '').trim().slice(0, 30),
-      country: String(billing.country || country).toUpperCase().slice(0, 2)
-    };
+    let updatedCompany = existingCompany;
+    if (hasBillingPayload) {
+      const country = String(updatedBaseUser?.country || req.user.country || 'ES').toUpperCase().slice(0, 2);
+      const companyPayload = {
+        company_name: String(billing.companyName || req.body?.name || updatedBaseUser?.name || req.user.name || '').trim().slice(0, 191),
+        email: String(billing.email || updatedBaseUser?.email || req.user.email || '').trim().slice(0, 191),
+        phone: String(billing.phone || req.body?.phone || updatedBaseUser?.phone || '').trim().slice(0, 50),
+        address: String(billing.address || '').trim().slice(0, 255),
+        city: String(billing.city || '').trim().slice(0, 120),
+        zip_code: String(billing.zipCode || '').trim().slice(0, 30),
+        country: String(billing.country || country).toUpperCase().slice(0, 2)
+      };
 
-    if (existingCompany) {
-      await pool.query(
-        `UPDATE companies SET company_name = ?, email = ?, phone = ?, address = ?, city = ?, zip_code = ?, country = ? WHERE id = ? AND user_id = ?`,
-        [companyPayload.company_name, companyPayload.email, companyPayload.phone, companyPayload.address, companyPayload.city, companyPayload.zip_code, companyPayload.country, existingCompany.id, req.user.id]
-      );
-    } else {
-      await CompanyRepo.create({
-        id: generateId('comp_'),
-        user_id: req.user.id,
-        company_name: companyPayload.company_name,
-        email: companyPayload.email,
-        phone: companyPayload.phone,
-        address: companyPayload.address,
-        city: companyPayload.city,
-        zip_code: companyPayload.zip_code,
-        country: companyPayload.country
-      });
+      if (existingCompany) {
+        await pool.query(
+          `UPDATE companies SET company_name = ?, email = ?, phone = ?, address = ?, city = ?, zip_code = ?, country = ? WHERE id = ? AND user_id = ?`,
+          [companyPayload.company_name, companyPayload.email, companyPayload.phone, companyPayload.address, companyPayload.city, companyPayload.zip_code, companyPayload.country, existingCompany.id, req.user.id]
+        );
+      } else {
+        updatedCompany = await CompanyRepo.create({
+          id: generateId('comp_'),
+          user_id: req.user.id,
+          company_name: companyPayload.company_name,
+          email: companyPayload.email,
+          phone: companyPayload.phone,
+          address: companyPayload.address,
+          city: companyPayload.city,
+          zip_code: companyPayload.zip_code,
+          country: companyPayload.country
+        });
+      }
     }
 
     const updatedUser = await UserRepo.getById(req.user.id);
-    const updatedCompany = await CompanyRepo.getByUserId(req.user.id);
+    updatedCompany = updatedCompany || await CompanyRepo.getByUserId(req.user.id);
     res.json({
       success: true,
       message: 'Configuración guardada correctamente.',
@@ -7391,10 +7398,11 @@ app.post('/api/user/settings', authMiddleware, async (req: any, res) => {
         name: updatedUser.name,
         phone: updatedUser.phone,
         country: updatedUser.country,
-        currency: normalizeCurrencyCode(updatedUser.currency || requestedCurrency),
+        language: normalizeMailLanguage(updatedUser.language || updatedUser.country || 'ES'),
+        currency: normalizeCurrencyCode(updatedUser.currency || 'EUR'),
         businessType: updatedUser.business_type,
         balance: Number(updatedUser.balance || 0),
-        preferredPaymentMethod: updatedUser.preferred_payment_method || preferredPaymentMethod
+      preferredPaymentMethod: updatedUser.preferred_payment_method || 'wallet'
       },
       company: updatedCompany ? {
         id: updatedCompany.id,
