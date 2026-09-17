@@ -35,7 +35,10 @@ if [[ "$CURRENT_SHA" != "$TARGET_SHA" ]]; then
     exit 1
   fi
   mkdir -p "$BACKUP_ROOT"
-  git bundle create "$BACKUP_ROOT/doordrop_${CURRENT_SHA:0:12}_$(date -u +%Y%m%dT%H%M%SZ).bundle" "$CURRENT_SHA" >/dev/null
+  # Git's bundle parser can treat a literal commit hash as an empty revision
+  # in this worktree; HEAD is the same verified production commit and keeps
+  # the pre-deploy backup non-empty.
+  git bundle create "$BACKUP_ROOT/doordrop_${CURRENT_SHA:0:12}_$(date -u +%Y%m%dT%H%M%SZ).bundle" HEAD >/dev/null
   git merge --ff-only --quiet "origin/$BRANCH"
   log "Código actualizado a ${TARGET_SHA:0:12}."
 elif [[ "$DEPLOYED_SHA" == "$TARGET_SHA" ]]; then
