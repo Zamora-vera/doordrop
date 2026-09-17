@@ -95,6 +95,14 @@ async function createClient(): Promise<any> {
   // Set the cache before loading whatsapp-web.js. Puppeteer reads its cache
   // directory while the package is initialized, and production keeps this
   // directory on the application volume across container restarts.
+  const tempPath = path.join(dataPath(), 'tmp');
+  await mkdir(tempPath, { recursive: true });
+  // Production containers expose a small /tmp tmpfs. Keep Chromium's
+  // temporary files beside the private LocalAuth session instead of allowing
+  // the shared tmpfs to exhaust and make WhatsApp Web report resource errors.
+  process.env.TMPDIR ||= tempPath;
+  process.env.TMP ||= tempPath;
+  process.env.TEMP ||= tempPath;
   process.env.PUPPETEER_CACHE_DIR ||= path.join(process.cwd(), '.cache', 'puppeteer');
   const whatsappModule: any = await import('whatsapp-web.js');
   const whatsappPackage = whatsappModule.default || whatsappModule;
