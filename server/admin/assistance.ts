@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { pool } from '../db/connection';
 import {
+  AdminSettingsRepo,
   ProviderRepo,
   ShipmentRepo,
   TicketRepo,
@@ -27,8 +28,6 @@ import {
 
 const ASSISTANCE_WEBHOOK_URL = 'https://doordrop.lat/api/webhooks/assistance-zernio';
 const DEFAULT_ZERNIO_URL = 'https://zernio.com/api/v1';
-const DEFAULT_AI_URL = 'https://api.deepseek.com';
-const DEFAULT_AI_MODEL = 'deepseek-chat';
 const ALLOWED_AI_HOSTS = new Set(['api.deepseek.com', 'api.groq.com', 'api.openai.com']);
 const ALLOWED_ZERNIO_HOSTS = new Set(['zernio.com', 'www.zernio.com']);
 const ASSISTANCE_PLATFORMS = ['whatsapp', 'instagram', 'facebook', 'telegram', 'email', 'web_chat'] as const;
@@ -143,9 +142,6 @@ export async function ensureAdminAssistanceSchema(): Promise<void> {
         ['zernio_api_url', DEFAULT_ZERNIO_URL, 0],
         ['zernio_api_key', '', 1],
         ['zernio_webhook_secret', '', 1],
-        ['ai_api_url', DEFAULT_AI_URL, 0],
-        ['ai_api_key', '', 1],
-        ['ai_model', DEFAULT_AI_MODEL, 0],
         ['ai_enabled', '1', 0],
         ['default_language', 'es', 0]
       ];
@@ -201,9 +197,29 @@ async function getSettings(): Promise<Record<string, string>> {
   const settings: Record<string, string> = {};
   for (const row of rows || []) settings[String(row.setting_key)] = String(row.setting_value || '');
   if (!settings.zernio_api_key && process.env.ASSISTANCE_ZERNIO_API_KEY) settings.zernio_api_key = String(process.env.ASSISTANCE_ZERNIO_API_KEY);
-  if (!settings.ai_api_key && process.env.ASSISTANCE_AI_API_KEY) settings.ai_api_key = String(process.env.ASSISTANCE_AI_API_KEY);
-  if (!settings.ai_model && process.env.ASSISTANCE_AI_MODEL) settings.ai_model = String(process.env.ASSISTANCE_AI_MODEL);
   return settings;
+}
+
+/**
+ * The internal assistant consumes the already configured global AI provider.
+ * Zernio remains intentionally separate and is read only from the internal
+ * assistance settings above. Never persist or fall back to a second AI key.
+ */
+async function getGlobalAiSettings(): Promise<{ provider: 'groq' | 'openai'; apiKey: string; baseUrl: string; model: string; enabled: boolean }> {
+  const globalSettings = await AdminSettingsRepo.get().catch(() => ({} as any));
+  const stored = globalSettings?.ai || {};
+  const requestedProvider = String(stored.provider || '').trim().toLowerCase();
+  const provider: 'groq' | 'openai' = requestedProvider === 'groq' || requestedProvider === 'openai'
+    ? requestedProvider
+    : (stored.groqApiKey || process.env.GROQ_API_KEY ? 'groq' : 'openai');
+  const apiKey = String(provider === 'groq'
+    ? (stored.groqApiKey || process.env.GROQ_API_KEY || '')
+    : (stored.openaiApiKey || process.env.OPENAI_API_KEY || '')).trim();
+  const model = String(stored.model || (provider === 'groq'
+    ? (process.env.GROQ_MODEL || 'openai/gpt-oss-20b')
+    : (process.env.OPENAI_MODEL || 'gpt-5.4-mini'))).trim().slice(0, 120);
+  const baseUrl = provider === 'groq' ? 'https://api.groq.com/openai/v1' : 'https://api.openai.com/v1';
+  return { provider, apiKey, baseUrl, model, enabled: stored.enabled !== false };
 }
 
 async function saveSetting(key: string, value: string, isSecret = false): Promise<void> {
@@ -452,15 +468,15 @@ function parseChatCompletion(data: any): string {
 
 async function callAssistanceAI(messages: Array<{ role: string; content: string }>, language: AssistanceLanguage): Promise<{ text: string; model: string }> {
   const settings = await getSettings();
-  if (String(settings.ai_enabled || '1') !== '1') throw new Error('El agente interno está desactivado.');
-  const apiKey = String(settings.ai_api_key || '').trim();
-  if (!apiKey) throw new Error('Falta la clave propia del agente interno.');
-  const baseUrl = normalizeAiUrl(settings.ai_api_url || DEFAULT_AI_URL);
-  if (!baseUrl) throw new Error('La URL del agente interno no está permitida.');
-  const model = String(settings.ai_model || DEFAULT_AI_MODEL).trim().slice(0, 120);
+  const globalAi = await getGlobalAiSettings();
+  if (String(settings.ai_enabled || '1') !== '1' || !globalAi.enabled) throw new Error('El agente interno está desactivado en la configuración global.');
+  if (!globalAi.apiKey) throw new Error('Configura la clave AI global en Super Admin.');
+  const baseUrl = normalizeAiUrl(globalAi.baseUrl);
+  if (!baseUrl) throw new Error('La URL global del agente no está permitida.');
+  const model = globalAi.model;
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${globalAi.apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model, messages, max_tokens: 700, temperature: 0.2 }),
     signal: AbortSignal.timeout(35000)
   });
@@ -617,10 +633,11 @@ export function setupAdminAssistanceRoutes(app: any, deps: { authMiddleware: any
         pool.query(`SELECT COUNT(*) AS count FROM admin_assistance_channels WHERE status IN ('connected','active','online')`),
         pool.query('SELECT COUNT(*) AS count FROM admin_assistance_conversations'),
         pool.query(`SELECT COUNT(*) AS count FROM admin_assistance_conversations WHERE status <> 'closed'`),
-        pool.query(`SELECT COUNT(*) AS count FROM tickets WHERE category = 'admin_assistance_handoff' AND status IN ('open','pending')`),
+        pool.query(`SELECT COUNT(*) AS count FROM tickets WHERE status IN ('open','pending')`),
         pool.query('SELECT COUNT(*) AS count FROM admin_assistance_knowledge WHERE is_active = 1')
       ]);
       const settings = await getSettings();
+      const globalAi = await getGlobalAiSettings();
       res.json({
         success: true,
         overview: {
@@ -630,7 +647,7 @@ export function setupAdminAssistanceRoutes(app: any, deps: { authMiddleware: any
           openConversations: Number(openConversations?.[0]?.count || 0),
           openTickets: Number(tickets?.[0]?.count || 0),
           knowledgeItems: Number(knowledge?.[0]?.count || 0),
-          aiConfigured: Boolean(String(settings.ai_api_key || '').trim()),
+          aiConfigured: Boolean(globalAi.apiKey && globalAi.enabled),
           channelsConfigured: Boolean(String(settings.zernio_api_key || '').trim()),
           webhookConfigured: Boolean(String(settings.zernio_webhook_secret || '').trim())
         }
@@ -640,6 +657,7 @@ export function setupAdminAssistanceRoutes(app: any, deps: { authMiddleware: any
 
   router.get('/settings', async (_req: any, res: Response) => {
     const settings = await getSettings();
+    const globalAi = await getGlobalAiSettings();
     res.json({
       success: true,
       settings: {
@@ -647,10 +665,13 @@ export function setupAdminAssistanceRoutes(app: any, deps: { authMiddleware: any
         zernio_api_key: '',
         zernio_api_configured: Boolean(settings.zernio_api_key),
         zernio_webhook_configured: Boolean(settings.zernio_webhook_secret),
-        ai_api_url: settings.ai_api_url || DEFAULT_AI_URL,
+        ai_api_url: globalAi.baseUrl,
         ai_api_key: '',
-        ai_api_configured: Boolean(settings.ai_api_key),
-        ai_model: settings.ai_model || DEFAULT_AI_MODEL,
+        ai_api_configured: Boolean(globalAi.apiKey),
+        ai_provider: globalAi.provider,
+        ai_source: 'global',
+        ai_global_enabled: globalAi.enabled,
+        ai_model: globalAi.model,
         ai_enabled: String(settings.ai_enabled || '1') === '1',
         default_language: normalizeLanguage(settings.default_language, 'es')
       }
@@ -660,23 +681,17 @@ export function setupAdminAssistanceRoutes(app: any, deps: { authMiddleware: any
   router.post('/settings', async (req: any, res: Response) => {
     try {
       const body = req.body || {};
-      if (body.ai_api_url !== undefined) {
-        const url = normalizeAiUrl(body.ai_api_url);
-        if (!url) return res.status(400).json({ error: 'La URL de IA debe ser HTTPS y pertenecer a DeepSeek, Groq u OpenAI.' });
-        await saveSetting('ai_api_url', url);
-      }
+      if (typeof body.ai_api_key === 'string' && body.ai_api_key.trim()) return res.status(400).json({ error: 'La clave AI se administra únicamente en la configuración global de Super Admin.' });
       if (body.zernio_api_url !== undefined) {
         const url = normalizeZernioUrl(body.zernio_api_url);
         if (!url) return res.status(400).json({ error: 'La URL del proveedor de canales no es válida.' });
         await saveSetting('zernio_api_url', url);
       }
-      if (typeof body.ai_api_key === 'string' && body.ai_api_key.trim()) await saveSetting('ai_api_key', body.ai_api_key.trim(), true);
       if (typeof body.zernio_api_key === 'string' && body.zernio_api_key.trim()) await saveSetting('zernio_api_key', body.zernio_api_key.trim(), true);
       if (typeof body.zernio_webhook_secret === 'string' && body.zernio_webhook_secret.trim()) await saveSetting('zernio_webhook_secret', body.zernio_webhook_secret.trim(), true);
-      if (typeof body.ai_model === 'string' && body.ai_model.trim()) await saveSetting('ai_model', body.ai_model.trim().slice(0, 120));
       if (body.ai_enabled !== undefined) await saveSetting('ai_enabled', body.ai_enabled ? '1' : '0');
       if (body.default_language !== undefined) await saveSetting('default_language', normalizeLanguage(body.default_language, 'es'));
-      res.json({ success: true, message: 'Configuración interna guardada sin mezclarla con Omnicanal comercial.' });
+      res.json({ success: true, message: 'Configuración interna guardada. La IA usa la configuración global y Zernio conserva su clave interna separada.' });
     } catch (error: any) { console.error('[Admin Assistance] Settings error:', error?.message || error); res.status(500).json({ error: 'No se pudo guardar la configuración interna.' }); }
   });
 
@@ -847,8 +862,7 @@ export function setupAdminAssistanceRoutes(app: any, deps: { authMiddleware: any
     const [rows]: any = await pool.query(
       `SELECT t.id, t.subject, t.category, t.description, t.status, t.created_at, t.updated_at, u.name AS customer_name, u.email AS customer_email
          FROM tickets t LEFT JOIN users u ON u.id = t.user_id
-        WHERE t.category = 'admin_assistance_handoff'
-        ORDER BY t.created_at DESC LIMIT 100`
+        ORDER BY t.created_at DESC`
     );
     res.json({ success: true, tickets: rows || [] });
   });
