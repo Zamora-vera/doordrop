@@ -119,9 +119,7 @@ async function createClient(): Promise<any> {
     userAgent: false,
     qrMaxRetries: 0,
     takeoverOnConflict: true,
-    takeoverTimeoutMs: 10000,
-    deviceName: 'DoorDrop Asistencia',
-    browserName: 'Chrome'
+    takeoverTimeoutMs: 10000
   });
 }
 
