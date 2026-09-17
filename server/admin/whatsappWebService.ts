@@ -94,7 +94,9 @@ async function createClient(): Promise<any> {
   // directory while the package is initialized, and production keeps this
   // directory on the application volume across container restarts.
   process.env.PUPPETEER_CACHE_DIR ||= path.join(process.cwd(), '.cache', 'puppeteer');
-  const { Client, LocalAuth } = await import('whatsapp-web.js');
+  const whatsappModule: any = await import('whatsapp-web.js');
+  const whatsappPackage = whatsappModule.default || whatsappModule;
+  const { Client, LocalAuth } = whatsappPackage;
   const executablePath = chromePath();
   return new Client({
     authStrategy: new LocalAuth({ clientId: CLIENT_ID, dataPath: dataPath() }),
