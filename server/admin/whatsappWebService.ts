@@ -30,6 +30,8 @@ type StatusHandler = (snapshot: InternalWhatsappSnapshot) => Promise<void> | voi
 
 const CLIENT_ID = 'doordrop-internal';
 const DEFAULT_DATA_PATH = path.join(process.cwd(), 'data', 'whatsapp-internal');
+const WHATSAPP_BROWSER_USER_AGENT =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36';
 
 let client: any | null = null;
 let initialization: Promise<void> | null = null;
@@ -103,8 +105,18 @@ async function createClient(): Promise<any> {
     puppeteer: {
       headless: true,
       ...(executablePath ? { executablePath } : {}),
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        `--user-agent=${WHATSAPP_BROWSER_USER_AGENT}`
+      ]
     },
+    // whatsapp-web.js calls page.setUserAgent() before Puppeteer has attached
+    // its main frame on some Linux/Puppeteer combinations. Supplying the same
+    // value as a Chrome launch argument avoids that race without using Zernio.
+    userAgent: false,
     qrMaxRetries: 0,
     takeoverOnConflict: true,
     takeoverTimeoutMs: 10000,
