@@ -17,6 +17,15 @@ import {
   verificationPrompt,
   hasSensitiveCustomerRequest
 } from '../omnichannel/identity';
+import {
+  getInternalWhatsappStatus,
+  hasPersistedInternalWhatsappSession,
+  logoutInternalWhatsapp,
+  sendInternalWhatsappMessage,
+  setInternalWhatsappMessageHandler,
+  setInternalWhatsappStatusHandler,
+  startInternalWhatsapp
+} from './whatsappWebService';
 
 /**
  * Internal assistance is deliberately a different bounded context from the
@@ -26,13 +35,11 @@ import {
  * a verified customer is handed to a human.
  */
 
-const ASSISTANCE_WEBHOOK_URL = 'https://doordrop.lat/api/webhooks/assistance-zernio';
-const DEFAULT_ZERNIO_URL = 'https://zernio.com/api/v1';
 const ALLOWED_AI_HOSTS = new Set(['api.deepseek.com', 'api.groq.com', 'api.openai.com']);
-const ALLOWED_ZERNIO_HOSTS = new Set(['zernio.com', 'www.zernio.com']);
 const ASSISTANCE_PLATFORMS = ['whatsapp', 'instagram', 'facebook', 'telegram', 'email', 'web_chat'] as const;
 type AssistancePlatform = typeof ASSISTANCE_PLATFORMS[number];
 type AssistanceLanguage = 'es' | 'it' | 'en' | 'fr';
+const INTERNAL_WHATSAPP_ACCOUNT_ID = 'whatsapp-web:doordrop-internal';
 
 let schemaPromise: Promise<void> | null = null;
 
@@ -139,9 +146,6 @@ export async function ensureAdminAssistanceSchema(): Promise<void> {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
       const defaults: Array<[string, string, number]> = [
-        ['zernio_api_url', DEFAULT_ZERNIO_URL, 0],
-        ['zernio_api_key', '', 1],
-        ['zernio_webhook_secret', '', 1],
         ['ai_enabled', '1', 0],
         ['default_language', 'es', 0]
       ];
@@ -181,29 +185,19 @@ function normalizeAiUrl(value: unknown): string | null {
   }
 }
 
-function normalizeZernioUrl(value: unknown): string | null {
-  try {
-    const parsed = new URL(String(value || '').trim());
-    if (parsed.protocol !== 'https:' || !ALLOWED_ZERNIO_HOSTS.has(parsed.hostname.toLowerCase())) return null;
-    return parsed.toString().replace(/\/$/, '');
-  } catch {
-    return null;
-  }
-}
-
 async function getSettings(): Promise<Record<string, string>> {
   await ensureAdminAssistanceSchema();
   const [rows]: any = await pool.query('SELECT setting_key, setting_value FROM admin_assistance_settings');
   const settings: Record<string, string> = {};
   for (const row of rows || []) settings[String(row.setting_key)] = String(row.setting_value || '');
-  if (!settings.zernio_api_key && process.env.ASSISTANCE_ZERNIO_API_KEY) settings.zernio_api_key = String(process.env.ASSISTANCE_ZERNIO_API_KEY);
   return settings;
 }
 
 /**
  * The internal assistant consumes the already configured global AI provider.
- * Zernio remains intentionally separate and is read only from the internal
- * assistance settings above. Never persist or fall back to a second AI key.
+ * Channel transport is deliberately separate: the internal WhatsApp session
+ * is local WhatsApp Web, while Zernio remains exclusively in public
+ * Omnichannel routes.
  */
 async function getGlobalAiSettings(): Promise<{ provider: 'groq' | 'openai'; apiKey: string; baseUrl: string; model: string; enabled: boolean }> {
   const globalSettings = await AdminSettingsRepo.get().catch(() => ({} as any));
@@ -231,47 +225,6 @@ async function saveSetting(key: string, value: string, isSecret = false): Promis
   );
 }
 
-async function callAssistanceZernio(endpoint: string, options: { method?: string; body?: any; queryParams?: Record<string, unknown> } = {}) {
-  const settings = await getSettings();
-  const apiKey = String(settings.zernio_api_key || '').trim();
-  if (!apiKey) throw new Error('El proveedor de canales internos todavía no tiene una clave propia.');
-  const baseUrl = normalizeZernioUrl(settings.zernio_api_url || DEFAULT_ZERNIO_URL);
-  if (!baseUrl) throw new Error('La URL del proveedor de canales internos no es válida.');
-
-  const url = new URL(endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`);
-  for (const [key, value] of Object.entries(options.queryParams || {})) {
-    if (value !== undefined && value !== null && String(value) !== '') url.searchParams.set(key, String(value));
-  }
-
-  const response = await fetch(url, {
-    method: options.method || 'GET',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      Accept: 'application/json',
-      ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {})
-    },
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-    signal: AbortSignal.timeout(20000)
-  });
-  const raw = await response.text();
-  let data: any = {};
-  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { text: raw.slice(0, 1000) }; }
-  return { status: response.status, data };
-}
-
-function verifyAssistanceWebhookSignature(rawBody: string, signatureHeader: string, secret: string): boolean {
-  const supplied = String(signatureHeader || '').trim().replace(/^sha256=/i, '').trim();
-  if (!supplied || !secret) return false;
-  const expected = crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex');
-  try {
-    const left = Buffer.from(supplied, 'hex');
-    const right = Buffer.from(expected, 'hex');
-    return left.length === right.length && left.length > 0 && crypto.timingSafeEqual(left, right);
-  } catch {
-    return false;
-  }
-}
-
 function firstString(values: unknown[], max = 255): string | null {
   for (const value of values) {
     if (typeof value !== 'string' && typeof value !== 'number') continue;
@@ -295,33 +248,6 @@ type NormalizedAssistanceInbound = {
   mediaUrl: string | null;
 };
 
-function normalizeInbound(payload: any, eventId: string): NormalizedAssistanceInbound {
-  const data = payload && typeof payload.data === 'object' ? payload.data : null;
-  const message = data?.message || payload?.message || data || payload || {};
-  const conversation = payload?.conversation || data?.conversation || message?.conversation || {};
-  const sender = message?.sender || message?.from || {};
-  const attachment = Array.isArray(message?.attachments)
-    ? message.attachments.find((item: any) => item && typeof item === 'object')
-    : (message?.attachment || null);
-  return {
-    conversationId: firstString([
-      message?.conversationId, message?.conversation_id, message?.conversation?._id,
-      message?.conversation?.id, conversation?._id, conversation?.id,
-      conversation?.platformConversationId
-    ]),
-    messageId: firstString([message?._id, message?.id, payload?.messageId, eventId]) || eventId,
-    accountId: firstString([payload?.accountId, data?.accountId, message?.accountId, payload?.account?._id, payload?.account?.id]),
-    profileId: firstString([payload?.profileId, data?.profileId, message?.profileId, payload?.profile?._id, payload?.profile?.id]),
-    platform: normalizePlatform(firstString([payload?.platform, data?.platform, message?.platform, sender?.platform])),
-    contactId: firstString([sender?.id, sender?._id, message?.contactId, message?.from?.id]),
-    contactName: firstString([sender?.name, sender?.displayName, message?.from?.name, payload?.contactName], 191) || 'Contacto',
-    contactPhone: firstString([sender?.phone, sender?.phoneNumber, message?.from?.phone, message?.contactPhone], 80),
-    text: firstString([message?.text, message?.message, message?.body, payload?.text], 12000) || '',
-    mediaType: firstString([attachment?.type, attachment?.mediaType], 40),
-    mediaUrl: firstString([attachment?.url, attachment?.mediaUrl], 1024)
-  };
-}
-
 async function findInternalChannel(accountId: string | null, profileId: string | null): Promise<any | null> {
   if (!accountId && !profileId) return null;
   const [rows]: any = await pool.query(
@@ -332,6 +258,52 @@ async function findInternalChannel(accountId: string | null, profileId: string |
     [accountId, accountId, profileId, profileId]
   );
   return rows?.[0] || null;
+}
+
+async function upsertInternalWhatsappChannel(statusSnapshot = getInternalWhatsappStatus()): Promise<any> {
+  const status = statusSnapshot.status === 'ready' ? 'connected' : statusSnapshot.status === 'disconnected' || statusSnapshot.status === 'error' || statusSnapshot.status === 'auth_failure' ? 'disconnected' : 'pending';
+  const channelId = generateId('aac_');
+  await pool.query(
+    `INSERT INTO admin_assistance_channels
+      (id, platform, provider_account_id, display_name, phone_number, status, connected_at)
+     VALUES (?, 'whatsapp', ?, 'WhatsApp Web · Asistencia DoorDrop', ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       phone_number = COALESCE(VALUES(phone_number), phone_number),
+       status = VALUES(status),
+       connected_at = CASE WHEN VALUES(status) = 'connected' THEN COALESCE(connected_at, VALUES(connected_at)) ELSE connected_at END,
+       updated_at = NOW()`,
+    [channelId, INTERNAL_WHATSAPP_ACCOUNT_ID, statusSnapshot.phoneNumber, status, status === 'connected' ? new Date() : null]
+  );
+  const [rows]: any = await pool.query('SELECT * FROM admin_assistance_channels WHERE provider_account_id = ? LIMIT 1', [INTERNAL_WHATSAPP_ACCOUNT_ID]);
+  return rows?.[0] || null;
+}
+
+async function handleInternalWhatsappMessage(message: any): Promise<void> {
+  if (!message || message.fromMe || message.isStatus) return;
+  const conversationId = String(message.from || '').trim();
+  if (!conversationId || conversationId.endsWith('@g.us') || conversationId.endsWith('@broadcast')) return;
+
+  const contact = await Promise.resolve(message.getContact?.()).catch(() => null);
+  const contactName = firstString([contact?.name, contact?.pushname, contact?.shortName], 191) || 'Contacto WhatsApp';
+  const contactPhone = firstString([contact?.number, conversationId.split('@')[0]], 80);
+  const inbound: NormalizedAssistanceInbound = {
+    conversationId,
+    messageId: firstString([message.id?._serialized, message.id?.id, `${conversationId}:${message.timestamp || Date.now()}`]) || conversationId,
+    accountId: INTERNAL_WHATSAPP_ACCOUNT_ID,
+    profileId: null,
+    platform: 'whatsapp',
+    contactId: conversationId,
+    contactName,
+    contactPhone,
+    text: String(message.body || '').trim().slice(0, 12000) || '[Mensaje multimedia recibido]',
+    mediaType: message.hasMedia ? firstString([message.type], 40) : null,
+    mediaUrl: null
+  };
+  const channel = await upsertInternalWhatsappChannel();
+  if (!channel) return;
+  const conversation = await findOrCreateConversation(channel, inbound);
+  const inserted = await saveAssistanceMessage(conversation.id, { ...inbound, direction: 'inbound', senderType: 'customer', senderName: inbound.contactName, status: 'received' });
+  if (inserted) void processInboundWithAI(conversation.id, inbound);
 }
 
 async function findOrCreateConversation(channel: any, inbound: NormalizedAssistanceInbound): Promise<any> {
@@ -522,13 +494,10 @@ async function processInboundWithAI(conversationId: string, inbound: NormalizedA
       : { text: verificationPrompt(language), model: 'identity-gate' };
 
     const channel = await findInternalChannel(inbound.accountId, inbound.profileId);
-    if (!channel || !inbound.conversationId) return;
-    const providerPayload: any = { message: result.text };
-    if (channel.provider_account_id) providerPayload.accountId = channel.provider_account_id;
-    const sent = await callAssistanceZernio(`/inbox/conversations/${encodeURIComponent(inbound.conversationId)}/messages`, { method: 'POST', body: providerPayload });
-    if (sent.status < 200 || sent.status >= 300) throw new Error('El proveedor rechazó la respuesta del centro de asistencia.');
+    if (!channel || channel.provider_account_id !== INTERNAL_WHATSAPP_ACCOUNT_ID || !inbound.conversationId) return;
+    const sent = await sendInternalWhatsappMessage(inbound.conversationId, result.text);
     await saveAssistanceMessage(conversationId, {
-      messageId: firstString([sent.data?.messageId, sent.data?._id]) || undefined,
+      messageId: firstString([sent?.id?._serialized, sent?.id?.id]) || undefined,
       direction: 'outbound', senderType: 'ai', senderName: 'DoorDrop Asistencia AI', text: result.text, status: 'delivered'
     });
   } catch (error: any) {
@@ -636,8 +605,8 @@ export function setupAdminAssistanceRoutes(app: any, deps: { authMiddleware: any
         pool.query(`SELECT COUNT(*) AS count FROM tickets WHERE status IN ('open','pending')`),
         pool.query('SELECT COUNT(*) AS count FROM admin_assistance_knowledge WHERE is_active = 1')
       ]);
-      const settings = await getSettings();
       const globalAi = await getGlobalAiSettings();
+      const whatsapp = getInternalWhatsappStatus();
       res.json({
         success: true,
         overview: {
@@ -648,8 +617,9 @@ export function setupAdminAssistanceRoutes(app: any, deps: { authMiddleware: any
           openTickets: Number(tickets?.[0]?.count || 0),
           knowledgeItems: Number(knowledge?.[0]?.count || 0),
           aiConfigured: Boolean(globalAi.apiKey && globalAi.enabled),
-          channelsConfigured: Boolean(String(settings.zernio_api_key || '').trim()),
-          webhookConfigured: Boolean(String(settings.zernio_webhook_secret || '').trim())
+          channelsConfigured: whatsapp.enabled,
+          whatsappWebStatus: whatsapp.status,
+          webhookConfigured: false
         }
       });
     } catch (error: any) { console.error('[Admin Assistance] Overview error:', error?.message || error); res.status(500).json({ error: 'No se pudo cargar el Centro de Asistencia.' }); }
@@ -658,13 +628,13 @@ export function setupAdminAssistanceRoutes(app: any, deps: { authMiddleware: any
   router.get('/settings', async (_req: any, res: Response) => {
     const settings = await getSettings();
     const globalAi = await getGlobalAiSettings();
+    const whatsapp = getInternalWhatsappStatus();
     res.json({
       success: true,
       settings: {
-        zernio_api_url: settings.zernio_api_url || DEFAULT_ZERNIO_URL,
-        zernio_api_key: '',
-        zernio_api_configured: Boolean(settings.zernio_api_key),
-        zernio_webhook_configured: Boolean(settings.zernio_webhook_secret),
+        whatsapp_web_enabled: whatsapp.enabled,
+        whatsapp_web_status: whatsapp.status,
+        whatsapp_web_session_configured: whatsapp.sessionConfigured,
         ai_api_url: globalAi.baseUrl,
         ai_api_key: '',
         ai_api_configured: Boolean(globalAi.apiKey),
@@ -682,87 +652,44 @@ export function setupAdminAssistanceRoutes(app: any, deps: { authMiddleware: any
     try {
       const body = req.body || {};
       if (typeof body.ai_api_key === 'string' && body.ai_api_key.trim()) return res.status(400).json({ error: 'La clave AI se administra únicamente en la configuración global de Super Admin.' });
-      if (body.zernio_api_url !== undefined) {
-        const url = normalizeZernioUrl(body.zernio_api_url);
-        if (!url) return res.status(400).json({ error: 'La URL del proveedor de canales no es válida.' });
-        await saveSetting('zernio_api_url', url);
-      }
-      if (typeof body.zernio_api_key === 'string' && body.zernio_api_key.trim()) await saveSetting('zernio_api_key', body.zernio_api_key.trim(), true);
-      if (typeof body.zernio_webhook_secret === 'string' && body.zernio_webhook_secret.trim()) await saveSetting('zernio_webhook_secret', body.zernio_webhook_secret.trim(), true);
+      if (body.zernio_api_url !== undefined || body.zernio_api_key !== undefined || body.zernio_webhook_secret !== undefined) return res.status(400).json({ error: 'Zernio pertenece únicamente al Omnicanal público. Los canales internos usan WhatsApp Web con QR y sesión privada.' });
       if (body.ai_enabled !== undefined) await saveSetting('ai_enabled', body.ai_enabled ? '1' : '0');
       if (body.default_language !== undefined) await saveSetting('default_language', normalizeLanguage(body.default_language, 'es'));
-      res.json({ success: true, message: 'Configuración interna guardada. La IA usa la configuración global y Zernio conserva su clave interna separada.' });
+      res.json({ success: true, message: 'Configuración interna guardada. WhatsApp usa una sesión Web privada y la IA usa la configuración global.' });
     } catch (error: any) { console.error('[Admin Assistance] Settings error:', error?.message || error); res.status(500).json({ error: 'No se pudo guardar la configuración interna.' }); }
   });
 
   router.get('/channels', async (_req: any, res: Response) => {
     const [rows]: any = await pool.query('SELECT * FROM admin_assistance_channels ORDER BY platform ASC, updated_at DESC');
-    res.json({ success: true, channels: (rows || []).map(publicChannel), supported: ASSISTANCE_PLATFORMS });
+    const whatsapp = getInternalWhatsappStatus();
+    const internalChannel = await upsertInternalWhatsappChannel(whatsapp);
+    const visible = (rows || []).filter((row: any) => row.provider_account_id === INTERNAL_WHATSAPP_ACCOUNT_ID || row.platform !== 'whatsapp');
+    if (internalChannel && !visible.some((row: any) => row.id === internalChannel.id)) visible.unshift(internalChannel);
+    res.json({ success: true, channels: visible.map(publicChannel), whatsapp, supported: ASSISTANCE_PLATFORMS });
+  });
+
+  router.get('/channels/whatsapp/status', async (_req: any, res: Response) => {
+    const whatsapp = getInternalWhatsappStatus();
+    const channel = await upsertInternalWhatsappChannel(whatsapp);
+    res.json({ success: true, whatsapp, channel: channel ? publicChannel(channel) : null });
   });
 
   router.post('/channels/:platform/connect-url', async (req: any, res: Response) => {
     try {
       const platform = normalizePlatform(req.params.platform);
       if (platform !== 'whatsapp') return res.status(409).json({ error: 'La conexión oficial disponible ahora para el Centro de Asistencia es WhatsApp. Instagram, Facebook, Telegram, email y Web Chat tienen su registro separado preparado.' });
-      const settings = await getSettings();
-      if (!settings.zernio_api_key) return res.status(409).json({ error: 'Configura primero la clave propia de canales internos.' });
-      const [existing]: any = await pool.query(`SELECT * FROM admin_assistance_channels WHERE platform = 'whatsapp' ORDER BY updated_at DESC LIMIT 1`);
-      let channel = existing?.[0];
-      let profileId = channel?.provider_profile_id;
-      if (!profileId) {
-        const profileResponse = await callAssistanceZernio('/profiles', { method: 'POST', body: { name: 'DoorDrop Centro de Asistencia · WhatsApp' } });
-        profileId = profileResponse.data?.profile?._id || profileResponse.data?.profile?.id || profileResponse.data?._id || profileResponse.data?.id;
-        if (!profileId) return res.status(502).json({ error: 'El proveedor no devolvió un perfil interno válido.' });
-        const channelId = channel?.id || generateId('aac_');
-        await pool.query(
-          `INSERT INTO admin_assistance_channels (id, platform, provider_profile_id, display_name, status)
-           VALUES (?, 'whatsapp', ?, 'WhatsApp corporativo DoorDrop', 'pending')
-           ON DUPLICATE KEY UPDATE provider_profile_id = VALUES(provider_profile_id), updated_at = NOW()`,
-          [channelId, profileId]
-        );
-      }
-      const language = normalizeLanguage(req.body?.language || settings.default_language, 'es');
-      const redirectUrl = `${process.env.APP_URL || 'https://doordrop.lat'}/admin/assistance?connected=whatsapp`;
-      const response = await callAssistanceZernio('/connect/whatsapp', {
-        queryParams: {
-          profileId,
-          redirect_url: redirectUrl,
-          onboarding: 'business_app',
-          signup: 'hosted',
-          brandName: 'DoorDrop Centro de Asistencia',
-          primaryColor: '#2563EB',
-          language: language === 'es' ? 'es' : 'en'
-        }
-      });
-      if (response.status < 200 || response.status >= 300) return res.status(502).json({ error: 'El proveedor no pudo iniciar el QR corporativo.' });
-      const authUrl = response.data?.url || response.data?.authUrl || response.data?.redirectUrl;
-      if (!authUrl) return res.status(502).json({ error: 'El proveedor no devolvió el enlace del QR corporativo.' });
-      res.json({ success: true, platform, profileId, authUrl });
+      const whatsapp = await startInternalWhatsapp();
+      const channel = await upsertInternalWhatsappChannel(whatsapp);
+      res.json({ success: true, platform, mode: 'whatsapp_web', whatsapp, channel: channel ? publicChannel(channel) : null });
     } catch (error: any) { console.error('[Admin Assistance] Connect channel error:', error?.message || error); res.status(502).json({ error: 'No se pudo iniciar la conexión del canal corporativo.' }); }
   });
 
-  router.post('/ensure-webhook', async (_req: any, res: Response) => {
+  router.post('/channels/whatsapp/logout', async (_req: any, res: Response) => {
     try {
-      const settings = await getSettings();
-      if (!settings.zernio_api_key) return res.status(409).json({ error: 'Configura primero la clave propia de canales internos.' });
-      let secret = String(settings.zernio_webhook_secret || '').trim();
-      if (!secret) { secret = crypto.randomBytes(32).toString('hex'); await saveSetting('zernio_webhook_secret', secret, true); }
-      const body = {
-        name: 'DoorDrop Centro de Asistencia',
-        url: ASSISTANCE_WEBHOOK_URL,
-        secret,
-        events: ['message.received', 'message.sent', 'message.delivered', 'message.read', 'message.failed', 'conversation.started', 'account.connected', 'account.disconnected', 'whatsapp.number.action_required'],
-        isActive: true
-      };
-      const listing = await callAssistanceZernio('/webhooks/settings');
-      const remote = Array.isArray(listing.data?.webhooks) ? listing.data.webhooks : Array.isArray(listing.data?.settings) ? listing.data.settings : Array.isArray(listing.data) ? listing.data : [];
-      const existing = remote.find((item: any) => String(item?.url || '').trim() === ASSISTANCE_WEBHOOK_URL);
-      const response = existing
-        ? await callAssistanceZernio('/webhooks/settings', { method: 'PUT', body: { _id: existing._id || existing.id, ...body } })
-        : await callAssistanceZernio('/webhooks/settings', { method: 'POST', body });
-      if (response.status < 200 || response.status >= 300) return res.status(502).json({ error: 'El proveedor no pudo activar el webhook interno.' });
-      res.json({ success: true, created: !existing, eventCount: body.events.length, url: ASSISTANCE_WEBHOOK_URL });
-    } catch (error: any) { console.error('[Admin Assistance] Webhook error:', error?.message || error); res.status(502).json({ error: 'No se pudo crear o reactivar el webhook interno.' }); }
+      const whatsapp = await logoutInternalWhatsapp();
+      const channel = await upsertInternalWhatsappChannel(whatsapp);
+      res.json({ success: true, whatsapp, channel: channel ? publicChannel(channel) : null });
+    } catch (error: any) { console.error('[Admin Assistance] WhatsApp logout error:', error?.message || error); res.status(500).json({ error: 'No se pudo desconectar WhatsApp interno.' }); }
   });
 
   router.get('/conversations', async (_req: any, res: Response) => {
@@ -797,10 +724,10 @@ export function setupAdminAssistanceRoutes(app: any, deps: { authMiddleware: any
       if (!conversation) return res.status(404).json({ error: 'Conversación no encontrada.' });
       if (conversation.platform !== 'internal') {
         if (!conversation.provider_conversation_id || !conversation.channel_id) return res.status(409).json({ error: 'La conversación todavía no tiene un canal corporativo asociado.' });
-        const payload: any = { message: text };
-        if (conversation.provider_account_id) payload.accountId = conversation.provider_account_id;
-        const response = await callAssistanceZernio(`/inbox/conversations/${encodeURIComponent(conversation.provider_conversation_id)}/messages`, { method: 'POST', body: payload });
-        if (response.status < 200 || response.status >= 300) return res.status(502).json({ error: 'El proveedor no aceptó el mensaje.' });
+        if (conversation.provider_account_id !== INTERNAL_WHATSAPP_ACCOUNT_ID) return res.status(409).json({ error: 'Esta conversación no pertenece al canal WhatsApp Web interno.' });
+        const sent = await sendInternalWhatsappMessage(conversation.provider_conversation_id, text);
+        await saveAssistanceMessage(req.params.id, { messageId: firstString([sent?.id?._serialized, sent?.id?.id]) || undefined, direction: 'outbound', senderType: 'human', senderName: req.user.name || 'Equipo DoorDrop', text, status: 'sent' });
+        return res.json({ success: true });
       }
       await saveAssistanceMessage(req.params.id, { messageId: undefined, direction: 'outbound', senderType: 'human', senderName: req.user.name || 'Equipo DoorDrop', text, status: 'sent' });
       res.json({ success: true });
@@ -900,51 +827,13 @@ export function setupAdminAssistanceRoutes(app: any, deps: { authMiddleware: any
     res.json({ success: true });
   });
 
-  app.post('/api/webhooks/assistance-zernio', async (req: any, res: Response) => {
-    try {
-      await ensureAdminAssistanceSchema();
-      const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody.toString('utf8') : JSON.stringify(req.body || {});
-      const settings = await getSettings();
-      const signature = String(req.get('X-Zernio-Signature') || req.get('X-Webhook-Signature') || req.get('X-Signature') || '');
-      if (!settings.zernio_webhook_secret || !verifyAssistanceWebhookSignature(rawBody, signature, settings.zernio_webhook_secret)) return res.status(401).json({ status: 'invalid_signature' });
-      const payload = req.body || {};
-      const eventType = String(payload.event || payload.type || 'unknown').slice(0, 120);
-      const eventId = String(req.headers['x-zernio-event-id'] || req.headers['x-webhook-id'] || payload.id || payload.eventId || payload.messageId || `aev_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`).slice(0, 191);
-      const [duplicate]: any = await pool.query('SELECT processed FROM admin_assistance_webhook_events WHERE event_id = ? LIMIT 1', [eventId]);
-      if (duplicate?.[0]?.processed) return res.status(200).json({ status: 'duplicate_ignored' });
-      await pool.query(
-        `INSERT INTO admin_assistance_webhook_events (event_id, event_type, payload_json, processed) VALUES (?, ?, ?, 0)
-         ON DUPLICATE KEY UPDATE event_type = VALUES(event_type), payload_json = VALUES(payload_json), error_message = NULL`,
-        [eventId, eventType, JSON.stringify(payload)]
-      );
-      if (eventType === 'message.received') {
-        const inbound = normalizeInbound(payload, eventId);
-        const channel = await findInternalChannel(inbound.accountId, inbound.profileId);
-        if (!channel || !inbound.conversationId) {
-          await pool.query(`UPDATE admin_assistance_webhook_events SET processed = 1, processed_at = NOW() WHERE event_id = ?`, [eventId]);
-          return res.status(202).json({ status: 'unmatched_internal_channel_ignored' });
-        }
-        const conversation = await findOrCreateConversation(channel, inbound);
-        const inserted = await saveAssistanceMessage(conversation.id, { ...inbound, direction: 'inbound', senderType: 'customer', senderName: inbound.contactName, status: 'received' });
-        if (inserted) void processInboundWithAI(conversation.id, inbound);
-      } else if (eventType === 'account.connected') {
-        const data = payload.data || payload.account || payload;
-        const profileId = firstString([payload.profileId, data?.profileId]);
-        const accountId = firstString([payload.accountId, data?.accountId, data?._id, data?.id]);
-        const channel = await findInternalChannel(accountId, profileId);
-        if (channel) {
-          await pool.query(`UPDATE admin_assistance_channels SET provider_account_id = COALESCE(?, provider_account_id), status = 'connected', username = COALESCE(?, username), phone_number = COALESCE(?, phone_number), connected_at = COALESCE(connected_at, NOW()), updated_at = NOW() WHERE id = ?`, [accountId, data?.username || data?.name || null, data?.phone || null, channel.id]);
-        }
-      }
-      await pool.query(`UPDATE admin_assistance_webhook_events SET processed = 1, processed_at = NOW(), error_message = NULL WHERE event_id = ?`, [eventId]);
-      return res.status(200).json({ status: 'ok', eventId });
-    } catch (error: any) {
-      console.error('[Admin Assistance Webhook] Processing error:', error?.message || error);
-      try { await pool.query(`UPDATE admin_assistance_webhook_events SET processed = 0, error_message = ? WHERE event_id = ?`, [String(error?.message || 'processing_error').slice(0, 1000), String(req.headers['x-zernio-event-id'] || req.body?.id || '')]); } catch {}
-      return res.status(500).json({ status: 'retry' });
-    }
-  });
-
   app.use('/api/admin/assistance', router);
-  console.log('[Admin Assistance] Internal Center routes mounted on /api/admin/assistance and /api/webhooks/assistance-zernio');
+  setInternalWhatsappMessageHandler(handleInternalWhatsappMessage);
+  setInternalWhatsappStatusHandler(async (status) => { await upsertInternalWhatsappChannel(status); });
+  if (process.env.WHATSAPP_INTERNAL_AUTOSTART !== 'false') {
+    void hasPersistedInternalWhatsappSession().then((exists) => {
+      if (exists) void startInternalWhatsapp().catch((error) => console.error('[Admin Assistance] WhatsApp auto-start error:', error?.message || error));
+    });
+  }
+  console.log('[Admin Assistance] Internal Center routes mounted on /api/admin/assistance with isolated WhatsApp Web QR');
 }
