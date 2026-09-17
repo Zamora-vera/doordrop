@@ -48,11 +48,11 @@ fi
 mkdir -p "$BACKUP_ROOT/runtime"
 tar -czf "$BACKUP_ROOT/runtime/doordrop_runtime_$(date -u +%Y%m%dT%H%M%SZ).tar.gz" --ignore-failed-read server.cjs index.html assets 2>/dev/null || true
 
-if ! docker exec -u 0:0 "$CONTAINER" sh -lc 'PUPPETEER_CACHE_DIR=/app/.cache/puppeteer npm ci --include=dev'; then
+if ! docker exec "$CONTAINER" sh -lc 'PUPPETEER_CACHE_DIR=/app/.cache/puppeteer npm ci --include=dev'; then
   log "Instalación de dependencias fallida; no se reinició el servicio y se reintentará en la próxima ejecución."
   exit 1
 fi
-if ! docker exec -u 0:0 "$CONTAINER" sh -lc 'PUPPETEER_CACHE_DIR=/app/.cache/puppeteer node node_modules/puppeteer/install.mjs'; then
+if ! docker exec "$CONTAINER" sh -lc 'PUPPETEER_CACHE_DIR=/app/.cache/puppeteer node node_modules/puppeteer/install.mjs'; then
   log "Instalación del navegador de WhatsApp Web fallida; no se reinició el servicio."
   exit 1
 fi
