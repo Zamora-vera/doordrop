@@ -3,10 +3,11 @@ import SmtpSettings from './admin/SmtpSettings';
 import EmailTemplates from './admin/EmailTemplates';
 import Webmail from './admin/Webmail';
 import { AdminOmnichannel } from './AdminOmnichannel';
+import AdminAssistanceCenter from './AdminAssistanceCenter';
 import { getCountryName, WORLD_COUNTRIES } from '../lib/countries';
 import React, { useEffect, useState } from 'react';
-import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Server, Bot, Users, UserPlus, Package, Settings, LogOut, BarChart3, Truck, Crown, Edit, Save, LifeBuoy, Sparkles, Menu, X, Eye, Lock, Unlock, LogIn, CreditCard, Wallet, ShieldCheck, XCircle, Moon, Sun, MapPin, Clipboard, PlayCircle, RefreshCw, Mail, Send, Activity, Clock, Plug, Store, Link2, CheckCircle2, AlertTriangle, ExternalLink, BookOpen } from 'lucide-react';
+import { Navigate, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
+import { LayoutDashboard, Server, Bot, Users, UserPlus, Package, Settings, LogOut, BarChart3, Truck, Crown, Edit, Save, LifeBuoy, Sparkles, Headphones, Menu, X, Eye, Lock, Unlock, LogIn, CreditCard, Wallet, ShieldCheck, XCircle, Moon, Sun, MapPin, Clipboard, PlayCircle, RefreshCw, Mail, Send, Activity, Clock, Plug, Store, Link2, CheckCircle2, AlertTriangle, ExternalLink, BookOpen } from 'lucide-react';
 import { api, removeAuthToken, getAuthToken, setAuthToken } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { APP_VERSION } from '../lib/appVersion';
@@ -35,7 +36,6 @@ import { BrandMark, DEFAULT_BRAND, useBrand } from '../lib/brand';
 import { LanguageSelector } from '../components/LanguageSelector';
 import { AdminTickets } from '../components/AdminTickets';
 import { AdminMarketplace } from '../components/AdminMarketplace';
-import { AiCopilotChat } from '../components/AiCopilotChat';
 import AdminDocs from './AdminDocs';
 import Staff from './admin/Staff';
 import {
@@ -71,7 +71,7 @@ const countryLabel = (code: string) => {
 };
 
 const AdminSidebar = ({ isMobileMenuOpen, toggleMobileMenu, currentUser, isDark, toggleTheme }: any) => {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
   const { currency, setCurrency, availableCurrencies } = useCurrency();
@@ -81,7 +81,8 @@ const AdminSidebar = ({ isMobileMenuOpen, toggleMobileMenu, currentUser, isDark,
     { name: 'Equipo interno', path: '/admin/staff', icon: UserPlus },
     { name: t('totalShipments'), path: '/admin/shipments', icon: Package },
     { name: 'Marketplace', path: '/admin/marketplace', icon: Store },
-    { name: 'Omnicanal + AI', path: '/admin/omnichannel', icon: Bot },
+    { name: language === 'it' ? 'Omnicanal + AI · Rivendita' : language === 'en' ? 'Omnichannel + AI · Resale' : language === 'fr' ? 'Omnicanal + IA · Revente' : 'Omnicanal + AI · Reventa', path: '/admin/omnichannel', icon: Bot },
+    { name: language === 'it' ? 'Centro Assistenza AI' : language === 'en' ? 'AI Assistance Center' : language === 'fr' ? 'Centre d’assistance IA' : 'Centro de Asistencia AI', path: '/admin/assistance', icon: Headphones },
     { name: t('providers'), path: '/admin/providers', icon: Truck },
     { name: 'Documentación', path: '/admin/docs', icon: BookOpen },
     { name: t('admin_webmail_nav'), path: '/admin/webmail', icon: Mail },
@@ -93,7 +94,6 @@ const AdminSidebar = ({ isMobileMenuOpen, toggleMobileMenu, currentUser, isDark,
     { name: t('reports'), path: '/admin/reports', icon: BarChart3 },
     { name: t('settings'), path: '/admin/settings', icon: Settings },
     { name: t('tickets_support'), path: '/admin/tickets', icon: LifeBuoy },
-    { name: t('ai_copilot'), path: '/admin/copilot', icon: Sparkles },
   ];
 
   return (
@@ -3467,6 +3467,7 @@ export default function AdminPanel() {
             <Route path="/marketplace/zubuy-print" element={<AdminPodSettings />} />
             <Route path="/marketplace/*" element={<AdminMarketplace />} />
             <Route path="/omnichannel/*" element={<AdminOmnichannel />} />
+            <Route path="/assistance/*" element={<AdminAssistanceCenter />} />
             <Route path="/providers" element={<AdminProviders />} />
             <Route path="/docs" element={<AdminDocs />} />
             <Route path="/integraciones" element={<AdminIntegrations />} />
@@ -3484,7 +3485,7 @@ export default function AdminPanel() {
             <Route path="/settings/email/logs" element={<AdminEmailLogs />} />
             <Route path="/webmail" element={<Webmail />} />
             <Route path="/tickets" element={<AdminTickets />} />
-            <Route path="/copilot" element={<AiCopilotChat />} />
+            <Route path="/copilot" element={<Navigate to="/admin/assistance" replace />} />
             <Route path="*" element={<div className="p-4 md:p-8 text-slate-500 dark:text-slate-400">Módulo en preparación para el Super Admin</div>} />
           </Routes>
         </main>

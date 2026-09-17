@@ -209,9 +209,9 @@ export function AdminOmnichannel() {
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-semibold uppercase tracking-wider mb-2 border border-blue-400/30">
               <ShieldCheck className="w-3.5 h-3.5" /> Super Admin Portal
             </div>
-            <h1 className="text-2xl font-bold tracking-tight">DoorDrop Omnicanal — Proveedores & Reventa AI</h1>
+            <h1 className="text-2xl font-bold tracking-tight">Omnicanal + AI · Gestión de Reventa</h1>
             <p className="text-xs text-gray-400 mt-1 max-w-2xl">
-              Configuración central de Zernio (canales y mensajería) y DeepSeek AI (modelo, visión y margen comercial del 10% descontado del saldo/wallet).
+              Gestiona el producto SaaS que DoorDrop vende a sus clientes: planes, canales, proveedores, precios, activaciones y suscripciones. La asistencia corporativa interna está en el Centro de Asistencia AI.
             </p>
           </div>
           <button
@@ -266,7 +266,7 @@ export function AdminOmnichannel() {
               <QrCode className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-gray-900 dark:text-white">WhatsApp Business y QR real</h2>
+              <h2 className="text-lg font-bold text-gray-900 dark:text-white">Canales de clientes · QR oficial</h2>
               <p className="text-xs text-gray-500 mt-1 max-w-2xl">
                 El QR no se inventa ni se guarda en el panel: lo genera el flujo oficial de conexión del proveedor para cada perfil de cliente. El cliente lo escanea desde su vista de Canales y la cuenta queda asociada a su bandeja y a su agente autónomo.
               </p>

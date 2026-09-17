@@ -97,6 +97,7 @@ app.use(express.json({
   verify: (req: any, _res, buf) => {
     if (
       req.originalUrl === '/api/webhooks/zernio' ||
+      req.originalUrl === '/api/webhooks/assistance-zernio' ||
       req.originalUrl === '/api/webhooks/polar' ||
       req.originalUrl === '/api/webhooks/paypal' ||
       req.originalUrl === '/api/webhooks/logihub' ||
@@ -1189,6 +1190,9 @@ async function reconcileExpiredSubscriptions(source = 'runtime'): Promise<void> 
 
 // Inicializar base de datos
 initDb().then(() => {
+  void ensureAdminAssistanceSchema().catch((error: any) => {
+    console.warn('[MySQL] Centro de Asistencia interno reintentará al abrirse:', error?.message || 'schema unavailable');
+  });
   void reconcileExpiredSubscriptions('startup');
   const subscriptionReconciliationTimer = setInterval(() => {
     void reconcileExpiredSubscriptions('interval');
@@ -17137,8 +17141,10 @@ app.use(podRoutes);
 // --- OMNICHANNEL INTEGRATION ---
 import { setupOmnichannelRoutes } from './server/omnichannel/routes';
 import { configureOmnichannelWalletMutation } from './server/omnichannel/deepseek_service';
+import { ensureAdminAssistanceSchema, setupAdminAssistanceRoutes } from './server/admin/assistance';
 configureOmnichannelWalletMutation(applyWalletMutationCommitted);
 setupOmnichannelRoutes(app, { pool, authMiddleware, requireSuperAdmin, UserRepo });
+setupAdminAssistanceRoutes(app, { authMiddleware, requireSuperAdmin });
 
 // --- VITE MIDDLEWARE & FALLBACK ---
 async function startServer() {
