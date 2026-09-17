@@ -12,6 +12,16 @@ function runNode(script, args) {
   });
 }
 
+function runTool(script, args) {
+  const executable = resolve(root, script);
+  const command = process.platform === 'win32' ? process.execPath : executable;
+  const commandArgs = process.platform === 'win32' ? [executable, ...args] : args;
+  execFileSync(command, commandArgs, {
+    cwd: root,
+    stdio: 'inherit'
+  });
+}
+
 // Keep the source entrypoint as the canonical template while preserving the
 // existing deployment contract: the generated dist files are also published
 // at the application root for the production container.
@@ -20,7 +30,7 @@ const index = resolve(root, 'index.html');
 if (existsSync(sourceIndex)) cpSync(sourceIndex, index, { force: true });
 
 runNode('node_modules/vite/bin/vite.js', ['build']);
-runNode('node_modules/esbuild/bin/esbuild', ['server.ts', '--bundle', '--platform=node', '--format=cjs', '--packages=external', '--sourcemap', '--outfile=dist/server.cjs']);
+runTool('node_modules/esbuild/bin/esbuild', ['server.ts', '--bundle', '--platform=node', '--format=cjs', '--packages=external', '--sourcemap', '--outfile=dist/server.cjs']);
 
 const dist = resolve(root, 'dist');
 if (existsSync(dist)) {
