@@ -2,6 +2,7 @@ import { pool } from './connection';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { ensureOmnichannelAgentSchema, generateClientCode } from '../omnichannel/identity';
 
 // Password hashing: new users receive an individual salt and a deliberately
 // expensive PBKDF2 hash. Legacy hashes remain verifiable and are upgraded on
@@ -273,9 +274,10 @@ export async function initDb() {
     `ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS extra_json JSON NULL`,
     `ALTER TABLE quotes ADD COLUMN IF NOT EXISTS provider_code VARCHAR(80) NULL`,
     `ALTER TABLE shipment_packages ADD COLUMN IF NOT EXISTS manifest_reference VARCHAR(191) NULL`,
-    `ALTER TABLE shipments ADD COLUMN IF NOT EXISTS provider_payload_json JSON NULL`,
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS currency CHAR(3) DEFAULT 'EUR'`,
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS language CHAR(2) NOT NULL DEFAULT 'es'`,
+     `ALTER TABLE shipments ADD COLUMN IF NOT EXISTS provider_payload_json JSON NULL`,
+     `ALTER TABLE users ADD COLUMN IF NOT EXISTS currency CHAR(3) DEFAULT 'EUR'`,
+     `ALTER TABLE users ADD COLUMN IF NOT EXISTS client_code VARCHAR(32) NULL`,
+     `ALTER TABLE users ADD COLUMN IF NOT EXISTS language CHAR(2) NOT NULL DEFAULT 'es'`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at DATETIME NULL`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_required TINYINT(1) NOT NULL DEFAULT 0`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS status ENUM('active','suspended','closed') NOT NULL DEFAULT 'active'`,
@@ -287,6 +289,15 @@ export async function initDb() {
   ];
   for (const stmt of compatibilityStatements) {
     try { await pool.query(stmt); } catch (e) { /* MySQL antiguo: el SQL principal ya cubre instalaciones limpias. */ }
+  }
+
+  // Keep the agent identity layer available before registration/login routes
+  // are used. The mounted omnichannel routers retry this idempotently if an
+  // older database was temporarily unavailable during startup.
+  try {
+    await ensureOmnichannelAgentSchema(pool);
+  } catch (e: any) {
+    console.warn('[MySQL] Omnichannel agent schema will retry on first request:', e?.message || 'unavailable');
   }
 
   await AdminSettingsRepo.ensureDefaults();
@@ -339,8 +350,8 @@ export const UserRepo = {
 
   async create(user: any): Promise<void> {
     await pool.query(
-      `INSERT INTO users (id, email, password_hash, name, phone, country, currency, language, role, business_type, balance, card_connected, paypal_connected, paypal_email, email_verified_at, email_verification_required, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO users (id, email, password_hash, name, phone, country, currency, language, role, business_type, balance, card_connected, paypal_connected, paypal_email, email_verified_at, email_verification_required, status, client_code)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         user.id,
         user.email,
@@ -358,7 +369,8 @@ export const UserRepo = {
         user.paypal_email || '',
         user.email_verified_at || null,
         user.email_verification_required ? 1 : 0,
-        user.status || 'active'
+        user.status || 'active',
+        user.client_code || generateClientCode(user.id)
       ]
     );
   },

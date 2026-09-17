@@ -5,10 +5,25 @@ import { getUserOmnichannelSubscription, hasActiveOmnichannelSubscription } from
 import { runAgentTurn } from './agent_runtime.js';
 import { getOmnichannelReadiness } from './readiness.js';
 
+const DEFAULT_DEEPSEEK_API_URL = 'https://api.deepseek.com';
+const DEFAULT_DEEPSEEK_MODEL = 'deepseek-chat';
+const ALLOWED_AI_API_HOSTS = new Set(['api.deepseek.com', 'api.groq.com', 'api.openai.com']);
 let cachedDeepseekKey = process.env.DEEPSEEK_API_KEY || '';
+let cachedDeepseekApiUrl = DEFAULT_DEEPSEEK_API_URL;
+let cachedDeepseekModel = DEFAULT_DEEPSEEK_MODEL;
 const AI_STANDARD_MARGIN_PERCENT = 10.0;
 const AI_PEAK_PROVIDER_ADJUSTMENT_PERCENT = 15.0;
 let cachedMarginPercent = AI_STANDARD_MARGIN_PERCENT; // DoorDrop margin in the normal window
+
+export function normalizeAiApiUrl(value: unknown): string | null {
+  try {
+    const parsed = new URL(String(value || '').trim());
+    if (parsed.protocol !== 'https:' || !ALLOWED_AI_API_HOSTS.has(parsed.hostname.toLowerCase())) return null;
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return null;
+  }
+}
 
 function normalizeAgentCurrency(value: any): string {
   const code = String(value || '').trim().toUpperCase();
@@ -40,10 +55,21 @@ export function configureOmnichannelWalletMutation(mutation: OmnichannelWalletMu
 export async function getDeepSeekConfig() {
   try {
     const [rows]: any = await pool.query(
-      "SELECT setting_key, setting_value FROM admin_settings WHERE setting_key IN ('deepseek_api_key', 'omnichannel_ai_margin_percent')"
+      "SELECT setting_key, setting_value FROM admin_settings WHERE setting_key IN ('deepseek_api_key', 'deepseek_api_url', 'deepseek_model', 'omnichannel_ai_margin_percent')"
     );
     for (const r of rows) {
       if (r.setting_key === 'deepseek_api_key' && r.setting_value) cachedDeepseekKey = r.setting_value;
+      if (r.setting_key === 'deepseek_api_url' && r.setting_value) {
+        const configuredUrl = normalizeAiApiUrl(r.setting_value);
+        if (configuredUrl) {
+          cachedDeepseekApiUrl = configuredUrl;
+        } else {
+          console.warn('[DeepSeek Config] Ignoring invalid API URL.');
+        }
+      }
+      if (r.setting_key === 'deepseek_model' && r.setting_value) {
+        cachedDeepseekModel = String(r.setting_value).trim().slice(0, 120) || DEFAULT_DEEPSEEK_MODEL;
+      }
       if (r.setting_key === 'omnichannel_ai_margin_percent' && r.setting_value) cachedMarginPercent = Number(r.setting_value) || AI_STANDARD_MARGIN_PERCENT;
     }
   } catch (e) {
@@ -51,6 +77,8 @@ export async function getDeepSeekConfig() {
   }
   return {
     apiKey: cachedDeepseekKey,
+    apiUrl: cachedDeepseekApiUrl,
+    model: cachedDeepseekModel,
     marginPercent: cachedMarginPercent
   };
 }
@@ -89,10 +117,10 @@ export async function callDeepSeekChat(
   tools?: Array<any>,
   options: { maxTokens?: number; temperature?: number; responseFormat?: any } = {}
 ) {
-  const { apiKey } = await getDeepSeekConfig();
+  const { apiKey, apiUrl, model } = await getDeepSeekConfig();
   if (!apiKey) throw new Error('DeepSeek no está configurado para este entorno.');
   const requestBody: any = {
-    model: 'deepseek-chat',
+    model,
     messages,
     max_tokens: options.maxTokens || 700,
     temperature: options.temperature ?? 0.6
@@ -110,7 +138,8 @@ export async function callDeepSeekChat(
   const payload = JSON.stringify(requestBody);
 
   return new Promise<{ message: any; usage: any }>((resolve, reject) => {
-    const req = https.request('https://api.deepseek.com/chat/completions', {
+    const endpoint = new URL(`${apiUrl.replace(/\/$/, '')}/chat/completions`);
+    const req = https.request(endpoint, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -361,7 +390,9 @@ function buildToolsForMerchant(settings: any) {
         parameters: {
           type: 'object',
           properties: {
-            reason: { type: 'string', description: 'Motivo del passaggio all\'operatore umano' }
+            reason: { type: 'string', description: 'Motivo del passaggio all\'operatore umano' },
+            specialty: { type: 'string', description: 'Especialidad solicitada, por ejemplo envíos, ventas o facturación' },
+            language: { type: 'string', description: 'Idioma de atención: es, it, en o fr' }
           }
         }
       }
@@ -514,6 +545,25 @@ export async function generateAIEmployeeReply(
     if (tone === 'casual') toneDescription = 'directo, cercano, sencillo y accesible';
     if (tone === 'luxury') toneDescription = 'elegante, refinado, atento y exclusivo';
 
+    let identityStatus = 'unverified';
+    let identityLanguage = language;
+    if (conversationId) {
+      try {
+        const [identityRows]: any = await pool.query(
+          `SELECT identity_status, verified_customer_user_id, detected_language
+             FROM omnichannel_conversations
+            WHERE id = ? AND user_id = ?
+            LIMIT 1`,
+          [conversationId, userId]
+        );
+        const identity = identityRows[0] || {};
+        identityStatus = String(identity.identity_status || 'unverified');
+        identityLanguage = String(identity.detected_language || language || 'auto').slice(0, 10);
+      } catch (identityError: any) {
+        console.warn('[AI Sales Agent] Identity context unavailable:', identityError?.message || 'unknown error');
+      }
+    }
+
     // 3. Global, tenant-aware system prompt. The configured language is only
     // a fallback; the customer's current language is authoritative.
     const systemPrompt = `Eres ${agentName}, el agente autónomo de ventas y asistencia de este negocio en DoorDrop.
@@ -522,9 +572,10 @@ Tu objetivo es ayudar a cada cliente a descubrir productos reales, resolver duda
 Negocio y contexto: país ${countryCode || 'no configurado'}, moneda comercial ${commercialCurrency}, tipo de negocio ${userRows[0]?.business_type || 'no configurado'}.
 Tono: ${toneDescription}.
 Instrucciones del negocio: ${personalityRules}
-Idioma configurado como respaldo: ${language}. Aun así, detecta el idioma del último mensaje del cliente y responde siempre en ese mismo idioma. Esto incluye idiomas que no estén en el panel. No cambies de idioma sin que el cliente lo pida.
+Idiomas de atención admitidos: español, italiano, inglés y francés. Idioma configurado como respaldo: ${language}. Detecta el idioma del último mensaje del cliente y responde siempre en el mismo idioma cuando sea uno de esos cuatro. Si recibes otro idioma, responde brevemente en ${language} e indica que la atención disponible es en español, italiano, inglés o francés. No cambies de idioma sin que el cliente lo pida.
 
 Cliente: ${contactName || 'cliente'}.
+Estado de verificación: ${identityStatus}. Idioma detectado por canal: ${identityLanguage}.
 
 Información real del negocio:
 ${businessInfo}
@@ -542,9 +593,10 @@ Reglas obligatorias de operación:
 4. Para fotos usa send_product_photos solo cuando existan imágenes reales del producto.
 5. Para envíos solicita país, código postal, ciudad y peso real si faltan; después usa quote_shipping. No calcules tarifas mentalmente ni uses precios por defecto. Si la API no devuelve ofertas, dilo con claridad.
 6. Antes de un checkout, muestra producto, cantidad, transporte, moneda y total verificados. Usa create_order_checkout únicamente después de una confirmación explícita y con todos los datos reales del comprador.
-7. Para seguimiento usa lookup_or_generate_tracking. Para hablar con una persona usa handoff_to_human.
-8. Responde en 2-4 frases cortas, máximo aproximadamente 600 caracteres. Haz como máximo una pregunta o solicitud de datos por mensaje.
-9. Si falta configuración real del negocio, informa qué debe completar el negocio; no rellenes el vacío con una suposición comercial.`;
+7. Para seguimiento usa lookup_or_generate_tracking solo después de que el estado de verificación sea verified. Si el cliente pide información de cuenta, envío, pedido o factura y no está verificado, solicita su correo registrado o código de cliente DD-... y no reveles datos.
+8. Para hablar con una persona usa handoff_to_human. Incluye el motivo y, si se conoce, la especialidad o el idioma solicitados.
+9. Responde en 2-4 frases cortas, máximo aproximadamente 600 caracteres. Haz como máximo una pregunta o solicitud de datos por mensaje.
+10. Si falta configuración real del negocio, informa qué debe completar el negocio; no rellenes el vacío con una suposición comercial.`;
 
     const tools = buildToolsForMerchant(settings);
 
@@ -584,7 +636,10 @@ Reglas obligatorias de operación:
       maxLoops: 4,
       executeTool: async (fnName, fnArgs) => {
         console.log(`[AI Sales Agent] Executing tool: ${fnName}`);
-        const toolResult = await handleAIToolCall(fnName, fnArgs, userId);
+        const toolResult = await handleAIToolCall(fnName, fnArgs, userId, {
+          conversationId,
+          language: identityLanguage
+        });
         if (fnName === 'send_product_photos' && (toolResult as any)?.media_attachment_url) {
           photoAttachmentUrl = (toolResult as any).media_attachment_url;
         }

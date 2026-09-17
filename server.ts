@@ -44,6 +44,7 @@ import {
   verifyPassword,
   generateId
 } from './server/db/repos';
+import { generateClientCode } from './server/omnichannel/identity';
 import { getDocBundle, docsToMarkdown, docsToPdfBuffer, billingStatementToPdfBuffer, getOpenApiSpec, getOpenAiToolSchemas } from './server/docs/apiDocs';
 import { swaggerUiHtml } from './server/docs/swaggerUi';
 import { sendPasswordResetEmail, sendTemplatedEmail, sendNotificationEvent, testSmtpConnection, renderTemplateText } from './server/services/emailService';
@@ -6042,6 +6043,8 @@ const authMiddleware = async (req: any, res: any, next: any) => {
       currency: normalizeCurrencyCode(user.currency || 'EUR'),
       role: user.role,
       businessType: user.business_type,
+      language: user.language || 'es',
+      clientCode: user.client_code || null,
       balance: Number(user.balance),
       status: user.status || 'active',
       cardConnected: Boolean(user.card_connected),
@@ -6276,6 +6279,7 @@ app.post('/api/auth/register', async (req, res) => {
       country: country || 'ES',
       currency: currency || 'EUR',
       language: registrationLanguage,
+      client_code: generateClientCode(userId),
       role: 'customer', // Siempre registrado como customer
       business_type: businessType || 'Solo quiero enviar paquetes',
       balance: 0.00,
@@ -6341,6 +6345,7 @@ app.post('/api/auth/register', async (req, res) => {
         role: newUser.role,
         currency: newUser.currency,
         language: newUser.language,
+        clientCode: newUser.client_code,
         emailVerified: false,
         status: newUser.status,
         balance: newUser.balance,
@@ -6412,6 +6417,7 @@ app.post('/api/auth/login', async (req, res) => {
         role: user.role,
         currency: normalizeCurrencyCode(user.currency || 'EUR'),
         language: user.language || 'es',
+        clientCode: user.client_code || null,
         emailVerified: Boolean(user.email_verified_at) || Number(user.email_verification_required || 0) !== 1,
         status: user.status || 'active',
         balance: Number(user.balance),
@@ -6528,6 +6534,7 @@ function publicPaypalAuthUser(user: any) {
     role: user.role,
     currency: normalizeCurrencyCode(user.currency || 'EUR'),
     language: user.language || 'es',
+    clientCode: user.client_code || null,
     emailVerified: Boolean(user.email_verified_at) || Number(user.email_verification_required || 0) !== 1,
     status: user.status || 'active',
     balance: Number(user.balance || 0),

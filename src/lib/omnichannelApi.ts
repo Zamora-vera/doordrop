@@ -68,7 +68,7 @@ export const omnichannelApi = {
     body: JSON.stringify({ target_agent_id, target_agent_name, target_agent_type })
   }),
   getTeam: () => request('/omnichannel/team'),
-  addTeamMember: (data: { name: string; role?: string; email?: string; phone?: string; type?: 'ai' | 'human'; status?: string }) => request('/omnichannel/team', {
+  addTeamMember: (data: { name: string; role?: string; email?: string; phone?: string; type?: 'ai' | 'human'; status?: string; specialty?: string; languages?: string[] }) => request('/omnichannel/team', {
     method: 'POST',
     body: JSON.stringify(data)
   }),
@@ -129,6 +129,9 @@ export const omnichannelApi = {
     body: JSON.stringify(data)
   }),
   getAdminClients: () => request('/admin/omnichannel/clients'),
+  getAdminWhatsappConnectUrl: (clientId: string) => request(`/admin/omnichannel/clients/${encodeURIComponent(clientId)}/whatsapp/connect-url`, {
+    method: 'POST'
+  }),
   getAdminPlans: () => request('/admin/omnichannel/plans'),
   updateAdminPlan: (id: string, data: any) => request(`/admin/omnichannel/plans/${id}`, {
     method: 'PUT',
@@ -138,5 +141,8 @@ export const omnichannelApi = {
     method: 'PUT',
     body: JSON.stringify(data)
   }),
-  testProviderConnection: () => request('/admin/omnichannel/test-connection', { method: 'POST' })
+  testProviderConnection: () => request('/admin/omnichannel/test-connection', { method: 'POST' }),
+  testAiConnection: () => request('/admin/omnichannel/test-ai', { method: 'POST' }),
+  ensureAdminWebhook: () => request('/admin/omnichannel/ensure-webhook', { method: 'POST' }),
+  getAdminWhatsappStatus: () => request('/admin/omnichannel/whatsapp/status')
 };

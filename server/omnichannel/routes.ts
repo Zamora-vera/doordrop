@@ -1,10 +1,15 @@
-import { generateAIEmployeeReply, autoGenerateStoreAISettings, isPeakHour } from './deepseek_service';
+import { callDeepSeekChat, generateAIEmployeeReply, autoGenerateStoreAISettings, getDeepSeekConfig, isPeakHour, normalizeAiApiUrl } from './deepseek_service';
 import { Router, Request, Response } from 'express';
 import https from 'https';
 import crypto from 'crypto';
 import { handleAIToolCall } from './ai_sales_tools';
 import { sendNotificationEvent } from '../services/emailService';
 import { verifyZernioWebhookSignature } from './service';
+import {
+  ensureOmnichannelAgentSchema,
+  normalizeAgentLanguage,
+  resolveInboundCustomerIdentity
+} from './identity';
 import {
   getUserOmnichannelSubscription,
   hasActiveOmnichannelSubscription,
@@ -267,6 +272,37 @@ export function setupOmnichannelRoutes(app: any, options: {
   const adminRouter = Router();
   const { pool, authMiddleware, requireSuperAdmin, UserRepo } = options;
 
+  let schemaReady: Promise<void> | null = null;
+  const ensureAgentSchema = async () => {
+    if (!schemaReady) {
+      schemaReady = ensureOmnichannelAgentSchema(pool).catch(error => {
+        schemaReady = null;
+        throw error;
+      });
+    }
+    await schemaReady;
+  };
+
+  router.use(async (_req: Request, res: Response, next: any) => {
+    try {
+      await ensureAgentSchema();
+      next();
+    } catch (error: any) {
+      console.error('[Omnichannel] Agent schema unavailable:', error?.message || error);
+      res.status(503).json({ error: 'El servicio de asistencia está iniciándose. Intenta nuevamente en unos segundos.' });
+    }
+  });
+
+  adminRouter.use(async (_req: Request, res: Response, next: any) => {
+    try {
+      await ensureAgentSchema();
+      next();
+    } catch (error: any) {
+      console.error('[Omnichannel Admin] Agent schema unavailable:', error?.message || error);
+      res.status(503).json({ error: 'La configuración omnicanal está iniciándose. Intenta nuevamente en unos segundos.' });
+    }
+  });
+
   let cachedApiKey = '';
   let cachedWebhookSecret = '';
   let cachedApiUrl = 'https://zernio.com/api/v1';
@@ -417,6 +453,12 @@ export function setupOmnichannelRoutes(app: any, options: {
   // 1. Central Webhook (/api/webhooks/zernio)
   // ---------------------------------------------------------------------------
   app.post('/api/webhooks/zernio', async (req: Request, res: Response) => {
+    try {
+      await ensureAgentSchema();
+    } catch (error: any) {
+      console.error('[Omnichannel Webhook] Agent schema unavailable:', error?.message || error);
+      return res.status(503).json({ status: 'retry', error: 'Webhook temporalmente no disponible.' });
+    }
     const payload = req.body || {};
     const rawBody = Buffer.isBuffer((req as any).rawBody)
       ? (req as any).rawBody.toString('utf8')
@@ -505,6 +547,27 @@ export function setupOmnichannelRoutes(app: any, options: {
           const aiActive = persisted.aiActive;
           if (persisted.duplicate) break;
 
+          const identity = await resolveInboundCustomerIdentity(pool, {
+            conversationId: localConvId,
+            merchantUserId: userId,
+            channel: inbound.platform,
+            contactPhone: inbound.contactPhone,
+            text: inbound.text
+          });
+
+          if (identity.shouldHandoff) {
+            await handleAIToolCall(
+              'handoff_to_human',
+              {
+                conversation_id: localConvId,
+                reason: 'customer_identity_verification_failed',
+                summary: `No se pudo verificar la identidad del contacto ${inbound.contactName || 'Cliente'}.`
+              },
+              userId,
+              { conversationId: localConvId }
+            );
+          }
+
           // DeepSeek AI Auto-Responder with custom response delay
           if (aiActive && inbound.text && !suppressAutoReply) {
             let delayMs = 3000;
@@ -522,7 +585,9 @@ export function setupOmnichannelRoutes(app: any, options: {
 
             setTimeout(async () => {
               try {
-                const aiResult = await generateAIEmployeeReply(userId, inbound.text, inbound.contactName, localConvId);
+                const aiResult = identity.shouldBlockAI
+                  ? { text: identity.prompt || 'Confirma tu cuenta para continuar.', blockedCredit: false }
+                  : await generateAIEmployeeReply(userId, inbound.text, inbound.contactName, localConvId);
                 if (aiResult) {
                   const replyText = typeof aiResult === 'object' ? aiResult.text : String(aiResult);
                   const photoUrl = typeof aiResult === 'object' ? aiResult.mediaUrl : null;
@@ -803,8 +868,10 @@ export function setupOmnichannelRoutes(app: any, options: {
   router.post('/channels/connect-url', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
-      const { platform } = req.body;
-      if (!platform) return res.status(400).json({ error: 'Plataforma requerida.' });
+      const requestedPlatform = String(req.body?.platform || '').trim().toLowerCase();
+      const supportedPlatforms = ['whatsapp', 'instagram', 'facebook', 'messenger', 'telegram'];
+      if (!supportedPlatforms.includes(requestedPlatform)) return res.status(400).json({ error: 'Plataforma no compatible.' });
+      const platform = requestedPlatform;
 
       const subscription = await getUserOmnichannelSubscription(userId);
       const [accountsCount]: any = await pool.query(
@@ -821,9 +888,23 @@ export function setupOmnichannelRoutes(app: any, options: {
 
       const profileId = await getOrCreateUserProfile(userId);
       const redirectUrl = `https://doordrop.lat/panel/omnichannel?tab=channels&connected=${platform}`;
+      const merchantLanguage = normalizeAgentLanguage(req.user?.language, 'es');
+      const hostedLanguage = merchantLanguage === 'es' ? 'es' : 'en';
+      const queryParams: Record<string, string> = { profileId, redirect_url: redirectUrl };
+      if (platform === 'whatsapp') {
+        // Zernio/Meta's hosted Embedded Signup displays the real QR flow. The
+        // business_app option keeps WhatsApp Business coexistence available.
+        Object.assign(queryParams, {
+          onboarding: 'business_app',
+          signup: 'hosted',
+          brandName: 'DoorDrop',
+          primaryColor: '#2563EB',
+          language: hostedLanguage
+        });
+      }
       const zernioResp = await callZernio(`/connect/${encodeURIComponent(platform)}`, {
         method: 'GET',
-        queryParams: { profileId, redirectUrl }
+        queryParams
       });
 
       if (zernioResp.status >= 400) {
@@ -1085,7 +1166,7 @@ export function setupOmnichannelRoutes(app: any, options: {
   router.post('/team', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
-      const { name, role, email, phone, type, status } = req.body;
+      const { name, role, email, phone, type, status, specialty, languages } = req.body;
       if (!name) return res.status(400).json({ error: 'El nombre es requerido.' });
 
       const memberId = 'agent-' + (type === 'ai' ? 'ai' : 'hum') + '-' + Date.now();
@@ -1098,11 +1179,15 @@ export function setupOmnichannelRoutes(app: any, options: {
         'from-rose-500 to-pink-600'
       ];
       const avatarGradient = gradients[Math.floor(Math.random() * gradients.length)];
+      const supportedLanguages = ['es', 'it', 'en', 'fr'];
+      const teamLanguages = Array.isArray(languages)
+        ? languages.map((item: any) => String(item || '').slice(0, 2).toLowerCase()).filter((item: string) => supportedLanguages.includes(item)).slice(0, 4)
+        : [];
 
       await pool.query(
-        `INSERT INTO omnichannel_team (user_id, member_id, name, role, type, email, phone, initials, avatar_gradient, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [userId, memberId, name, role || 'Agente de Soporte', type || 'human', email || null, phone || null, initials, avatarGradient, status || 'online']
+        `INSERT INTO omnichannel_team (user_id, member_id, name, role, type, email, phone, initials, avatar_gradient, status, specialty, languages_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, memberId, name, role || 'Agente de Soporte', type || 'human', email || null, phone || null, initials, avatarGradient, status || 'online', String(specialty || role || '').trim().slice(0, 80) || null, JSON.stringify(teamLanguages)]
       );
 
       res.json({ success: true, message: 'Miembro del equipo agregado con éxito.' });
@@ -1116,7 +1201,11 @@ export function setupOmnichannelRoutes(app: any, options: {
     try {
       const userId = String(req.user.id || req.user.userId);
       const memberId = req.params.id;
-      const { name, role, email, phone, status, is_active } = req.body;
+      const { name, role, email, phone, status, is_active, specialty, languages } = req.body;
+      const supportedLanguages = ['es', 'it', 'en', 'fr'];
+      const teamLanguages = Array.isArray(languages)
+        ? languages.map((item: any) => String(item || '').slice(0, 2).toLowerCase()).filter((item: string) => supportedLanguages.includes(item)).slice(0, 4)
+        : null;
 
       await pool.query(
         `UPDATE omnichannel_team SET
@@ -1124,11 +1213,13 @@ export function setupOmnichannelRoutes(app: any, options: {
            role = COALESCE(?, role),
            email = COALESCE(?, email),
            phone = COALESCE(?, phone),
+           specialty = COALESCE(?, specialty),
+           languages_json = COALESCE(?, languages_json),
            status = COALESCE(?, status),
            is_active = COALESCE(?, is_active),
            updated_at = NOW()
          WHERE (id = ? OR member_id = ?) AND user_id = ?`,
-        [name, role, email, phone, status, is_active, memberId, memberId, userId]
+        [name, role, email, phone, specialty ? String(specialty).trim().slice(0, 80) : null, teamLanguages ? JSON.stringify(teamLanguages) : null, status, is_active, memberId, memberId, userId]
       );
 
       res.json({ success: true, message: 'Miembro actualizado.' });
@@ -1643,7 +1734,7 @@ export function setupOmnichannelRoutes(app: any, options: {
   adminRouter.get('/settings', authMiddleware, requireSuperAdmin, async (_req: any, res: Response) => {
     try {
       const [rows]: any = await pool.query(
-        "SELECT setting_key, setting_value, is_secret, updated_at FROM admin_settings WHERE setting_key LIKE 'zernio_%' OR setting_key LIKE 'omnichannel_%'"
+        "SELECT setting_key, setting_value, is_secret, updated_at FROM admin_settings WHERE setting_key LIKE 'zernio_%' OR setting_key LIKE 'deepseek_%' OR setting_key LIKE 'omnichannel_%'"
       );
       const safeSettings = (rows || []).map((row: any) => ({
         ...row,
@@ -1678,13 +1769,33 @@ export function setupOmnichannelRoutes(app: any, options: {
 
   adminRouter.post('/settings', authMiddleware, requireSuperAdmin, async (req: any, res: Response) => {
     try {
-      const { zernio_api_key, zernio_webhook_secret, zernio_api_url, omnichannel_extra_channel_usd, omnichannel_default_currency } = req.body;
+      const {
+        zernio_api_key,
+        zernio_webhook_secret,
+        zernio_api_url,
+        deepseek_api_key,
+        deepseek_api_url,
+        deepseek_model,
+        omnichannel_extra_channel_usd,
+        omnichannel_default_currency,
+        omnichannel_ai_margin_percent
+      } = req.body;
+      let validatedDeepseekApiUrl = 'https://api.deepseek.com';
+      if (deepseek_api_url !== undefined && deepseek_api_url !== null && String(deepseek_api_url).trim()) {
+        const normalizedUrl = normalizeAiApiUrl(deepseek_api_url);
+        if (!normalizedUrl) return res.status(400).json({ error: 'La URL del proveedor AI debe ser HTTPS y pertenecer a DeepSeek, Groq u OpenAI.' });
+        validatedDeepseekApiUrl = normalizedUrl;
+      }
       const updates = [
         ['zernio_api_key', zernio_api_key, 1],
         ['zernio_webhook_secret', zernio_webhook_secret, 1],
         ['zernio_api_url', zernio_api_url || 'https://zernio.com/api/v1', 0],
+        ['deepseek_api_key', deepseek_api_key, 1],
+        ['deepseek_api_url', validatedDeepseekApiUrl, 0],
+        ['deepseek_model', String(deepseek_model || 'deepseek-chat').trim().slice(0, 120), 0],
         ['omnichannel_extra_channel_usd', omnichannel_extra_channel_usd || '8.00', 0],
-        ['omnichannel_default_currency', omnichannel_default_currency || 'EUR', 0]
+        ['omnichannel_default_currency', omnichannel_default_currency || 'EUR', 0],
+        ['omnichannel_ai_margin_percent', omnichannel_ai_margin_percent || '10.0', 0]
       ];
 
       for (const [key, val, secret] of updates) {
@@ -1701,6 +1812,160 @@ export function setupOmnichannelRoutes(app: any, options: {
     } catch (err: any) {
       console.error('[Omnichannel Admin] Save settings error:', err);
       res.status(500).json({ error: 'Error al guardar configuración.' });
+    }
+  });
+
+  adminRouter.post('/test-ai', authMiddleware, requireSuperAdmin, async (_req: any, res: Response) => {
+    try {
+      const result = await callDeepSeekChat(
+        [{ role: 'user', content: 'Responde únicamente con: OK' }],
+        undefined,
+        { maxTokens: 10, temperature: 0 }
+      );
+      const config = await getDeepSeekConfig();
+      return res.json({
+        success: true,
+        provider: 'deepseek',
+        model: config.model,
+        reply: String(result.message?.content || '').slice(0, 40)
+      });
+    } catch (err: any) {
+      console.error('[Omnichannel Admin] Test AI error:', err?.message || err);
+      return res.status(502).json({ error: 'No se pudo verificar el proveedor de IA configurado.' });
+    }
+  });
+
+  adminRouter.post('/ensure-webhook', authMiddleware, requireSuperAdmin, async (_req: any, res: Response) => {
+    try {
+      const zernio = await getZernioSettings();
+      if (!zernio.apiKey) return res.status(409).json({ error: 'Zernio no está configurado todavía.' });
+
+      let webhookSecret = zernio.webhookSecret;
+      if (!webhookSecret) {
+        webhookSecret = crypto.randomBytes(32).toString('hex');
+        await pool.query(
+          `INSERT INTO admin_settings (setting_key, setting_value, is_secret)
+           VALUES ('zernio_webhook_secret', ?, 1)
+           ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_at = CURRENT_TIMESTAMP`,
+          [webhookSecret]
+        );
+        cachedWebhookSecret = webhookSecret;
+      }
+
+      const webhookUrl = 'https://doordrop.lat/api/webhooks/zernio';
+      const webhookBody = {
+        name: 'DoorDrop Omnicanal',
+        url: webhookUrl,
+        secret: webhookSecret,
+        events: [
+          'message.received',
+          'message.sent',
+          'message.delivered',
+          'message.read',
+          'message.failed',
+          'conversation.started',
+          'comment.received',
+          'reaction.received',
+          'account.connected',
+          'account.disconnected',
+          'whatsapp.number.action_required'
+        ],
+        isActive: true
+      };
+
+      const listResponse = await callZernio('/webhooks/settings');
+      const remoteWebhooks = Array.isArray(listResponse.data?.webhooks)
+        ? listResponse.data.webhooks
+        : Array.isArray(listResponse.data?.settings)
+          ? listResponse.data.settings
+          : Array.isArray(listResponse.data)
+            ? listResponse.data
+            : [];
+      const existingWebhook = remoteWebhooks.find((item: any) => String(item?.url || '').trim() === webhookUrl);
+      const response = existingWebhook
+        ? await callZernio('/webhooks/settings', {
+            method: 'PUT',
+            body: { _id: existingWebhook._id || existingWebhook.id, ...webhookBody }
+          })
+        : await callZernio('/webhooks/settings', { method: 'POST', body: webhookBody });
+
+      if (response.status < 200 || response.status >= 300) {
+        console.error('[Omnichannel Admin] Provider webhook rejected:', response.status);
+        return res.status(502).json({ error: 'El proveedor no pudo activar el webhook central.' });
+      }
+
+      const webhook = response.data?.webhook || response.data?.data || response.data || {};
+      return res.json({
+        success: true,
+        created: !existingWebhook,
+        webhook_id: webhook._id || webhook.id || existingWebhook?._id || existingWebhook?.id || null,
+        is_active: webhook.isActive !== false,
+        event_count: webhookBody.events.length,
+        url: webhookUrl
+      });
+    } catch (err: any) {
+      console.error('[Omnichannel Admin] Ensure webhook error:', err?.message || err);
+      return res.status(502).json({ error: 'No se pudo crear o reactivar el webhook central.' });
+    }
+  });
+
+  adminRouter.get('/whatsapp/status', authMiddleware, requireSuperAdmin, async (_req: any, res: Response) => {
+    try {
+      const { apiKey: zernioApiKey, webhookSecret } = await getZernioSettings();
+      const aiConfig = await getDeepSeekConfig();
+      let remoteWebhook: any = null;
+      try {
+        const webhookResponse = await callZernio('/webhooks/settings');
+        const remoteWebhooks = Array.isArray(webhookResponse.data?.webhooks)
+          ? webhookResponse.data.webhooks
+          : Array.isArray(webhookResponse.data?.settings)
+            ? webhookResponse.data.settings
+            : Array.isArray(webhookResponse.data)
+              ? webhookResponse.data
+              : [];
+        remoteWebhook = remoteWebhooks.find((item: any) => String(item?.url || '').trim() === 'https://doordrop.lat/api/webhooks/zernio') || null;
+      } catch {
+        remoteWebhook = null;
+      }
+      const [accountRows]: any = await pool.query(
+        `SELECT COUNT(*) AS total_accounts,
+                COUNT(DISTINCT user_id) AS client_profiles
+           FROM omnichannel_accounts
+          WHERE LOWER(platform) = 'whatsapp'
+            AND LOWER(COALESCE(status, '')) IN ('connected', 'active', 'online')`
+      );
+      const [conversationRows]: any = await pool.query(
+        `SELECT COUNT(*) AS active_conversations
+           FROM omnichannel_conversations
+          WHERE LOWER(platform) = 'whatsapp'
+            AND LOWER(COALESCE(status, 'open')) <> 'closed'`
+      );
+      const [failureRows]: any = await pool.query(
+        `SELECT COUNT(*) AS webhook_failures
+           FROM omnichannel_webhook_events
+          WHERE processed = 0
+            AND created_at >= UTC_TIMESTAMP() - INTERVAL 24 HOUR`
+      );
+      return res.json({
+        success: true,
+        status: {
+          provider_configured: Boolean(zernioApiKey),
+          webhook_configured: Boolean(webhookSecret),
+          webhook_exists: Boolean(remoteWebhook),
+          webhook_active: remoteWebhook ? remoteWebhook.isActive !== false : false,
+          webhook_failure_count: Number(remoteWebhook?.failureCount || 0),
+          ai_configured: Boolean(aiConfig.apiKey),
+          ai_model: aiConfig.model,
+          whatsapp_accounts: Number(accountRows[0]?.total_accounts || 0),
+          client_profiles: Number(accountRows[0]?.client_profiles || 0),
+          active_conversations: Number(conversationRows[0]?.active_conversations || 0),
+          webhook_failures_24h: Number(failureRows[0]?.webhook_failures || 0),
+          webhook_url: 'https://doordrop.lat/api/webhooks/zernio'
+        }
+      });
+    } catch (err: any) {
+      console.error('[Omnichannel Admin] WhatsApp status error:', err?.message || err);
+      return res.status(500).json({ error: 'No se pudo consultar el estado de WhatsApp.' });
     }
   });
 
@@ -1836,6 +2101,73 @@ export function setupOmnichannelRoutes(app: any, options: {
     } catch (err: any) {
       console.error('[Omnichannel Admin] Get clients error:', err);
       res.status(500).json({ error: 'Error al listar clientes Omnicanal.' });
+    }
+  });
+
+  // Super Admin assistance flow: open the provider's official WhatsApp
+  // Embedded Signup/QR for one real client without mixing profiles or
+  // exposing another tenant's credentials in the browser.
+  adminRouter.post('/clients/:clientId/whatsapp/connect-url', authMiddleware, requireSuperAdmin, async (req: any, res: Response) => {
+    try {
+      const clientId = String(req.params.clientId || '').trim();
+      if (!clientId || clientId.length > 100) return res.status(400).json({ error: 'Cliente no válido.' });
+
+      const [userRows]: any = await pool.query(
+        `SELECT id, name, language, status
+           FROM users
+          WHERE id = ? AND role = 'customer'
+          LIMIT 1`,
+        [clientId]
+      );
+      const client = userRows[0];
+      if (!client || String(client.status || '').toLowerCase() === 'closed') {
+        return res.status(404).json({ error: 'Cliente no encontrado o cerrado.' });
+      }
+
+      const subscription = await getUserOmnichannelSubscription(clientId);
+      if (!hasActiveOmnichannelSubscription(subscription)) {
+        return res.status(409).json({ error: 'El cliente no tiene una suscripción Omnicanal activa.' });
+      }
+
+      const [accountsCount]: any = await pool.query(
+        `SELECT COUNT(*) AS count
+           FROM omnichannel_accounts
+          WHERE user_id = ?
+            AND LOWER(COALESCE(status, '')) IN ('connected', 'active', 'online')`,
+        [clientId]
+      );
+      const maxChannels = Number(subscription.channels_limit || 0) + Number(subscription.extra_channels_count || 0);
+      if (Number(accountsCount[0]?.count || 0) >= maxChannels) {
+        return res.status(409).json({ error: `El cliente ya alcanzó el límite de ${maxChannels} canal(es) de su plan.` });
+      }
+
+      const profileId = await getOrCreateUserProfile(clientId, client.name || undefined);
+      const redirectUrl = `https://doordrop.lat/admin/omnichannel?client=${encodeURIComponent(clientId)}&connected=whatsapp`;
+      const merchantLanguage = normalizeAgentLanguage(client.language, 'es');
+      const hostedLanguage = merchantLanguage === 'es' ? 'es' : 'en';
+      const zernioResponse = await callZernio('/connect/whatsapp', {
+        method: 'GET',
+        queryParams: {
+          profileId,
+          redirect_url: redirectUrl,
+          onboarding: 'business_app',
+          signup: 'hosted',
+          brandName: 'DoorDrop',
+          primaryColor: '#2563EB',
+          language: hostedLanguage
+        }
+      });
+      if (zernioResponse.status < 200 || zernioResponse.status >= 300) {
+        return res.status(502).json({ error: 'El proveedor no pudo iniciar el QR oficial de WhatsApp.' });
+      }
+
+      const authUrl = zernioResponse.data?.url || zernioResponse.data?.authUrl || zernioResponse.data?.redirectUrl;
+      if (!authUrl) return res.status(502).json({ error: 'El proveedor no devolvió el enlace del QR.' });
+
+      return res.json({ success: true, client_id: clientId, profileId, platform: 'whatsapp', authUrl });
+    } catch (err: any) {
+      console.error('[Omnichannel Admin] Client WhatsApp connect error:', err?.message || err);
+      return res.status(502).json({ error: 'No se pudo iniciar la conexión oficial de WhatsApp para el cliente.' });
     }
   });
 

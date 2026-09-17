@@ -16,7 +16,8 @@ import {
   Radio,
   Bot,
   Percent,
-  CreditCard
+  CreditCard,
+  QrCode
 } from 'lucide-react';
 import { omnichannelApi } from '../lib/omnichannelApi';
 
@@ -25,10 +26,13 @@ export function AdminOmnichannel() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testingAi, setTestingAi] = useState(false);
+  const [syncingWebhook, setSyncingWebhook] = useState(false);
+  const [connectingWhatsappClient, setConnectingWhatsappClient] = useState<string | null>(null);
   const [overview, setOverview] = useState<any>(null);
   const [clients, setClients] = useState<any[]>([]);
   const [catalogPlans, setCatalogPlans] = useState<any[]>([]);
   const [catalogAddons, setCatalogAddons] = useState<any[]>([]);
+  const [whatsappStatus, setWhatsappStatus] = useState<any>(null);
   const [savingCatalogId, setSavingCatalogId] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -72,6 +76,12 @@ export function AdminOmnichannel() {
       const catalogRes = await omnichannelApi.getAdminPlans();
       setCatalogPlans(catalogRes.plans || []);
       setCatalogAddons(catalogRes.addOns || []);
+      try {
+        const whatsappRes = await omnichannelApi.getAdminWhatsappStatus();
+        setWhatsappStatus(whatsappRes.status || null);
+      } catch {
+        setWhatsappStatus(null);
+      }
     } catch (err: any) {
       setErrorMsg(err.message || 'Error al cargar configuración de Super Admin');
     } finally {
@@ -141,27 +151,48 @@ export function AdminOmnichannel() {
     setStatusMsg(null);
     setErrorMsg(null);
     try {
-      const res = await fetch('https://api.deepseek.com/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${formData.deepseek_api_key}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'deepseek-chat',
-          messages: [{ role: 'user', content: 'Ping' }],
-          max_tokens: 10
-        })
-      });
-      if (res.ok) {
-        setStatusMsg('✅ DeepSeek AI API Key verificada y operativa (Modelo: deepseek-chat).');
-      } else {
-        throw new Error(`HTTP ${res.status}`);
-      }
+      const res = await omnichannelApi.testAiConnection();
+      setStatusMsg(`✅ Proveedor de IA verificado y operativo (Modelo: ${res.model || 'configurado'}).`);
     } catch (e: any) {
-      setErrorMsg(`❌ Error probando DeepSeek: ${e.message}`);
+      setErrorMsg(`❌ Error probando el proveedor de IA: ${e.message}`);
     } finally {
       setTestingAi(false);
+    }
+  };
+
+  const handleEnsureWebhook = async () => {
+    setSyncingWebhook(true);
+    setStatusMsg(null);
+    setErrorMsg(null);
+    try {
+      const res = await omnichannelApi.ensureAdminWebhook();
+      setStatusMsg(`✅ Webhook central ${res.created ? 'creado' : 'reactivado'} y listo para recibir eventos (${res.event_count || 0} eventos).`);
+      const status = await omnichannelApi.getAdminWhatsappStatus();
+      setWhatsappStatus(status.status || null);
+    } catch (err: any) {
+      setErrorMsg(`❌ ${err.message || 'No se pudo sincronizar el webhook.'}`);
+    } finally {
+      setSyncingWebhook(false);
+    }
+  };
+
+  const handleAdminWhatsappConnect = async (client: any) => {
+    const clientId = String(client?.user_id || '').trim();
+    if (!clientId) return;
+    setConnectingWhatsappClient(clientId);
+    setStatusMsg(null);
+    setErrorMsg(null);
+    try {
+      const res = await omnichannelApi.getAdminWhatsappConnectUrl(clientId);
+      if (!res.authUrl) throw new Error('El proveedor no devolvió el enlace del QR.');
+      const popup = window.open(res.authUrl, '_blank', 'width=700,height=820');
+      setStatusMsg(popup
+        ? `QR oficial de WhatsApp abierto para ${client.name || client.email}. Completa allí el alta del número.`
+        : 'El navegador bloqueó la ventana del QR. Permite ventanas emergentes para continuar.');
+    } catch (err: any) {
+      setErrorMsg(`❌ ${err.message || 'No se pudo iniciar el QR de WhatsApp.'}`);
+    } finally {
+      setConnectingWhatsappClient(null);
     }
   };
 
@@ -224,6 +255,67 @@ export function AdminOmnichannel() {
         <div className="p-5 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-sm">
           <div className="text-xs font-bold text-gray-400 uppercase">Mensajes Procesados</div>
           <div className="text-2xl font-black mt-2 text-indigo-600 dark:text-indigo-400">{overview?.total_messages || 0}</div>
+        </div>
+      </div>
+
+      {/* WhatsApp QR and live provider status */}
+      <div className="p-6 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+          <div className="flex items-start gap-3">
+            <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-300">
+              <QrCode className="w-6 h-6" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900 dark:text-white">WhatsApp Business y QR real</h2>
+              <p className="text-xs text-gray-500 mt-1 max-w-2xl">
+                El QR no se inventa ni se guarda en el panel: lo genera el flujo oficial de conexión del proveedor para cada perfil de cliente. El cliente lo escanea desde su vista de Canales y la cuenta queda asociada a su bandeja y a su agente autónomo.
+              </p>
+              <p className="text-[11px] text-gray-400 mt-2 font-mono">Webhook: {whatsappStatus?.webhook_url || 'https://doordrop.lat/api/webhooks/zernio'}</p>
+            </div>
+          </div>
+          <a
+            href="/admin/clients"
+            className="inline-flex items-center justify-center px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold whitespace-nowrap"
+          >
+            Abrir vista de clientes
+          </a>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+          <button
+            type="button"
+            onClick={handleEnsureWebhook}
+            disabled={syncingWebhook}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-bold"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${syncingWebhook ? 'animate-spin' : ''}`} />
+            {syncingWebhook ? 'Sincronizando...' : 'Crear / reactivar webhook'}
+          </button>
+          <span className={`text-xs font-semibold ${whatsappStatus?.webhook_active ? 'text-emerald-600' : 'text-amber-600'}`}>
+            {whatsappStatus?.webhook_active ? 'Webhook activo en el proveedor' : whatsappStatus?.webhook_exists ? 'Webhook encontrado, pero desactivado' : 'Webhook pendiente de sincronización'}
+          </span>
+          {whatsappStatus?.webhook_failure_count > 0 && (
+            <span className="text-[11px] text-rose-600">Fallos consecutivos del proveedor: {whatsappStatus.webhook_failure_count}</span>
+          )}
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-5">
+          <div className="rounded-xl bg-slate-50 dark:bg-gray-800/70 p-3">
+            <div className="text-[10px] uppercase font-bold text-gray-400">Proveedor</div>
+            <div className={`text-xs font-bold mt-1 ${whatsappStatus?.provider_configured ? 'text-emerald-600' : 'text-amber-600'}`}>
+              {whatsappStatus?.provider_configured ? 'Configurado' : 'Pendiente'}
+            </div>
+          </div>
+          <div className="rounded-xl bg-slate-50 dark:bg-gray-800/70 p-3">
+            <div className="text-[10px] uppercase font-bold text-gray-400">WhatsApp conectado</div>
+            <div className="text-xl font-black text-gray-900 dark:text-white mt-1">{whatsappStatus?.whatsapp_accounts ?? 0}</div>
+          </div>
+          <div className="rounded-xl bg-slate-50 dark:bg-gray-800/70 p-3">
+            <div className="text-[10px] uppercase font-bold text-gray-400">Conversaciones activas</div>
+            <div className="text-xl font-black text-gray-900 dark:text-white mt-1">{whatsappStatus?.active_conversations ?? 0}</div>
+          </div>
+          <div className="rounded-xl bg-slate-50 dark:bg-gray-800/70 p-3">
+            <div className="text-[10px] uppercase font-bold text-gray-400">Fallos webhook · 24 h</div>
+            <div className={`text-xl font-black mt-1 ${(whatsappStatus?.webhook_failures_24h || 0) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{whatsappStatus?.webhook_failures_24h ?? 0}</div>
+          </div>
         </div>
       </div>
 
@@ -439,6 +531,7 @@ export function AdminOmnichannel() {
                   <th className="pb-3">Conversaciones</th>
                   <th className="pb-3">Precio Mensual</th>
                   <th className="pb-3">Estado</th>
+                  <th className="pb-3 text-right">Asistencia</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -456,6 +549,18 @@ export function AdminOmnichannel() {
                       <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold text-[10px]">
                         {c.status}
                       </span>
+                    </td>
+                    <td className="py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleAdminWhatsappConnect(c)}
+                        disabled={connectingWhatsappClient === String(c.user_id) || Number(c.active_channels_count || 0) >= (Number(c.channels_limit || 0) + Number(c.extra_channels_count || 0))}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-[11px] font-bold"
+                        title="Abre el QR oficial de WhatsApp para este cliente"
+                      >
+                        <QrCode className="w-3.5 h-3.5" />
+                        {connectingWhatsappClient === String(c.user_id) ? 'Abriendo...' : 'Abrir QR'}
+                      </button>
                     </td>
                   </tr>
                 ))}

@@ -451,6 +451,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
   const [newMemberRole, setNewMemberRole] = useState('');
   const [newMemberEmail, setNewMemberEmail] = useState('');
   const [newMemberPhone, setNewMemberPhone] = useState('');
+  const [newMemberLanguages, setNewMemberLanguages] = useState('es,it,en,fr');
   const [newMemberType, setNewMemberType] = useState<'human' | 'ai'>('human');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Real Catalog & Products State (Marketplace Matterhorn / Zubay IT - 100% Real Live Inventory)
@@ -664,13 +665,15 @@ export function OmnichannelApp({ profile }: { profile: any }) {
         role: newMemberRole.trim() || (newMemberType === 'ai' ? 'Agente Virtual' : 'Especialista de Ventas'),
         email: newMemberEmail.trim(),
         phone: newMemberPhone.trim(),
-        type: newMemberType
+        type: newMemberType,
+        languages: newMemberLanguages.split(',').map(value => value.trim().slice(0, 2).toLowerCase()).filter(Boolean)
       });
       setShowAddMemberModal(false);
       setNewMemberName('');
       setNewMemberRole('');
       setNewMemberEmail('');
       setNewMemberPhone('');
+      setNewMemberLanguages('es,it,en,fr');
       loadTeam();
       alert('Miembro del equipo registrado exitosamente.');
     } catch (err: any) {
@@ -2683,6 +2686,18 @@ export function OmnichannelApp({ profile }: { profile: any }) {
                       placeholder="+1 (809) 000-0000"
                       className="w-full px-3 py-2 text-xs rounded-xl border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-white"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Idiomas de atención</label>
+                    <input
+                      type="text"
+                      value={newMemberLanguages}
+                      onChange={e => setNewMemberLanguages(e.target.value)}
+                      placeholder="es,it,en,fr"
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-white"
+                    />
+                    <p className="text-[10px] text-gray-500 mt-1">Usa solo es, it, en o fr, separados por coma.</p>
                   </div>
 
                   <div className="flex justify-end gap-2 pt-3 border-t border-gray-200 dark:border-gray-800">

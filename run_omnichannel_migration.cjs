@@ -2,10 +2,11 @@ const mysql = require("mysql2/promise");
 
 async function run() {
   const conn = await mysql.createConnection({
-    host: "127.0.0.1",
-    user: "doordrop_ship24go",
-    password: "e176335ba43abfece77d994f368ebc7c88e705ce0f3d002a4c37c60e902c82bc",
-    database: "doordrop_ship24go"
+    host: process.env.MYSQL_HOST || "127.0.0.1",
+    port: Number(process.env.MYSQL_PORT || 3306),
+    user: process.env.MYSQL_USER || "doordrop_ship24go",
+    password: process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || "",
+    database: process.env.MYSQL_DATABASE || "doordrop_ship24go"
   });
 
   console.log("Connected to MySQL successfully");
@@ -209,12 +210,12 @@ async function run() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
 
-  // 11. Ensure admin_settings table has zernio configuration
+  // 11. Ensure non-secret provider defaults exist. Secrets are configured
+  // through the protected Super Admin settings screen and are never stored in
+  // this repository or printed by this migration.
   await conn.query(`
     INSERT INTO admin_settings (setting_key, setting_value, is_secret)
     VALUES 
-      ('zernio_api_key', 'sk_895a0c3cf6da498f854c000ef72860d0ca5f5c313464055e44e07454a50cfa7a', 1),
-      ('zernio_webhook_secret', 'whsec_dd_omni_895a0c3cf6da498f854c000ef72860d0', 1),
       ('zernio_api_url', 'https://zernio.com/api/v1', 0),
       ('omnichannel_extra_channel_usd', '8.00', 0),
       ('omnichannel_default_currency', 'EUR', 0)

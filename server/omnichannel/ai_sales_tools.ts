@@ -242,7 +242,42 @@ function convertViaEur(amount: number, fromCurrency: string, toCurrency: string,
  * 7. handoff_to_human: Alert human team for complex inquiries
  */
 
-export async function handleAIToolCall(toolName: string, args: any, sellerUserId: string) {
+function buildTrackingResult(orders: any[], query: string) {
+  if (!orders.length) {
+    return { found: false, message: `No se encontró ningún pedido o envío con la referencia "${query}".` };
+  }
+
+  const order = orders[0];
+  const tracking = String(order.tracking_code || '').trim();
+  if (!tracking) {
+    return {
+      found: true,
+      tracking_pending: true,
+      order_number: order.order_number,
+      status: order.status || 'pending_payment',
+      service: order.shipping_service_name || null,
+      message: 'El pedido existe, pero todavía no tiene una guía real asignada por el transportista.'
+    };
+  }
+
+  return {
+    found: true,
+    order_number: order.order_number,
+    tracking_code: tracking,
+    service: order.shipping_service_name || null,
+    tracking_url: `https://doordrop.lat/tracking?code=${encodeURIComponent(tracking)}`,
+    status: order.status || 'in_transit'
+  };
+}
+
+export type AIToolContext = {
+  conversationId?: number | string;
+  identityStatus?: string;
+  verifiedCustomerUserId?: string | null;
+  language?: string;
+};
+
+export async function handleAIToolCall(toolName: string, args: any, sellerUserId: string, context: AIToolContext = {}) {
   try {
     args = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
     switch (toolName) {
@@ -652,40 +687,48 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
 
       case 'lookup_or_generate_tracking': {
         const query = String(args.order_number || args.query || '').trim();
+        if (context.conversationId) {
+          const [conversationRows]: any = await pool.query(
+            `SELECT identity_status, verified_customer_user_id
+               FROM omnichannel_conversations
+              WHERE id = ? AND user_id = ?
+              LIMIT 1`,
+            [context.conversationId, sellerUserId]
+          );
+          const identity = conversationRows[0] || {};
+          if (identity.identity_status !== 'verified' || !identity.verified_customer_user_id) {
+            return {
+              found: false,
+              status: 'identity_required',
+              message: 'Primero hay que verificar el correo o código de cliente antes de consultar un envío.'
+            };
+          }
+
+          const [orders]: any = await pool.query(
+            `SELECT id, order_number, status, tracking_code, shipping_service_name, created_at
+               FROM marketplace_orders
+              WHERE seller_id = ?
+                AND (order_number LIKE ? OR tracking_code LIKE ? OR id = ?)
+                AND (
+                  buyer_id = ?
+                  OR JSON_UNQUOTE(JSON_EXTRACT(buyer_address_json, '$.email')) =
+                     (SELECT email FROM users WHERE id = ? LIMIT 1)
+                )
+              LIMIT 1`,
+            [sellerUserId, `%${query}%`, `%${query}%`, query, String(identity.verified_customer_user_id), String(identity.verified_customer_user_id)]
+          );
+          return buildTrackingResult(orders, query);
+        }
+
         const [orders]: any = await pool.query(
           `SELECT id, order_number, status, tracking_code, shipping_service_name, created_at
-           FROM marketplace_orders
-           WHERE seller_id = ?
-             AND (order_number LIKE ? OR tracking_code LIKE ? OR id = ?)
-           LIMIT 1`,
+             FROM marketplace_orders
+            WHERE seller_id = ?
+              AND (order_number LIKE ? OR tracking_code LIKE ? OR id = ?)
+            LIMIT 1`,
           [sellerUserId, `%${query}%`, `%${query}%`, query]
         );
-
-        if (!orders.length) {
-          return { found: false, message: `Nessun ordine o spedizione trovata con riferimento "${query}".` };
-        }
-
-        const o = orders[0];
-        const tracking = String(o.tracking_code || '').trim();
-        if (!tracking) {
-          return {
-            found: true,
-            tracking_pending: true,
-            order_number: o.order_number,
-            status: o.status || 'pending_payment',
-            service: o.shipping_service_name || null,
-            message: 'El pedido existe, pero todavía no tiene una guía real asignada por el transportista.'
-          };
-        }
-
-        return {
-          found: true,
-          order_number: o.order_number,
-          tracking_code: tracking,
-          service: o.shipping_service_name || null,
-          tracking_url: `https://doordrop.lat/tracking?code=${encodeURIComponent(tracking)}`,
-          status: o.status || 'in_transit'
-        };
+        return buildTrackingResult(orders, query);
       }
 
       case 'verify_business_rules': {
@@ -705,7 +748,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
       }
 
       case 'handoff_to_human': {
-        const requestedConversationId = Number(args.conversation_id || args.conversationId || args.local_conversation_id || 0);
+        const requestedConversationId = Number(args.conversation_id || args.conversationId || args.local_conversation_id || context.conversationId || 0);
         if (!requestedConversationId) {
           return {
             handoff: true,
@@ -725,13 +768,50 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
         const conversation = conversationRows[0];
         const reason = String(args.reason || 'needs_human_support').trim().slice(0, 160);
         const summary = String(args.summary || conversation.last_message || conversation.contact_name || '').trim().slice(0, 1200);
+        const requestedSpecialty = String(args.specialty || '').trim().slice(0, 80).toLowerCase();
+        const requestedLanguage = String(args.language || context.language || conversation.detected_language || '').trim().slice(0, 2).toLowerCase();
         const [agentRows]: any = await pool.query(
-          "SELECT member_id, name, email FROM omnichannel_team WHERE user_id = ? AND type = 'human' AND is_active = 1 ORDER BY created_at ASC LIMIT 1",
+          `SELECT member_id, name, email, specialty, languages_json, status
+             FROM omnichannel_team
+            WHERE user_id = ? AND type = 'human' AND is_active = 1 AND can_take_chats = 1
+            ORDER BY (status = 'online') DESC, created_at ASC`,
           [sellerUserId]
         );
-        const agent = agentRows[0] || null;
+        const matchingAgent = (agentRows || []).find((agent: any) => {
+          const specialtyMatches = requestedSpecialty && String(agent.specialty || '').toLowerCase().includes(requestedSpecialty);
+          let languageMatches = false;
+          try {
+            const languages = JSON.parse(agent.languages_json || '[]');
+            languageMatches = requestedLanguage && Array.isArray(languages) && languages.map((item: any) => String(item).slice(0, 2).toLowerCase()).includes(requestedLanguage);
+          } catch {
+            languageMatches = false;
+          }
+          return Boolean(specialtyMatches || languageMatches);
+        });
+        const agent = matchingAgent || agentRows[0] || null;
         const assignedAgentId = agent?.member_id || 'team-human-pending';
         const assignedAgentName = agent?.name || 'Equipo Humano';
+
+        let ticketId = String(conversation.ticket_id || '').trim() || null;
+        if (!ticketId) {
+          ticketId = crypto.randomUUID();
+          const ticketDescription = [
+            `Conversación omnicanal ${requestedConversationId}`,
+            `Canal: ${conversation.platform || 'omnichannel'}`,
+            `Contacto: ${conversation.contact_name || 'Cliente'}`,
+            `Motivo: ${reason}`,
+            `Resumen: ${summary}`
+          ].join('\n').slice(0, 5000);
+          await pool.query(
+            `INSERT INTO tickets (id, user_id, subject, category, description, tracking_code, status)
+             VALUES (?, ?, ?, 'omnichannel', ?, ?, 'open')`,
+            [ticketId, sellerUserId, `Asistencia omnicanal: ${reason}`.slice(0, 191), ticketDescription, conversation.contact_id || '']
+          );
+          await pool.query(
+            `UPDATE omnichannel_conversations SET ticket_id = ? WHERE id = ? AND user_id = ?`,
+            [ticketId, requestedConversationId, sellerUserId]
+          );
+        }
 
         await pool.query(
           `UPDATE omnichannel_conversations
@@ -743,13 +823,13 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
           `INSERT INTO omnichannel_messages
             (conversation_id, direction, sender_type, sender_name, text_content, status)
            VALUES (?, 'outbound', 'system', 'Sistema DoorDrop', ?, 'read')`,
-          [requestedConversationId, `🔔 Conversación transferida a ${assignedAgentName}. Motivo: ${reason}.`]
+          [requestedConversationId, `🔔 Conversación transferida a ${assignedAgentName}. Ticket ${ticketId}. Motivo: ${reason}.`]
         );
 
         const [ownerRows]: any = await pool.query('SELECT id, name, email, country FROM users WHERE id = ? LIMIT 1', [sellerUserId]);
         const owner = ownerRows[0] || {};
         const customerEmail = String(owner.email || '').trim().toLowerCase();
-        const ticketUrl = `${process.env.APP_URL || 'https://doordrop.lat'}/panel/omnichannel`;
+        const ticketUrl = `${process.env.APP_URL || 'https://doordrop.lat'}/panel/tickets`;
         const handoffEntityId = `ai-${requestedConversationId}-${messageResult.insertId}`;
         if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
           await sendNotificationEvent({
@@ -763,7 +843,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
             language: owner.country || 'es',
             variables: {
               userName: owner.name || customerEmail,
-              ticketId: `CONV-${requestedConversationId}`,
+              ticketId,
               ticketUrl,
               summary,
               statusLabel: `Asignada a ${assignedAgentName}`
@@ -784,7 +864,7 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
             variables: {
               customerName: owner.name || conversation.contact_name || 'Cliente',
               customerEmail: customerEmail || 'No disponible',
-              ticketId: `CONV-${requestedConversationId}`,
+              ticketId,
               ticketUrl,
               channel: conversation.platform || 'omnichannel',
               reason,
@@ -797,10 +877,11 @@ export async function handleAIToolCall(toolName: string, args: any, sellerUserId
           handoff: true,
           status: internalEmail ? 'human_operator_alerted' : 'human_assignment_pending',
           conversation_id: requestedConversationId,
+          ticket_id: ticketId,
           assigned_agent: assignedAgentName,
           message: internalEmail
-            ? 'La conversación fue transferida y el operador recibió el aviso.'
-            : 'La conversación fue transferida al equipo humano; queda pendiente un correo de atención configurado.'
+            ? 'La conversación fue transferida y el ticket quedó abierto para el operador.'
+            : 'La conversación fue transferida y el ticket quedó abierto para el equipo humano.'
         };
       }
 
