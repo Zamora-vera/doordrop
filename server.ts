@@ -9747,8 +9747,170 @@ function inferCityFromPostal(countryCode: any, postalCode: any, cityHint?: any):
   return '';
 }
 
+
+const SHIPPING_TERMS_VERSION = '1.0';
+const SHIPPING_TERMS_COOKIE = 'doordrop_shipping_terms';
+const SHIPPING_TERMS_COOKIE_MAX_AGE = 365 * 24 * 60 * 60;
+
+function normalizeShippingTermsLanguage(value: any): 'es' | 'it' | 'en' | null {
+  const language = String(value || '').toLowerCase().slice(0, 2);
+  return language === 'es' || language === 'it' || language === 'en' ? language : null;
+}
+
+function shippingTermsCookieSecure() {
+  return String(process.env.APP_URL || '').startsWith('https://') || process.env.NODE_ENV === 'production';
+}
+
+function shippingTermsCookieValue(language: 'es' | 'it' | 'en') {
+  const payload = Buffer.from(JSON.stringify({
+    version: SHIPPING_TERMS_VERSION,
+    language,
+    acceptedAt: Date.now()
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', JWT_SECRET).update(payload).digest('base64url');
+  return payload + '.' + signature;
+}
+
+function readShippingTermsCookie(req: any) {
+  const raw = getCookieValue(req, SHIPPING_TERMS_COOKIE);
+  if (!raw) return null;
+  const [payload, signature] = raw.split('.');
+  if (!payload || !signature) return null;
+  const expected = crypto.createHmac('sha256', JWT_SECRET).update(payload).digest('base64url');
+  const providedHash = crypto.createHash('sha256').update(signature).digest();
+  const expectedHash = crypto.createHash('sha256').update(expected).digest();
+  if (!crypto.timingSafeEqual(providedHash, expectedHash)) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    const acceptedAt = Number(parsed?.acceptedAt || 0);
+    const maxAgeMs = SHIPPING_TERMS_COOKIE_MAX_AGE * 1000;
+    if (parsed?.version !== SHIPPING_TERMS_VERSION || !Number.isFinite(acceptedAt) || acceptedAt <= 0 || Date.now() - acceptedAt > maxAgeMs) {
+      return null;
+    }
+    const language = normalizeShippingTermsLanguage(parsed?.language);
+    return language ? { version: parsed.version, language, acceptedAt } : null;
+  } catch {
+    return null;
+  }
+}
+
+function setShippingTermsCookie(res: any, language: 'es' | 'it' | 'en') {
+  const flags = [
+    SHIPPING_TERMS_COOKIE + '=' + encodeURIComponent(shippingTermsCookieValue(language)),
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=' + String(SHIPPING_TERMS_COOKIE_MAX_AGE)
+  ];
+  if (shippingTermsCookieSecure()) flags.push('Secure');
+  appendSetCookie(res, flags.join('; '));
+}
+
+async function getShippingTermsStatus(req: any) {
+  const token = String(req.headers?.authorization || '').trim();
+  let userId: string | null = null;
+  if (token) {
+    const decoded = verifyToken(token);
+    if (decoded) {
+      const user = await UserRepo.getById(decoded.userId);
+      if (user) userId = String(user.id);
+    }
+  }
+
+  let acceptance: any = null;
+  if (userId) {
+    const [rows]: any = await pool.query(
+      'SELECT terms_version, terms_language, accepted_at FROM shipping_terms_acceptances WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
+    acceptance = rows[0] || null;
+  }
+
+  const cookieAcceptance = readShippingTermsCookie(req);
+  const accepted = Boolean(
+    acceptance?.terms_version === SHIPPING_TERMS_VERSION ||
+    cookieAcceptance?.version === SHIPPING_TERMS_VERSION
+  );
+
+  return {
+    accepted,
+    required: !accepted,
+    version: acceptance?.terms_version || cookieAcceptance?.version || null,
+    language: acceptance?.terms_language || cookieAcceptance?.language || null,
+    accepted_at: acceptance?.accepted_at || cookieAcceptance?.acceptedAt || null,
+    current_version: SHIPPING_TERMS_VERSION,
+    user_id: userId
+  };
+}
+
+app.get('/api/shipping/terms', async (req: any, res: any) => {
+  try {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ success: true, shipping_terms: await getShippingTermsStatus(req) });
+  } catch (error) {
+    console.error('[Shipping] Terms status error:', error);
+    res.status(500).json({ error: 'No se pudo obtener el estado de los términos de envíos.' });
+  }
+});
+
+app.post('/api/shipping/terms/accept', async (req: any, res: any) => {
+  try {
+    if (req.body?.accepted !== true) {
+      return res.status(400).json({ error: 'Debes confirmar la aceptación de los términos de envíos.' });
+    }
+    const termsLanguage = normalizeShippingTermsLanguage(req.body?.termsLanguage || req.body?.language);
+    if (!termsLanguage) {
+      return res.status(400).json({ error: 'El idioma de los términos no es válido.' });
+    }
+
+    const token = String(req.headers?.authorization || '').trim();
+    const decoded = token ? verifyToken(token) : null;
+    if (token && !decoded) {
+      return res.status(401).json({ error: 'Sesión inválida.' });
+    }
+
+    if (decoded) {
+      const user = await UserRepo.getById(decoded.userId);
+      if (!user) return res.status(401).json({ error: 'Usuario no encontrado.' });
+      await pool.query(
+        'INSERT INTO shipping_terms_acceptances (user_id, terms_version, terms_language, accepted_at, updated_at) ' +
+        'VALUES (?, ?, ?, NOW(), NOW()) ' +
+        'ON DUPLICATE KEY UPDATE terms_version = VALUES(terms_version), terms_language = VALUES(terms_language), ' +
+        'accepted_at = NOW(), updated_at = NOW()',
+        [String(user.id), SHIPPING_TERMS_VERSION, termsLanguage]
+      );
+    } else {
+      setShippingTermsCookie(res, termsLanguage);
+    }
+
+    const shippingTerms = await getShippingTermsStatus(req);
+    if (!decoded) {
+      shippingTerms.accepted = true;
+      shippingTerms.required = false;
+      shippingTerms.version = SHIPPING_TERMS_VERSION;
+      shippingTerms.language = termsLanguage;
+      shippingTerms.accepted_at = new Date().toISOString();
+    }
+    res.json({ success: true, shipping_terms: shippingTerms });
+  } catch (error) {
+    console.error('[Shipping] Terms acceptance error:', error);
+    res.status(500).json({ error: 'No se pudo guardar la aceptación de los términos de envíos.' });
+  }
+});
+
 app.post('/api/shipments/quote', async (req: any, res) => {
   try {
+    const shippingTerms = await getShippingTermsStatus(req);
+    if (!shippingTerms.accepted) {
+      return res.status(428).json({
+        error: 'Debes leer y aceptar los términos de DoorDrop Envíos antes de cotizar.',
+        code: 'SHIPPING_TERMS_REQUIRED',
+        termsRequired: true,
+        termsVersion: SHIPPING_TERMS_VERSION,
+        termsUrl: '/shipping/terms'
+      });
+    }
+
     const { originZip, destZip, weight, originCountry, destCountry, packages, currency } = req.body;
     const persistQuotes = req.body?.persistQuotes !== false;
     const countryFrom = String(originCountry || 'ES').toUpperCase().slice(0, 2);

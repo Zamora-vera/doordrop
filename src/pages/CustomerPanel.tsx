@@ -19,6 +19,7 @@ import { useCurrency } from '../lib/currency';
 import { CameraMeasure } from '../components/CameraMeasure';
 import { BrandMark } from '../lib/brand';
 import { PanelErrorBoundary } from '../components/PanelErrorBoundary';
+import { ShippingTermsConsent } from '../components/ShippingTermsConsent';
 import { APP_VERSION } from '../lib/appVersion';
 import Tariffa from './Tariffa';
 import { SellerPanel } from './SellerPanel';
@@ -1019,6 +1020,7 @@ const Quote = () => {
   const [quotePlanSimulation, setQuotePlanSimulation] = useState<number>(0);
   const [carrierFilter, setCarrierFilter] = useState('all');
   const [quoteSortBy, setQuoteSortBy] = useState<'price_asc' | 'speed_asc' | 'savings_desc'>('price_asc');
+  const [shippingTermsAccepted, setShippingTermsAccepted] = useState(false);
   const [dropPointModal, setDropPointModal] = useState<{ open: boolean; direction: 'sender' | 'receiver' }>({ open: false, direction: 'sender' });
   const [selectedDrops, setSelectedDrops] = useState<{ sender?: any; receiver?: any }>({});
   const [storeOrderContext, setStoreOrderContext] = useState<any>(null);
@@ -1123,6 +1125,14 @@ const Quote = () => {
 
   const handleQuote = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!shippingTermsAccepted) {
+      setError(language === 'en'
+        ? 'Accept the DoorDrop Shipping Terms before requesting a quote.'
+        : language === 'it'
+          ? 'Accetta i Termini DoorDrop Spedizioni prima di richiedere un preventivo.'
+          : 'Acepta los términos de DoorDrop Envíos antes de solicitar una cotización.');
+      return;
+    }
     const requestId = quoteRequestSequence.current + 1;
     quoteRequestSequence.current = requestId;
     setLoading(true);
@@ -2031,10 +2041,13 @@ const Quote = () => {
             </div>
           </div>
 
-          <div className="flex justify-end pt-4">
+          <div className="pt-4">
+            <ShippingTermsConsent onAcceptedChange={setShippingTermsAccepted} />
+          </div>
+          <div className="flex justify-end pt-2">
             <button
               type="submit"
-              disabled={loading || !form.originZip || !form.destZip}
+              disabled={loading || !shippingTermsAccepted || !form.originZip || !form.destZip}
               className="bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600 dark:from-neon-cyan dark:to-neon-green text-white dark:text-gray-900 px-8 py-3.5 rounded-full font-black text-sm transition-all hover:scale-105 shadow-lg shadow-blue-500/10 disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
             >
               {loading ? (

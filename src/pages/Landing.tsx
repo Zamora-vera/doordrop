@@ -7,6 +7,7 @@ import { useI18n } from '../lib/i18n';
 import { ZipCodeAutocomplete } from '../components/ZipCodeAutocomplete';
 import { CountrySelect } from '../components/CountrySelect';
 import { api } from '../lib/api';
+import { ShippingTermsConsent } from '../components/ShippingTermsConsent';
 import { BrandMark, useBrand } from '../lib/brand';
 import { useCurrency } from '../lib/currency';
 import { CarrierLogo, resolveCarrierName } from '../lib/carrierBrand';
@@ -100,9 +101,18 @@ export const Landing = () => {
   const [loadingQuote, setLoadingQuote] = useState(false);
   const [quoteError, setQuoteError] = useState('');
   const [quoteMessage, setQuoteMessage] = useState('');
+  const [shippingTermsAccepted, setShippingTermsAccepted] = useState(false);
   const resultsRef = React.useRef<HTMLDivElement | null>(null);
 
   const handleCalculate = async () => {
+    if (!shippingTermsAccepted) {
+      setQuoteError(landingLanguage === 'en'
+        ? 'Accept the DoorDrop Shipping Terms before requesting a quote.'
+        : landingLanguage === 'it'
+          ? 'Accetta i Termini DoorDrop Spedizioni prima di richiedere un preventivo.'
+          : 'Acepta los términos de DoorDrop Envíos antes de solicitar una cotización.');
+      return;
+    }
     const originZip = String(form.originZip || '').trim();
     const destZip = String(form.destZip || '').trim();
     if (!originZip || !destZip) {
@@ -383,10 +393,13 @@ export const Landing = () => {
                   </div>
               </div>
 
-                <div className="mt-10 text-center">
+                <div className="mt-8">
+                  <ShippingTermsConsent onAcceptedChange={setShippingTermsAccepted} />
+                </div>
+                <div className="mt-6 text-center">
                   <button
                     type="button"
-                    disabled={loadingQuote}
+                    disabled={loadingQuote || !shippingTermsAccepted}
                     onClick={handleCalculate}
                     className="bg-gradient-to-r from-pink-500 to-orange-400 dark:from-neon-pink dark:to-[#9D00FF] text-white font-black py-4 px-12 rounded-full text-lg transition-all transform hover:scale-105 hover:shadow-xl dark:hover:shadow-neon-pink w-full md:w-auto relative overflow-hidden group disabled:opacity-60 disabled:hover:scale-100"
                   >
@@ -713,7 +726,10 @@ export const Landing = () => {
             </p>
             <div className="flex space-x-4 text-xs text-gray-400 dark:text-gray-500">
               <a href="#" className="hover:text-gray-900 dark:hover:text-white">{t('footer_privacy') || 'Privacidad'}</a>
-              <Link to="/terms" className="hover:text-gray-900 dark:hover:text-white">{t('footer_terms') || 'Términos'}</Link>
+              <Link to="/terms" className="hover:text-gray-900 dark:hover:text-white">{t('footer_terms') || 'Términos Marketplace'}</Link>
+              <Link to="/shipping/terms" className="hover:text-gray-900 dark:hover:text-white">
+                {language === 'en' ? 'Shipping terms' : language === 'it' ? 'Termini spedizioni' : 'Términos de envíos'}
+              </Link>
               <a href="#" className="hover:text-gray-900 dark:hover:text-white">{t('footer_cookies') || 'Cookies'}</a>
             </div>
           </div>
