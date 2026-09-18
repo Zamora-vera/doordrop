@@ -10,6 +10,7 @@ import { BrandMark, useBrand } from '../lib/brand';
 import MarketplaceTermsDocument from '../components/MarketplaceTermsDocument';
 import OmnichannelTermsDocument from '../components/OmnichannelTermsDocument';
 import ShippingTermsDocument from '../components/ShippingTermsDocument';
+import GlobalTermsDocument from '../components/GlobalTermsDocument';
 
 const Navbar = () => {
   const { t } = useI18n();
@@ -197,6 +198,8 @@ export default function PublicPages() {
     <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/terms" element={<MarketplaceTermsDocument />} />
+      <Route path="/global-terms" element={<GlobalTermsDocument />} />
+      <Route path="/terms/global" element={<GlobalTermsDocument />} />
       <Route path="/omnichannel/terms" element={<OmnichannelTermsDocument />} />
       <Route path="/shipping/terms" element={<ShippingTermsDocument />} />
       <Route path="/tracking" element={<Tracking />} />

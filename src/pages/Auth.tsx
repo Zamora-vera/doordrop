@@ -350,6 +350,8 @@ const Register = () => {
       country: defaultCountry, 
       language: language || 'es', 
       currency: currency || 'EUR',
+      globalTermsAccepted: false,
+      globalTermsLanguage: ['es', 'it', 'en'].includes(String(language || '').slice(0, 2)) ? String(language || '').slice(0, 2) : 'en',
       businessType: '', storeType: '',
       pickupAddress: { companyName: '', address: '', city: '', province: '', zip: '', country: defaultCountry, phone: '', contact: '' }
     };
@@ -359,6 +361,10 @@ const Register = () => {
   const prev = () => setStep(s => Math.max(1, s - 1));
 
   const handleSubmit = async () => {
+    if (form.globalTermsAccepted !== true) {
+      setError(language === 'it' ? 'Devi accettare i Termini e Condizioni Globali.' : language === 'en' ? 'You must accept the Global Terms and Conditions.' : 'Debes aceptar los Términos y Condiciones Globales.');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -770,16 +776,23 @@ const Register = () => {
                   </div>
                 </div>
 
+                <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4 dark:border-blue-900/40 dark:bg-blue-950/20">
+                  <label className="flex items-start gap-3 text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    <input type="checkbox" checked={Boolean(form.globalTermsAccepted)} onChange={e => setForm({...form, globalTermsAccepted: e.target.checked, globalTermsLanguage: ['es', 'it', 'en'].includes(String(language || '').slice(0, 2)) ? String(language || '').slice(0, 2) : 'en'})} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600" />
+                    <span>{language === 'it' ? 'Accetto i Termini e Condizioni Globali di DoorDrop.' : language === 'en' ? 'I accept the DoorDrop Global Terms and Conditions.' : 'Acepto los Términos y Condiciones Globales de DoorDrop.'}{' '}<Link to="/global-terms" target="_blank" rel="noreferrer" className="font-black text-blue-700 hover:underline dark:text-neon-cyan">{language === 'it' ? 'Leggi i termini globali' : language === 'en' ? 'Read global terms' : 'Leer términos globales'}</Link></span>
+                  </label>
+                </div>
+
                 <div className="flex gap-3 mt-8">
                   <button 
-                    disabled={loading} 
+                    disabled={loading || !form.globalTermsAccepted}
                     onClick={handleSubmit} 
                     className="flex-1 py-3 px-4 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-semibold text-sm hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
                   >
                     {t('skipAndFinish')}
                   </button>
                   <button 
-                    disabled={loading || !form.pickupAddress.companyName || !form.pickupAddress.address || !form.pickupAddress.city || !form.pickupAddress.zip} 
+                    disabled={loading || !form.globalTermsAccepted || !form.pickupAddress.companyName || !form.pickupAddress.address || !form.pickupAddress.city || !form.pickupAddress.zip}
                     onClick={handleSubmit} 
                     className="flex-1 flex justify-center items-center gap-2 py-3 px-4 rounded-xl shadow-lg shadow-blue-500/10 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed cursor-pointer transition-all"
                   >

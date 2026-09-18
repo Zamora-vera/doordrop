@@ -24,7 +24,7 @@ export const GlobalFooter: React.FC = () => {
       marketplaceTitle: 'Marketplace Integrado', marketplaceDesc: 'Vende gratis con etiquetas generadas al instante.',
       accountTitle: 'Cuenta Unificada', accountDesc: 'Usa la misma cuenta para enviar paquetes y vender productos.',
       sell: 'Empezar a vender en el Marketplace', logistics: 'Logística', quote: 'Cotizador Express', tracking: 'Seguimiento de Envíos', history: 'Historial de Envíos', ecommerce: 'Integración E-commerce', omni: 'Omnicanal + AI',
-      marketplaceProducts: 'Catálogo Completo', marketplaceShipping: 'Con Envíos DoorDrop', marketplaceSeller: 'Panel de Vendedor', marketplaceMessages: 'Mensajes y Ofertas', account: 'Mi Cuenta', dashboard: 'Panel de Cliente', wallet: 'Billetera y Saldo', support: 'Soporte y Tickets', register: 'Registrarse Gratis', terms: 'Términos', omniTerms: 'Términos del Omnicanal', privacy: 'Privacidad', rights: 'Todos los derechos reservados.'
+      marketplaceProducts: 'Catálogo Completo', marketplaceShipping: 'Con Envíos DoorDrop', marketplaceSeller: 'Panel de Vendedor', marketplaceMessages: 'Mensajes y Ofertas', account: 'Mi Cuenta', dashboard: 'Panel de Cliente', wallet: 'Billetera y Saldo', support: 'Soporte y Tickets', register: 'Registrarse Gratis', terms: 'Términos', globalTerms: 'Términos globales', omniTerms: 'Términos del Omnicanal', privacy: 'Privacidad', rights: 'Todos los derechos reservados.'
     },
     it: {
       multiTitle: 'Spedizioni Multi-Corriere', multiDesc: 'Poste Italiane, SDA, BRT, DHL, UPS, Correos e SEUR.',
@@ -32,7 +32,7 @@ export const GlobalFooter: React.FC = () => {
       marketplaceTitle: 'Compravendita Sicura', marketplaceDesc: 'Vendi gratis con etichette generate automaticamente.',
       accountTitle: 'Account Unificato', accountDesc: 'Usa lo stesso account per inviare pacchi e vendere prodotti.',
       sell: 'Inizia a vendere sul Marketplace', logistics: 'Spedizioni', quote: 'Preventivo Espresso', tracking: 'Traccia Pacco', history: 'Storico Spedizioni', ecommerce: 'Integrazione E-commerce', omni: 'Omnicanale + AI',
-      marketplaceProducts: 'Tutti i Prodotti', marketplaceShipping: 'Con Spedizione DoorDrop', marketplaceSeller: 'Hub del Venditore', marketplaceMessages: 'Messaggi & Trattative', account: 'Mio Account', dashboard: 'Dashboard Cliente', wallet: 'Portafoglio & Ricarica', support: 'Assistenza & Ticket', register: 'Registrati Gratis', terms: 'Termini di Servizio', omniTerms: 'Termini Omnicanale', privacy: 'Informativa Privacy', rights: 'Tutti i diritti riservati.'
+      marketplaceProducts: 'Tutti i Prodotti', marketplaceShipping: 'Con Spedizione DoorDrop', marketplaceSeller: 'Hub del Venditore', marketplaceMessages: 'Messaggi & Trattative', account: 'Mio Account', dashboard: 'Dashboard Cliente', wallet: 'Portafoglio & Ricarica', support: 'Assistenza & Ticket', register: 'Registrati Gratis', terms: 'Termini di Servizio', globalTerms: 'Termini globali', omniTerms: 'Termini Omnicanale', privacy: 'Informativa Privacy', rights: 'Tutti i diritti riservati.'
     },
     en: {
       multiTitle: 'Multi-carrier shipping', multiDesc: 'Correos, SEUR, DHL, UPS, Poste Italiane and more.',
@@ -40,7 +40,7 @@ export const GlobalFooter: React.FC = () => {
       marketplaceTitle: 'Integrated Marketplace', marketplaceDesc: 'Sell with shipping labels generated instantly.',
       accountTitle: 'Unified account', accountDesc: 'Use one account to ship packages and sell products.',
       sell: 'Start selling on the Marketplace', logistics: 'Logistics', quote: 'Express quote', tracking: 'Shipment tracking', history: 'Shipment history', ecommerce: 'E-commerce integration', omni: 'Omnichannel + AI',
-      marketplaceProducts: 'Full catalog', marketplaceShipping: 'With DoorDrop shipping', marketplaceSeller: 'Seller panel', marketplaceMessages: 'Messages and offers', account: 'My account', dashboard: 'Customer panel', wallet: 'Wallet and balance', support: 'Support and tickets', register: 'Register for free', terms: 'Terms of service', omniTerms: 'Omnichannel terms', privacy: 'Privacy', rights: 'All rights reserved.'
+      marketplaceProducts: 'Full catalog', marketplaceShipping: 'With DoorDrop shipping', marketplaceSeller: 'Seller panel', marketplaceMessages: 'Messages and offers', account: 'My account', dashboard: 'Customer panel', wallet: 'Wallet and balance', support: 'Support and tickets', register: 'Register for free', terms: 'Terms of service', globalTerms: 'Global terms', omniTerms: 'Omnichannel terms', privacy: 'Privacy', rights: 'All rights reserved.'
     },
     fr: {
       multiTitle: 'Expéditions multi-transporteurs', multiDesc: 'Correos, SEUR, DHL, UPS, Poste Italiane et plus.',
@@ -48,7 +48,7 @@ export const GlobalFooter: React.FC = () => {
       marketplaceTitle: 'Marketplace intégré', marketplaceDesc: 'Vendez avec des étiquettes d’expédition générées instantanément.',
       accountTitle: 'Compte unifié', accountDesc: 'Un seul compte pour expédier des colis et vendre des produits.',
       sell: 'Commencer à vendre sur le Marketplace', logistics: 'Logistique', quote: 'Devis express', tracking: 'Suivi des expéditions', history: 'Historique des expéditions', ecommerce: 'Intégration e-commerce', omni: 'Omnicanal + IA',
-      marketplaceProducts: 'Catalogue complet', marketplaceShipping: 'Avec expédition DoorDrop', marketplaceSeller: 'Espace vendeur', marketplaceMessages: 'Messages et offres', account: 'Mon compte', dashboard: 'Espace client', wallet: 'Portefeuille et solde', support: 'Support et tickets', register: 'Créer un compte gratuitement', terms: 'Conditions de service', omniTerms: 'Conditions Omnicanal', privacy: 'Confidentialité', rights: 'Tous droits réservés.'
+      marketplaceProducts: 'Catalogue complet', marketplaceShipping: 'Avec expédition DoorDrop', marketplaceSeller: 'Espace vendeur', marketplaceMessages: 'Messages et offres', account: 'Mon compte', dashboard: 'Espace client', wallet: 'Portefeuille et solde', support: 'Support et tickets', register: 'Créer un compte gratuitement', terms: 'Conditions de service', globalTerms: 'Conditions globales', omniTerms: 'Conditions Omnicanal', privacy: 'Confidentialité', rights: 'Tous droits réservés.'
     }
   }[footerLanguage];
 
@@ -179,6 +179,7 @@ export const GlobalFooter: React.FC = () => {
         <div className="mt-10 pt-6 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-slate-400">
           <p>© {new Date().getFullYear()} DoorDrop. {t('footer_rights') || footerText.rights}</p>
           <div className="flex gap-4">
+            <Link to="/global-terms" className="hover:text-slate-600 dark:hover:text-slate-200">{footerText.globalTerms}</Link>
             <Link to="/terms" className="hover:text-slate-600 dark:hover:text-slate-200">{footerText.terms}</Link>
             <Link to="/omnichannel/terms" className="hover:text-slate-600 dark:hover:text-slate-200">{footerText.omniTerms}</Link>
             <Link to="/privacy" className="hover:text-slate-600 dark:hover:text-slate-200">{footerText.privacy}</Link>

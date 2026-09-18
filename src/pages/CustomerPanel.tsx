@@ -20,6 +20,7 @@ import { CameraMeasure } from '../components/CameraMeasure';
 import { BrandMark } from '../lib/brand';
 import { PanelErrorBoundary } from '../components/PanelErrorBoundary';
 import { ShippingTermsConsent } from '../components/ShippingTermsConsent';
+import { GlobalTermsGate } from '../components/GlobalTermsGate';
 import { APP_VERSION } from '../lib/appVersion';
 import Tariffa from './Tariffa';
 import { SellerPanel } from './SellerPanel';
@@ -4390,6 +4391,7 @@ export default function CustomerPanel() {
           <button onClick={returnToAdmin} className="px-3 py-1.5 rounded-lg bg-white text-slate-900 text-xs font-black hover:bg-slate-100">{customerViewCopy.back}</button>
         </div>
       )}
+      {!adminBackupToken && <GlobalTermsGate />}
       <div className="print:hidden"><Header toggleTheme={toggleTheme} isDark={isDark} isMobileMenuOpen={isMobileMenuOpen} toggleMobileMenu={toggleMobileMenu} profile={profile} /></div>
       <div className="relative flex min-h-0 flex-1 overflow-hidden print:block print:overflow-visible">
         <div className="print:hidden"><Sidebar isMobileMenuOpen={isMobileMenuOpen} toggleMobileMenu={toggleMobileMenu} isSidebarCollapsed={isSidebarCollapsed} toggleSidebarCollapsed={toggleSidebarCollapsed} profile={profile} /></div>

@@ -6252,12 +6252,19 @@ async function issueEmailVerification(user: any, requestIp: string) {
 
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { email, password, name, phone, country, currency, language, businessType, storeType, pickupAddress } = req.body;
+    const { email, password, name, phone, country, currency, language, businessType, storeType, pickupAddress, globalTermsAccepted, globalTermsLanguage } = req.body;
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     const normalizedName = typeof name === 'string' ? name.trim() : '';
     
     if (!normalizedEmail || typeof password !== 'string' || password.length < 8 || !normalizedName) {
       return res.status(400).json({ error: 'El correo, el nombre y una contraseña de al menos 8 caracteres son obligatorios.' });
+    }
+    if (globalTermsAccepted !== true) {
+      return res.status(400).json({ error: 'Debes aceptar los Términos y Condiciones Globales antes de crear la cuenta.', code: 'GLOBAL_TERMS_REQUIRED' });
+    }
+    const acceptedGlobalTermsLanguage = normalizeGlobalTermsLanguage(globalTermsLanguage || language || country);
+    if (!acceptedGlobalTermsLanguage) {
+      return res.status(400).json({ error: 'El idioma de los términos globales no es válido.' });
     }
 
     const clientIp = String(req.socket.remoteAddress || req.ip || '').slice(0, 45);
@@ -6293,6 +6300,10 @@ app.post('/api/auth/register', async (req, res) => {
     };
 
     await UserRepo.create(newUser);
+    await pool.query(
+      'INSERT INTO global_terms_acceptances (user_id, terms_version, terms_language, accepted_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())',
+      [userId, GLOBAL_TERMS_VERSION, acceptedGlobalTermsLanguage]
+    );
 
     let verification = { sent: false, messageId: undefined as string | undefined };
     try {
@@ -9747,6 +9758,74 @@ function inferCityFromPostal(countryCode: any, postalCode: any, cityHint?: any):
   return '';
 }
 
+
+const GLOBAL_TERMS_VERSION = '1.0';
+
+function normalizeGlobalTermsLanguage(value: any): 'es' | 'it' | 'en' | null {
+  const language = String(value || '').toLowerCase().slice(0, 2);
+  return language === 'es' || language === 'it' || language === 'en' ? language : null;
+}
+
+async function getGlobalTermsStatus(req: any) {
+  const token = String(req.headers?.authorization || '').trim();
+  const decoded = token ? verifyToken(token) : null;
+  let userId: string | null = null;
+  if (decoded) {
+    const user = await UserRepo.getById(decoded.userId);
+    if (user) userId = String(user.id);
+  }
+  let acceptance: any = null;
+  if (userId) {
+    const [rows]: any = await pool.query(
+      'SELECT terms_version, terms_language, accepted_at FROM global_terms_acceptances WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
+    acceptance = rows[0] || null;
+  }
+  const accepted = acceptance?.terms_version === GLOBAL_TERMS_VERSION;
+  return {
+    accepted,
+    required: !accepted,
+    version: acceptance?.terms_version || null,
+    language: acceptance?.terms_language || null,
+    accepted_at: acceptance?.accepted_at || null,
+    current_version: GLOBAL_TERMS_VERSION,
+    user_id: userId
+  };
+}
+
+app.get('/api/global/terms', async (req: any, res: any) => {
+  try {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ success: true, global_terms: await getGlobalTermsStatus(req) });
+  } catch (error) {
+    console.error('[Global] Terms status error:', error);
+    res.status(500).json({ error: 'No se pudo obtener el estado de los términos globales.' });
+  }
+});
+
+app.post('/api/global/terms/accept', async (req: any, res: any) => {
+  try {
+    if (req.body?.accepted !== true) {
+      return res.status(400).json({ error: 'Debes confirmar la aceptación de los términos globales.' });
+    }
+    const termsLanguage = normalizeGlobalTermsLanguage(req.body?.termsLanguage || req.body?.language);
+    if (!termsLanguage) return res.status(400).json({ error: 'El idioma de los términos no es válido.' });
+    const token = String(req.headers?.authorization || '').trim();
+    const decoded = token ? verifyToken(token) : null;
+    if (!decoded) return res.status(401).json({ error: 'Debes iniciar sesión para aceptar los términos globales.' });
+    const user = await UserRepo.getById(decoded.userId);
+    if (!user) return res.status(401).json({ error: 'Usuario no encontrado.' });
+    await pool.query(
+      'INSERT INTO global_terms_acceptances (user_id, terms_version, terms_language, accepted_at, updated_at) VALUES (?, ?, ?, NOW(), NOW()) ON DUPLICATE KEY UPDATE terms_version = VALUES(terms_version), terms_language = VALUES(terms_language), accepted_at = NOW(), updated_at = NOW()',
+      [String(user.id), GLOBAL_TERMS_VERSION, termsLanguage]
+    );
+    res.json({ success: true, global_terms: await getGlobalTermsStatus(req) });
+  } catch (error) {
+    console.error('[Global] Terms acceptance error:', error);
+    res.status(500).json({ error: 'No se pudo guardar la aceptación de los términos globales.' });
+  }
+});
 
 const SHIPPING_TERMS_VERSION = '1.0';
 const SHIPPING_TERMS_COOKIE = 'doordrop_shipping_terms';

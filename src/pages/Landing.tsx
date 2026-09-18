@@ -726,6 +726,7 @@ export const Landing = () => {
             </p>
             <div className="flex space-x-4 text-xs text-gray-400 dark:text-gray-500">
               <a href="#" className="hover:text-gray-900 dark:hover:text-white">{t('footer_privacy') || 'Privacidad'}</a>
+              <Link to="/global-terms" className="hover:text-gray-900 dark:hover:text-white">{language === 'en' ? 'Global terms' : language === 'it' ? 'Termini globali' : 'Términos globales'}</Link>
               <Link to="/terms" className="hover:text-gray-900 dark:hover:text-white">{t('footer_terms') || 'Términos Marketplace'}</Link>
               <Link to="/shipping/terms" className="hover:text-gray-900 dark:hover:text-white">
                 {language === 'en' ? 'Shipping terms' : language === 'it' ? 'Termini spedizioni' : 'Términos de envíos'}
