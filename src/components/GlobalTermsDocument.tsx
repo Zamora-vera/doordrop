@@ -27,8 +27,8 @@ function markdownToHtml(markdown: string): string {
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) { flushParagraph(); closeList(); continue; }
-    const heading = trimmed.match(/^(#{2,3})\s+(.+)$/);
-    if (heading) { flushParagraph(); closeList(); const level = heading[1].length; output.push('<h' + level + '>' + inlineMarkdown(heading[2]) + '</h' + level + '>'); continue; }
+    const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) { flushParagraph(); closeList(); if (heading[1].length === 1) continue; const level = heading[1].length; output.push('<h' + level + '>' + inlineMarkdown(heading[2]) + '</h' + level + '>'); continue; }
     const bullet = trimmed.match(/^[-*]\s+(.+)$/);
     if (bullet) { flushParagraph(); if (listType !== 'ul') { closeList(); output.push('<ul>'); listType = 'ul'; } output.push('<li>' + inlineMarkdown(bullet[1]) + '</li>'); continue; }
     const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
@@ -62,7 +62,7 @@ export function GlobalTermsDocument({ language, compact = false }: { language?: 
           {!compact && <h1 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white">{copy.title}</h1>}
           {!compact && <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">{copy.intro}</p>}
           {isFallback && <div className="mt-5 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 p-3 text-sm"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /><span>{copy.fallback}</span></div>}
-          {error ? <div className="mt-8 rounded-xl bg-rose-50 text-rose-700 p-4 text-sm font-semibold">{copy.error}</div> : !markdown ? <div className="mt-8 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="w-4 h-4 animate-spin" /> {copy.loading}</div> : <article className="terms-document mt-8 text-sm leading-7 text-slate-700 dark:text-slate-300 [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-xl [&_h2]:font-black [&_h2]:text-slate-900 [&_h2]:dark:text-white [&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-base [&_h3]:font-black [&_h3]:text-slate-900 [&_h3]:dark:text-white [&_ul]:mb-4 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:mb-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:pl-1 [&_p]:mb-4" dangerouslySetInnerHTML={{ __html: html }} />}
+          {error ? <div className="mt-8 rounded-xl bg-rose-50 text-rose-700 p-4 text-sm font-semibold">{copy.error}</div> : !markdown ? <div className="mt-8 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="w-4 h-4 animate-spin" /> {copy.loading}</div> : <article className="terms-document mt-8 text-sm leading-7 text-slate-700 dark:text-slate-300 [&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-xl [&_h2]:font-black [&_h2]:text-slate-900 [&_h2]:dark:text-white [&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-base [&_h3]:font-black [&_h3]:text-slate-900 [&_h3]:dark:text-white [&_h4]:mt-4 [&_h4]:mb-2 [&_h4]:text-sm [&_h4]:font-black [&_h4]:text-slate-900 [&_h4]:dark:text-white [&_ul]:mb-4 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:mb-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:pl-1 [&_p]:mb-4" dangerouslySetInnerHTML={{ __html: html }} />}
         </div>
       </div>
     </section>
