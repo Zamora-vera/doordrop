@@ -54,7 +54,7 @@ function inlineMarkdown(value: string): string {
 }
 
 function markdownToHtml(markdown: string): string {
-  const lines = markdown.replace(/<!--[\\s\\S]*?-->/g, '').split(/\\r?\\n/);
+  const lines = markdown.replace(/<!--[\s\S]*?-->/g, '').split(/\r?\n/);
   const output: string[] = [];
   let paragraph: string[] = [];
   let listType: 'ul' | 'ol' | null = null;
@@ -77,7 +77,7 @@ function markdownToHtml(markdown: string): string {
       closeList();
       continue;
     }
-    const heading = trimmed.match(/^(#{2,3})\\s+(.+)$/);
+    const heading = trimmed.match(/^(#{2,3})\s+(.+)$/);
     if (heading) {
       flushParagraph();
       closeList();
@@ -85,7 +85,7 @@ function markdownToHtml(markdown: string): string {
       output.push('<h' + level + '>' + inlineMarkdown(heading[2]) + '</h' + level + '>');
       continue;
     }
-    const bullet = trimmed.match(/^[-*]\\s+(.+)$/);
+    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
     if (bullet) {
       flushParagraph();
       if (listType !== 'ul') {
@@ -96,7 +96,7 @@ function markdownToHtml(markdown: string): string {
       output.push('<li>' + inlineMarkdown(bullet[1]) + '</li>');
       continue;
     }
-    const ordered = trimmed.match(/^\\d+\\.\\s+(.+)$/);
+    const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
     if (ordered) {
       flushParagraph();
       if (listType !== 'ol') {
@@ -139,7 +139,7 @@ export function OmnichannelTermsDocument({
         return response.text();
       })
       .then(text => {
-        if (!cancelled) setMarkdown(text.replace(/<!--[\\s\\S]*?-->/g, ''));
+        if (!cancelled) setMarkdown(text.replace(/<!--[\s\S]*?-->/g, ''));
       })
       .catch(() => {
         if (!cancelled) setError(true);
