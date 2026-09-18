@@ -740,12 +740,37 @@ export const MarketplaceRepo = {
     return rows;
   },
 
+  async getAcceptedOfferForBuyer(
+    offerId: string,
+    listingId: string,
+    buyerId: string
+  ): Promise<MarketplaceOffer | null> {
+    const [rows]: any = await pool.query(
+      `SELECT o.*
+         FROM marketplace_offers o
+        WHERE o.id = ?
+          AND o.listing_id = ?
+          AND o.buyer_id = ?
+          AND o.status = 'accepted'
+          AND NOT EXISTS (
+            SELECT 1
+              FROM marketplace_orders existing_order
+             WHERE existing_order.offer_id = o.id
+               AND existing_order.status NOT IN ('cancelled', 'refunded')
+          )
+        LIMIT 1`,
+      [offerId, listingId, buyerId]
+    );
+    return rows[0] || null;
+  },
+
   // ---------------------------------------------------------------------------
   // Orders & Purchases
   // ---------------------------------------------------------------------------
   async createOrder(data: {
     listingId: string;
     buyerId: string;
+    offerId?: string | null;
     productAmountMinor: number;
     shippingAmountMinor: number;
     commissionAmountMinor: number;
@@ -773,17 +798,18 @@ export const MarketplaceRepo = {
 
     await pool.query(
       `INSERT INTO marketplace_orders (
-        id, order_number, listing_id, buyer_id, seller_id, quote_id, product_amount_minor,
+        id, order_number, listing_id, buyer_id, seller_id, offer_id, quote_id, product_amount_minor,
         shipping_amount_minor, commission_amount_minor, protection_amount_minor, total_amount_minor,
         currency, status, payment_method, payment_reference, buyer_address_json, seller_address_json,
         shipping_service_name, shipping_provider_code, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         orderId,
         orderNumber,
         data.listingId,
         data.buyerId,
         listing.seller_id,
+        data.offerId || null,
         data.quoteId || null,
         data.productAmountMinor,
         data.shippingAmountMinor,

@@ -53,6 +53,8 @@ export function ProductPage() {
   const [offerMessage, setOfferMessage] = useState('');
   const [submittingOffer, setSubmittingOffer] = useState(false);
   const [offerSuccess, setOfferSuccess] = useState(false);
+  const acceptedOfferId = new URLSearchParams(window.location.search).get('offerId') || '';
+  const [acceptedOffer, setAcceptedOffer] = useState<any>(null);
 
   // Chat Modal State
   const [showChatModal, setShowChatModal] = useState(false);
@@ -102,6 +104,23 @@ export function ProductPage() {
         .catch(() => {});
     }
   }, [listing?.id, isLoggedIn]);
+
+  useEffect(() => {
+    if (!acceptedOfferId || !isLoggedIn || !listing?.id) {
+      setAcceptedOffer(null);
+      return;
+    }
+    api.getMarketplaceOffers()
+      .then(res => {
+        const match = (res.offers || []).find((offer: any) =>
+          String(offer.id) === acceptedOfferId
+          && String(offer.listing_id) === String(listing.id)
+          && offer.status === 'accepted'
+        );
+        setAcceptedOffer(match || null);
+      })
+      .catch(() => setAcceptedOffer(null));
+  }, [acceptedOfferId, isLoggedIn, listing?.id]);
 
   // Load quote automatically when listing is ready
   useEffect(() => {
@@ -242,6 +261,7 @@ export function ProductPage() {
     try {
       const res = await api.createMarketplaceOrder({
         listingId: listing.id,
+        offerId: acceptedOffer?.id || undefined,
         shippingPrice: selectedQuote ? selectedQuote.price : 0,
         shippingServiceName: selectedQuote ? selectedQuote.serviceName : 'Envío estándar',
         shippingProviderCode: selectedQuote ? selectedQuote.carrier : 'DoorDrop',
@@ -294,7 +314,12 @@ export function ProductPage() {
   // would misrepresent the product and hide a provider/catalogue problem.
   const images = listing.images && listing.images.length > 0 ? listing.images : [];
   const currentImg = images[selectedImgIndex]?.url || null;
-  const price = (listing.price_minor / 100).toFixed(2);
+  const originalPrice = (listing.price_minor / 100).toFixed(2);
+  const negotiatedOffer = acceptedOffer?.status === 'accepted'
+    && String(acceptedOffer.listing_id) === String(listing.id)
+    ? acceptedOffer
+    : null;
+  const price = ((negotiatedOffer?.amount_minor || listing.price_minor) / 100).toFixed(2);
   const seller = listing.seller;
 
   return (
@@ -452,6 +477,15 @@ export function ProductPage() {
               <h1 className="text-xl font-black text-slate-900 dark:text-white leading-snug">
                 {listing.title}
               </h1>
+
+              {negotiatedOffer && (
+                <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-xs text-emerald-800 dark:text-emerald-200">
+                  <strong>{language === 'it' ? 'Offerta accettata dal venditore.' : 'Oferta aceptada por el vendedor.'}</strong>
+                  <span className="block mt-1">
+                    {language === 'it' ? 'Il prezzo concordato è applicato a questo acquisto.' : 'El precio acordado se aplicará a esta compra.'}
+                  </span>
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div className="space-y-2.5 pt-2">
@@ -801,7 +835,7 @@ export function ProductPage() {
             ) : (
               <form onSubmit={handleSubmitOffer} className="space-y-4 text-xs">
                 <div>
-                  <label className="block text-slate-400 mb-1 font-medium">Precio original: {price} {listing.currency}</label>
+                  <label className="block text-slate-400 mb-1 font-medium">Precio original: {originalPrice} {listing.currency}</label>
                   <input
                     type="number"
                     step="0.5"

@@ -170,7 +170,8 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
       await Promise.all([
         loadSellerData(),
         loadBuyerOrders(),
-        loadConversations()
+        loadConversations(),
+        loadOffers()
       ]);
       // Check if guest chat intent is waiting to be resumed
       await handleResumeGuestChat();
@@ -224,6 +225,7 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
       }
     } else if (currentTab === 'messages') {
       loadConversations();
+      loadOffers();
     }
   }, [currentTab, subTab, sellerProfile]);
 
@@ -232,6 +234,7 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
     if (currentTab !== 'messages' || !activeConv) return;
     const interval = setInterval(() => {
       fetchMessagesSilently(activeConv.id);
+      loadOffers();
     }, 6000);
     return () => clearInterval(interval);
   }, [currentTab, activeConv]);
@@ -371,10 +374,31 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
   const handleRespondOffer = async (offerId: string, status: 'accepted' | 'rejected') => {
     try {
       await api.respondMarketplaceOffer(offerId, { status });
-      loadOffers();
+      await loadOffers();
+      if (activeConv) {
+        const res = await api.getMarketplaceMessages(activeConv.id);
+        setConvMessages(res.messages || []);
+      }
     } catch (err: any) {
       alert(err.message || 'No se pudo responder a la oferta.');
     }
+  };
+
+  const getOfferForMessage = (message: any) => {
+    if (!activeConv) return null;
+    const candidates = offers.filter((offer: any) =>
+      String(offer.listing_id) === String(activeConv.listing_id)
+      && String(offer.buyer_id) === String(activeConv.buyer_id)
+      && String(offer.seller_id) === String(activeConv.seller_id)
+    );
+    if (candidates.length === 0) return null;
+    const messageTime = new Date(message.created_at || 0).getTime();
+    return [...candidates].sort((a: any, b: any) => {
+      const aTime = new Date(a.created_at || 0).getTime();
+      const bTime = new Date(b.created_at || 0).getTime();
+      if (!Number.isFinite(messageTime)) return bTime - aTime;
+      return Math.abs(aTime - messageTime) - Math.abs(bTime - messageTime);
+    })[0];
   };
 
   const handleOnboardingSubmit = async (e: React.FormEvent) => {
@@ -1748,14 +1772,48 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
                   ) : (
                     convMessages.map(msg => {
                       const isMe = msg.sender_id === profile?.id;
+                      const isConversationSeller = activeConv?.seller_id === profile?.id;
+                      const isConversationBuyer = activeConv?.buyer_id === profile?.id;
+                      const linkedOffer = getOfferForMessage(msg);
                       const isSystem = msg.message_type === 'system' || msg.message_type === 'offer';
 
                       if (isSystem) {
                         return (
                           <div key={msg.id} className="flex justify-center my-2">
-                            <div className="max-w-md p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-900 text-amber-900 dark:text-amber-200 text-xs font-medium shadow-xs text-center">
-                              <Sparkles className="w-3.5 h-3.5 inline mr-1 text-amber-600" />
-                              {msg.body}
+                            <div className="max-w-md flex flex-col items-center gap-2">
+                              <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-900 text-amber-900 dark:text-amber-200 text-xs font-medium shadow-xs text-center">
+                                <Sparkles className="w-3.5 h-3.5 inline mr-1 text-amber-600" />
+                                {msg.body}
+                              </div>
+
+                              {linkedOffer?.status === 'pending' && isConversationSeller && (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRespondOffer(linkedOffer.id, 'accepted')}
+                                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm"
+                                  >
+                                    {language === 'it' ? 'Accetta offerta' : language === 'en' ? 'Accept offer' : 'Aceptar oferta'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRespondOffer(linkedOffer.id, 'rejected')}
+                                    className="px-4 py-2 rounded-xl bg-white dark:bg-dark-800 border border-rose-200 dark:border-rose-900 text-rose-600 text-xs font-bold"
+                                  >
+                                    {language === 'it' ? 'Rifiuta' : language === 'en' ? 'Reject' : 'Rechazar'}
+                                  </button>
+                                </div>
+                              )}
+
+                              {linkedOffer?.status === 'accepted' && isConversationBuyer && (
+                                <button
+                                  type="button"
+                                  onClick={() => navigate('/marketplace/producto/' + (activeConv.listing_slug || activeConv.listing_id) + '?offerId=' + encodeURIComponent(linkedOffer.id))}
+                                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm"
+                                >
+                                  {language === 'it' ? 'Acquista al prezzo concordato' : language === 'en' ? 'Buy at agreed price' : 'Comprar al precio acordado'}
+                                </button>
+                              )}
                             </div>
                           </div>
                         );

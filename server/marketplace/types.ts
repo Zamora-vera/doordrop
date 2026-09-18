@@ -156,6 +156,7 @@ export interface MarketplaceOrder {
   listing_id: string;
   buyer_id: string;
   seller_id: string;
+  offer_id: string | null;
   shipment_id: string | null;
   quote_id: string | null;
   product_amount_minor: number;

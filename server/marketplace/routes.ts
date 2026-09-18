@@ -757,6 +757,7 @@ export function setupMarketplaceRoutes(app: any, options: {
         shippingServiceName,
         shippingProviderCode,
         quoteId,
+        offerId,
         buyerAddress,
         paymentMethod = 'wallet'
       } = req.body;
@@ -770,7 +771,15 @@ export function setupMarketplaceRoutes(app: any, options: {
       if (listing.status !== 'active') return res.status(400).json({ error: 'El producto ya no está disponible.' });
       if (listing.seller_id === req.user.id) return res.status(400).json({ error: 'No puedes comprar tu propio producto.' });
 
-      const productAmountMinor = listing.price_minor;
+      const normalizedOfferId = String(offerId || '').trim() || null;
+      const acceptedOffer = normalizedOfferId
+        ? await MarketplaceRepo.getAcceptedOfferForBuyer(normalizedOfferId, String(listing.id), req.user.id)
+        : null;
+      if (normalizedOfferId && !acceptedOffer) {
+        return res.status(400).json({ error: 'La oferta aceptada ya no está disponible para esta compra.' });
+      }
+
+      const productAmountMinor = acceptedOffer?.amount_minor || listing.price_minor;
       const shippingAmountMinor = Math.round(Number(shippingPrice || 0) * 100);
       
       // 5% DoorDrop protection / commission
@@ -830,6 +839,7 @@ export function setupMarketplaceRoutes(app: any, options: {
           pendingOrder = await MarketplaceRepo.createOrder({
             listingId,
             buyerId: req.user.id,
+            offerId: acceptedOffer?.id || null,
             productAmountMinor,
             shippingAmountMinor,
             commissionAmountMinor,
@@ -876,6 +886,7 @@ export function setupMarketplaceRoutes(app: any, options: {
         order = await MarketplaceRepo.createOrder({
           listingId,
           buyerId: req.user.id,
+          offerId: acceptedOffer?.id || null,
           productAmountMinor,
           shippingAmountMinor,
           commissionAmountMinor,
