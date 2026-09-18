@@ -12,6 +12,8 @@ exec 9>"$LOCK_FILE"
 flock -n 9 || exit 0
 cd "$APP_DIR"
 mkdir -p "$(dirname "$SUCCESS_MARKER")"
+# The app container runs as UID/GID 1000 (node); keep persistent marketplace uploads writable.
+install -d -o 1000 -g 1000 -m 0755 "$APP_DIR/public/uploads/marketplace"
 
 log() { printf '[%s] [DoorDrop-Deploy] %s\n' "$(date -u +%FT%TZ)" "$*"; }
 

@@ -93,7 +93,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({
-  limit: '8mb',
+  limit: '16mb',
   verify: (req: any, _res, buf) => {
     if (
       req.originalUrl === '/api/webhooks/zernio' ||

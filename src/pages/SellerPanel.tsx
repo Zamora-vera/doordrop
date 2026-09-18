@@ -37,6 +37,43 @@ import { api } from '../lib/api';
 import { loadGuestChatIntent, clearGuestChatIntent } from '../lib/marketplaceGuestChat';
 import { useI18n } from '../lib/i18n';
 
+const prepareMarketplaceImage = (file: File): Promise<string> => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onerror = () => reject(new Error('No se pudo leer la imagen.'));
+  reader.onload = () => {
+    const original = String(reader.result || '');
+    if (!original || !/^data:image\//i.test(original)) {
+      reject(new Error('El archivo seleccionado no es una imagen válida.'));
+      return;
+    }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size <= 1_500_000) {
+      resolve(original);
+      return;
+    }
+
+    const image = new Image();
+    image.onerror = () => resolve(original);
+    image.onload = () => {
+      const maxEdge = 1600;
+      const sourceEdge = Math.max(image.naturalWidth || 1, image.naturalHeight || 1);
+      const scale = Math.min(1, maxEdge / sourceEdge);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round((image.naturalWidth || 1) * scale));
+      canvas.height = Math.max(1, Math.round((image.naturalHeight || 1) * scale));
+      const context = canvas.getContext('2d');
+      if (!context) {
+        resolve(original);
+        return;
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const compressed = canvas.toDataURL('image/webp', 0.82);
+      resolve(compressed.startsWith('data:image/webp') ? compressed : canvas.toDataURL('image/jpeg', 0.82));
+    };
+    image.src = original;
+  };
+  reader.readAsDataURL(file);
+});
+
 export function SellerPanel({ profile, onProfileUpdated }: any) {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -373,7 +410,7 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
-        const base64 = event.target?.result as string;
+        const base64 = await prepareMarketplaceImage(file);
         const res = await api.uploadMarketplaceImage({ imageBase64: base64, filename: file.name });
         setListingForm(prev => ({
           ...prev,

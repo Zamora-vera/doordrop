@@ -40,6 +40,7 @@ export function setupMarketplaceRoutes(app: any, options: {
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
+  const maxMarketplaceImageBytes = 12 * 1024 * 1024;
 
   // ---------------------------------------------------------------------------
   // 1. Categories (Public)
@@ -510,6 +511,13 @@ export function setupMarketplaceRoutes(app: any, options: {
         buffer = Buffer.from(matches[2], 'base64');
       } else {
         buffer = Buffer.from(imageBase64, 'base64');
+      }
+
+      if (!buffer.length) {
+        return res.status(400).json({ error: 'La imagen está vacía o no es válida.' });
+      }
+      if (buffer.length > maxMarketplaceImageBytes) {
+        return res.status(413).json({ error: 'La imagen no puede superar los 12 MB.' });
       }
 
       const randomName = `mp_${Date.now()}_${crypto.randomBytes(6).toString('hex')}.${ext}`;
