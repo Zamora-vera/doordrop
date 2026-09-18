@@ -64,7 +64,7 @@ if ! docker exec "$CONTAINER" sh -lc 'PUPPETEER_CACHE_DIR=/app/.cache/puppeteer 
   exit 1
 fi
 
-if ! docker exec "$CONTAINER" npm run build; then
+if ! docker exec "$CONTAINER" sh -lc 'NODE_OPTIONS=--max-old-space-size=4096 npm run build'; then
   log "Build fallido; no se reinició el servicio y se reintentará en la próxima ejecución."
   exit 1
 fi
