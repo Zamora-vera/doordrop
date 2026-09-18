@@ -19,11 +19,11 @@ export function ShippingTermsConsent({
 
   const copy = legalLanguage === 'it'
     ? {
-        label: 'Acepto los términos y condiciones de DoorDrop Spedizioni.',
-        link: 'Leer términos de envíos',
-        loading: 'Comprobando aceptación…',
-        saving: 'Guardando aceptación…',
-        error: 'No se pudo guardar la aceptación. Inténtalo de nuevo.'
+        label: 'Accetto i Termini e condizioni di DoorDrop Spedizioni.',
+        link: 'Leggi i termini di spedizione',
+        loading: 'Verifica dell’accettazione…',
+        saving: 'Salvataggio dell’accettazione…',
+        error: 'Non è stato possibile salvare l’accettazione. Riprova.'
       }
     : legalLanguage === 'en'
       ? {
