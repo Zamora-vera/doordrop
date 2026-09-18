@@ -14,6 +14,7 @@ import {
   Share2,
   ShieldCheck,
   Sparkles,
+  FileText,
   Store,
   Users,
   Zap,
@@ -479,6 +480,7 @@ export default function OmnichannelSales() {
   const marketingLanguage = normalizeLanguage(language);
   const content = copy[marketingLanguage];
   const supportHref = getSupportWhatsAppUrl(marketingLanguage);
+  const termsLabel = marketingLanguage === 'it' ? 'Termini Omnicanale' : marketingLanguage === 'en' ? 'Omnichannel terms' : 'Términos del Omnicanal';
   const [plans, setPlans] = useState<CatalogPlan[]>([]);
   const [addOns, setAddOns] = useState<CatalogAddon[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(true);
@@ -604,7 +606,7 @@ export default function OmnichannelSales() {
 
         <section className="bg-white py-20 dark:bg-slate-950 lg:py-28"><div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8"><div className="text-center"><p className="text-xs font-black uppercase tracking-[0.2em] text-blue-600 dark:text-cyan-300">{content.faqEyebrow}</p><h2 className="mt-4 text-4xl font-black tracking-tight text-slate-950 dark:text-white sm:text-5xl">{content.faqTitle}</h2></div><div className="mt-10 space-y-3">{content.faq.map((item) => <details key={item.question} className="group rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-700 dark:bg-slate-900"><summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-black text-slate-900 marker:hidden dark:text-white"><span>{item.question}</span><ChevronDown className="h-5 w-5 shrink-0 text-blue-600 transition group-open:rotate-180 dark:text-cyan-300" /></summary><p className="max-w-3xl pr-8 pt-3 text-sm leading-relaxed text-slate-600 dark:text-slate-400">{item.answer}</p></details>)}</div></div></section>
 
-        <section className="relative overflow-hidden bg-gradient-to-br from-blue-700 via-indigo-700 to-slate-950 py-20 text-white lg:py-24"><div className="absolute -right-20 -top-32 h-96 w-96 rounded-full bg-cyan-400/20 blur-3xl" /><div className="relative mx-auto max-w-5xl px-4 text-center sm:px-6 lg:px-8"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-white/10 shadow-xl backdrop-blur"><Headphones className="h-8 w-8 text-cyan-200" /></div><h2 className="mt-6 text-4xl font-black tracking-tight sm:text-5xl">{content.finalTitle}</h2><p className="mx-auto mt-5 max-w-2xl text-lg leading-relaxed text-blue-100">{content.finalDescription}</p><div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row"><Link to="/auth/register" className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-black text-blue-700 hover:bg-blue-50">{content.finalCta}<ArrowRight className="h-4 w-4" /></Link><a href={supportHref} target="_blank" rel="noreferrer" className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-white/25 bg-white/10 px-6 py-3 text-sm font-black text-white hover:bg-white/15"><MessageCircle className="h-4 w-4" />{content.finalSupport}</a></div><p className="mt-6 text-xs font-bold text-blue-200">{content.liveCatalogDesc}</p></div></section>
+        <section className="relative overflow-hidden bg-gradient-to-br from-blue-700 via-indigo-700 to-slate-950 py-20 text-white lg:py-24"><div className="absolute -right-20 -top-32 h-96 w-96 rounded-full bg-cyan-400/20 blur-3xl" /><div className="relative mx-auto max-w-5xl px-4 text-center sm:px-6 lg:px-8"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-white/10 shadow-xl backdrop-blur"><Headphones className="h-8 w-8 text-cyan-200" /></div><h2 className="mt-6 text-4xl font-black tracking-tight sm:text-5xl">{content.finalTitle}</h2><p className="mx-auto mt-5 max-w-2xl text-lg leading-relaxed text-blue-100">{content.finalDescription}</p><div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row"><Link to="/auth/register" className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-black text-blue-700 hover:bg-blue-50">{content.finalCta}<ArrowRight className="h-4 w-4" /></Link><a href={supportHref} target="_blank" rel="noreferrer" className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-white/25 bg-white/10 px-6 py-3 text-sm font-black text-white hover:bg-white/15"><MessageCircle className="h-4 w-4" />{content.finalSupport}</a></div><Link to="/omnichannel/terms" className="mt-5 inline-flex items-center gap-2 text-sm font-bold text-cyan-100 hover:text-white"><FileText className="h-4 w-4" />{termsLabel}</Link><p className="mt-6 text-xs font-bold text-blue-200">{content.liveCatalogDesc}</p></div></section>
       </main>
       <GlobalFooter />
     </div>

@@ -8,6 +8,7 @@ import { Landing } from './Landing';
 import OmnichannelSales from './OmnichannelSales';
 import { BrandMark, useBrand } from '../lib/brand';
 import MarketplaceTermsDocument from '../components/MarketplaceTermsDocument';
+import OmnichannelTermsDocument from '../components/OmnichannelTermsDocument';
 
 const Navbar = () => {
   const { t } = useI18n();
@@ -195,6 +196,7 @@ export default function PublicPages() {
     <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/terms" element={<MarketplaceTermsDocument />} />
+      <Route path="/omnichannel/terms" element={<OmnichannelTermsDocument />} />
       <Route path="/tracking" element={<Tracking />} />
       <Route path="/omnichannel" element={<OmnichannelSales />} />
     </Routes>

@@ -272,6 +272,47 @@ export function setupOmnichannelRoutes(app: any, options: {
   const adminRouter = Router();
   const { pool, authMiddleware, requireSuperAdmin, UserRepo } = options;
 
+  const OMNICHANNEL_TERMS_VERSION = '1.0';
+  const normalizeOmnichannelTermsLanguage = (value: any): 'es' | 'it' | 'en' | null => {
+    const language = String(value || '').toLowerCase().slice(0, 2);
+    return language === 'es' || language === 'it' || language === 'en' ? language : null;
+  };
+  const getOmnichannelTerms = async (userId: string) => {
+    const [rows]: any = await pool.query(
+      'SELECT terms_version, terms_language, accepted_at FROM omnichannel_terms_acceptances WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
+    const acceptance = rows[0] || null;
+    const accepted = Boolean(acceptance && acceptance.terms_version === OMNICHANNEL_TERMS_VERSION);
+    return {
+      accepted,
+      required: !accepted,
+      version: acceptance?.terms_version || null,
+      language: acceptance?.terms_language || null,
+      accepted_at: acceptance?.accepted_at || null,
+      current_version: OMNICHANNEL_TERMS_VERSION
+    };
+  };
+  const requireAcceptedOmnichannelTerms = async (req: any, res: Response, next: any) => {
+    try {
+      if (req.user?.adminImpersonation && req.user?.adminUserId) return next();
+      const terms = await getOmnichannelTerms(String(req.user.id || req.user.userId));
+      if (terms.required) {
+        return res.status(428).json({
+          error: 'Debes leer y aceptar los términos del servicio Omnicanal.',
+          code: 'OMNICHANNEL_TERMS_REQUIRED',
+          termsRequired: true,
+          termsVersion: OMNICHANNEL_TERMS_VERSION
+        });
+      }
+      req.omnichannelTerms = terms;
+      next();
+    } catch (error) {
+      console.error('[Omnichannel] Error al validar términos:', error);
+      res.status(500).json({ error: 'No se pudo validar la aceptación de términos Omnicanal.' });
+    }
+  };
+
   let schemaReady: Promise<void> | null = null;
   const ensureAgentSchema = async () => {
     if (!schemaReady) {
@@ -749,11 +790,41 @@ export function setupOmnichannelRoutes(app: any, options: {
   // ---------------------------------------------------------------------------
   // 2. Client API Routes (/api/omnichannel/*)
   // ---------------------------------------------------------------------------
+  router.get('/terms', authMiddleware, async (req: any, res: Response) => {
+    try {
+      res.json({ success: true, omnichannel_terms: await getOmnichannelTerms(String(req.user.id || req.user.userId)) });
+    } catch (error) {
+      console.error('[Omnichannel] Terms status error:', error);
+      res.status(500).json({ error: 'No se pudo obtener el estado de los términos Omnicanal.' });
+    }
+  });
+
+  router.post('/terms/accept', authMiddleware, async (req: any, res: Response) => {
+    try {
+      if (req.body?.accepted !== true) return res.status(400).json({ error: 'Debes confirmar la aceptación de los términos.' });
+      const termsLanguage = normalizeOmnichannelTermsLanguage(req.body?.termsLanguage || req.body?.language);
+      if (!termsLanguage) return res.status(400).json({ error: 'El idioma de los términos no es válido.' });
+      const userId = String(req.user.id || req.user.userId);
+      await pool.query(
+        `INSERT INTO omnichannel_terms_acceptances (user_id, terms_version, terms_language, accepted_at, updated_at)
+         VALUES (?, ?, ?, NOW(), NOW())
+         ON DUPLICATE KEY UPDATE terms_version = VALUES(terms_version), terms_language = VALUES(terms_language),
+           accepted_at = NOW(), updated_at = NOW()`,
+        [userId, OMNICHANNEL_TERMS_VERSION, termsLanguage]
+      );
+      res.json({ success: true, omnichannel_terms: await getOmnichannelTerms(userId) });
+    } catch (error) {
+      console.error('[Omnichannel] Terms acceptance error:', error);
+      res.status(500).json({ error: 'No se pudo guardar la aceptación de los términos Omnicanal.' });
+    }
+  });
+
   router.get('/dashboard', authMiddleware, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const subscription = await getUserOmnichannelSubscription(userId);
       const aiReadiness = await getOmnichannelReadiness(userId);
+      const omnichannelTerms = await getOmnichannelTerms(userId);
 
       const [accounts]: any = await pool.query(
         "SELECT id, platform, account_name, username, phone_number, status, avatar_url, updated_at FROM omnichannel_accounts WHERE user_id = ? ORDER BY id DESC",
@@ -803,6 +874,7 @@ export function setupOmnichannelRoutes(app: any, options: {
       res.json({
         success: true,
         subscription,
+        omnichannel_terms: omnichannelTerms,
         accounts,
         metrics: {
           total_channels: accounts.length,
@@ -843,7 +915,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.get('/channels', authMiddleware, async (req: any, res: Response) => {
+  router.get('/channels', authMiddleware, requireAcceptedOmnichannelTerms, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const subscription = await getUserOmnichannelSubscription(userId);
@@ -865,7 +937,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/channels/connect-url', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.post('/channels/connect-url', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const requestedPlatform = String(req.body?.platform || '').trim().toLowerCase();
@@ -921,7 +993,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.delete('/channels/:accountId', authMiddleware, async (req: any, res: Response) => {
+  router.delete('/channels/:accountId', authMiddleware, requireAcceptedOmnichannelTerms, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { accountId } = req.params;
@@ -947,7 +1019,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/conversations', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.post('/conversations', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       if (!await ensureAIReady(userId, res)) return;
@@ -982,7 +1054,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.get('/conversations', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.get('/conversations', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { channel, status, search } = req.query;
@@ -1013,7 +1085,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.get('/conversations/:id/messages', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.get('/conversations/:id/messages', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const convId = Number(req.params.id);
@@ -1037,7 +1109,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/conversations/:id/messages', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.post('/conversations/:id/messages', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const convId = Number(req.params.id);
@@ -1125,7 +1197,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/conversations/:id/toggle-ai', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.post('/conversations/:id/toggle-ai', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const convId = Number(req.params.id);
@@ -1149,7 +1221,7 @@ export function setupOmnichannelRoutes(app: any, options: {
   // ---------------------------------------------------------------------------
   // Team Management & Agent Transfer Endpoints
   // ---------------------------------------------------------------------------
-  router.get('/team', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.get('/team', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const [members]: any = await pool.query(
@@ -1163,7 +1235,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/team', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.post('/team', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { name, role, email, phone, type, status, specialty, languages } = req.body;
@@ -1197,7 +1269,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.put('/team/:id', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.put('/team/:id', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const memberId = req.params.id;
@@ -1229,7 +1301,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.delete('/team/:id', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.delete('/team/:id', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const memberId = req.params.id;
@@ -1245,7 +1317,7 @@ export function setupOmnichannelRoutes(app: any, options: {
   });
 
   // Transfer conversation to an agent (AI or human team member)
-  router.post('/conversations/:id/transfer', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.post('/conversations/:id/transfer', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const convId = Number(req.params.id);
@@ -1352,7 +1424,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.get('/comments', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.get('/comments', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const [comments]: any = await pool.query(
@@ -1370,7 +1442,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/comments/:id/reply', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.post('/comments/:id/reply', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const commentId = Number(req.params.id);
@@ -1406,7 +1478,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/comments/rules', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.post('/comments/rules', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { name, platform, keywords, public_reply_text, dm_reply_text } = req.body;
@@ -1433,7 +1505,7 @@ export function setupOmnichannelRoutes(app: any, options: {
 
   
   // AI Autofill: Generate entire employee setup based on catalog and merchant profile
-  router.post('/ai-employee/autofill', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.post('/ai-employee/autofill', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       console.log('[AI Autofill] Triggered for user:', userId);
@@ -1445,7 +1517,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.get('/ai-employee', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.get('/ai-employee', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const [rows]: any = await pool.query(
@@ -1501,7 +1573,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/ai-employee', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.post('/ai-employee', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const {
@@ -1597,7 +1669,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/ai-employee/test-tool', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.post('/ai-employee/test-tool', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { tool, args } = req.body;
@@ -1612,7 +1684,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.get('/posts', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.get('/posts', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const [posts]: any = await pool.query(
@@ -1626,7 +1698,7 @@ export function setupOmnichannelRoutes(app: any, options: {
     }
   });
 
-  router.post('/posts', authMiddleware, requireActiveSubscription, async (req: any, res: Response) => {
+  router.post('/posts', authMiddleware, requireAcceptedOmnichannelTerms, requireActiveSubscription, async (req: any, res: Response) => {
     try {
       const userId = String(req.user.id || req.user.userId);
       const { caption, media_urls, target_platforms, scheduled_at } = req.body;

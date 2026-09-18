@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-useLocation, useNavigate } from 'react-router-dom';
+useLocation, useNavigate, Link } from 'react-router-dom';
 import {
   Settings,
   Volume2,
@@ -49,6 +49,7 @@ import {
 } from 'lucide-react';
 import {
 omnichannelApi } from '../lib/omnichannelApi';
+import OmnichannelTermsDocument, { resolveOmnichannelTermsLanguage } from '../components/OmnichannelTermsDocument';
 import {
 useI18n } from '../lib/i18n';
 
@@ -429,6 +430,8 @@ export function OmnichannelApp({ profile }: { profile: any }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [termsChecked, setTermsChecked] = useState(false);
+  const [acceptingTerms, setAcceptingTerms] = useState(false);
 
   // Inbox States
   const [conversations, setConversations] = useState<any[]>([]);
@@ -544,6 +547,24 @@ export function OmnichannelApp({ profile }: { profile: any }) {
   const [subscribingCode, setSubscribingCode] = useState<string | null>(null);
 
   const clientCurrency = profile?.currency || 'EUR';
+
+  const handleAcceptOmnichannelTerms = async () => {
+    if (!termsChecked) return;
+    setAcceptingTerms(true);
+    setError(null);
+    try {
+      const response = await omnichannelApi.acceptTerms({
+        accepted: true,
+        termsLanguage: resolveOmnichannelTermsLanguage(language)
+      });
+      setData((previous: any) => previous ? { ...previous, omnichannel_terms: response.omnichannel_terms } : previous);
+      setTermsChecked(false);
+    } catch (err: any) {
+      setError(err.message || 'No se pudo guardar la aceptación de los términos.');
+    } finally {
+      setAcceptingTerms(false);
+    }
+  };
 
   // Load Dashboard Data
   const loadDashboard = async () => {
@@ -973,7 +994,29 @@ export function OmnichannelApp({ profile }: { profile: any }) {
   }, [activeTab]);
 
   const currentPlanCode = data?.subscription?.is_active ? data.subscription.plan_code : null;
+  const termsRequired = data?.omnichannel_terms?.required === true;
 
+  if (termsRequired) {
+    const termsTitle = lang === 'it' ? 'Accetta i termini di DoorDrop Omnicanale' : lang === 'en' ? 'Accept the DoorDrop Omnichannel Terms' : 'Acepta los términos de DoorDrop Omnicanal';
+    const termsDescription = lang === 'it' ? 'Leggi e accetta la versione vigente prima di collegare canali, usare la bandeja, l AI o pubblicare contenuti.' : lang === 'en' ? 'Read and accept the current version before connecting channels, using the inbox, AI or publishing content.' : 'Lee y acepta la versión vigente antes de conectar canales, usar la bandeja, el AI o publicar contenido.';
+    const termsCheckbox = lang === 'it' ? 'Ho letto e accetto i termini e condizioni del servizio Omnicanale.' : lang === 'en' ? 'I have read and accept the Omnichannel service terms and conditions.' : 'He leído y acepto los términos y condiciones del servicio Omnicanal.';
+    const termsButton = lang === 'it' ? 'Accetta e continua' : lang === 'en' ? 'Accept and continue' : 'Aceptar y continuar';
+    return (
+      <div className="max-w-5xl mx-auto pb-12">
+        <div className="rounded-2xl bg-gradient-to-r from-blue-900 via-indigo-950 to-purple-950 p-6 text-white shadow-xl">
+          <div className="flex items-start gap-3"><ShieldCheck className="mt-1 h-7 w-7 shrink-0 text-cyan-300" /><div><h1 className="text-2xl font-black">{termsTitle}</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-blue-100">{termsDescription}</p></div></div>
+        </div>
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-700 dark:bg-slate-900"><OmnichannelTermsDocument language={language} compact /></div>
+        <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-5 dark:border-blue-900 dark:bg-blue-950/30">
+          <label className="flex items-start gap-3 text-sm font-semibold text-slate-800 dark:text-slate-100"><input type="checkbox" className="mt-1 h-4 w-4 accent-blue-600" checked={termsChecked} onChange={(event) => setTermsChecked(event.target.checked)} /><span>{termsCheckbox}</span></label>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button type="button" onClick={handleAcceptOmnichannelTerms} disabled={!termsChecked || acceptingTerms} className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-black text-white shadow hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{acceptingTerms ? '...' : termsButton}</button>
+            <Link to="/omnichannel/terms" target="_blank" className="inline-flex items-center gap-2 text-sm font-bold text-blue-700 hover:text-blue-900 dark:text-cyan-300"><FileText className="h-4 w-4" /> {lang === 'it' ? 'Apri i termini completi' : lang === 'en' ? 'Open full terms' : 'Abrir términos completos'}</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // -------------------------------------------------------------------------
   // 1. DEDICATED FULL-HEIGHT LIVE CHAT WORKSTATION (Inbox Mode)
@@ -2110,6 +2153,7 @@ export function OmnichannelApp({ profile }: { profile: any }) {
             >
               <Zap className="w-4 h-4 text-amber-500" /> {t.managePlans}
             </button>
+            <Link to="/omnichannel/terms" target="_blank" className="hidden items-center gap-2 rounded-xl bg-white/10 px-3 py-2 text-xs font-bold text-white hover:bg-white/20 lg:inline-flex"><FileText className="h-4 w-4" /> {lang === 'it' ? 'Termini' : lang === 'en' ? 'Terms' : 'Términos'}</Link>
             <button
               onClick={loadDashboard}
               className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-all"

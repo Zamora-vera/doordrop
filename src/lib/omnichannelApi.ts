@@ -31,6 +31,8 @@ async function request(endpoint: string, options: RequestInit = {}) {
 export const omnichannelApi = {
   // Client Dashboard & Channels
   getDashboard: () => request('/omnichannel/dashboard'),
+  getTerms: () => request('/omnichannel/terms'),
+  acceptTerms: (data: { accepted: boolean; termsLanguage: 'es' | 'it' | 'en' }) => request('/omnichannel/terms/accept', { method: 'POST', body: JSON.stringify(data) }),
   getReadiness: () => request('/omnichannel/readiness'),
   getChannels: () => request('/omnichannel/channels'),
   getConnectUrl: (platform: string) => request('/omnichannel/channels/connect-url', {
