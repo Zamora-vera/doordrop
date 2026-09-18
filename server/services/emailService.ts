@@ -95,7 +95,7 @@ export function getTransporter(): any {
   return transporter;
 }
 
-const CORPORATE_FROM_EMAIL = 'info@doordrop.lat';
+const CORPORATE_FROM_EMAIL = process.env.MAIL_FROM_EMAIL || 'info@doordrop.lat';
 
 function normalizeWebmailRecipientList(value: string | string[] | undefined): string[] {
   const values = Array.isArray(value) ? value : String(value || '').split(/[;,]/);
@@ -296,7 +296,7 @@ export async function testSmtpConnection(options: {
 
     // 2. Si se proporcionó destinatario, enviar correo de prueba
     if (options.toEmail) {
-      const fromEmail = "info@doordrop.lat";
+      const fromEmail = CORPORATE_FROM_EMAIL;
       const fromName = options.senderName || process.env.MAIL_FROM_NAME || 'DoorDrop';
 
       const info = await customTransporter.sendMail({
@@ -370,7 +370,7 @@ export async function sendTemplatedEmail({
   const textBody = renderTemplateText(tmpl.body_text, allVars, false);
 
   const mailer = getTransporter();
-  const fromEmail = "info@doordrop.lat";
+  const fromEmail = CORPORATE_FROM_EMAIL;
   const fromName = process.env.MAIL_FROM_NAME || 'DoorDrop';
 
   const info = await mailer.sendMail({
@@ -526,7 +526,7 @@ export async function sendPasswordResetEmail({
   const appUrl = (process.env.APP_URL || 'https://doordrop.lat').replace(/\/+$/, '');
   const resetUrl = `${appUrl}/auth/reset-password?token=${encodeURIComponent(resetToken)}`;
   
-  const fromEmail = 'info@doordrop.lat';
+  const fromEmail = CORPORATE_FROM_EMAIL;
   const fromName = 'DoorDrop';
 
   const safeName = recipientName ? escapeHtml(recipientName.trim()) : 'estimado/a usuario/a';
