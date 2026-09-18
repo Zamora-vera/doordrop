@@ -133,10 +133,27 @@ const getCarrierName = (quote: any) => {
 
 
 const formatDeliveryText = (quote: any, t: any) => {
+  const hoursUnit = t('hours_unit') || t('hours') || 'horas';
+  const directMinHours = Number(quote?.estimatedHoursMin ?? quote?.estimatedHours);
+  const directMaxHours = Number(quote?.estimatedHoursMax ?? quote?.estimatedHours ?? directMinHours);
+  const providerCode = String(quote?.providerCode || quote?.provider_code || '').toLowerCase();
+  const payload = quote?.providerPayload || quote?.provider_payload || {};
+  const selectedService = payload?.selectedService || payload?.raw || payload;
+  const apiHours = providerCode === 'spediamopro'
+    ? Number(selectedService?.deliveryTime ?? selectedService?.delivery_time ?? quote?.deliveryHours)
+    : 0;
+  const minHours = Number.isFinite(directMinHours) && directMinHours > 0
+    ? directMinHours
+    : (Number.isFinite(apiHours) && apiHours > 0 ? apiHours : 0);
+  const maxHours = Number.isFinite(directMaxHours) && directMaxHours > 0
+    ? directMaxHours
+    : minHours;
+  if (minHours > 0) {
+    return minHours !== maxHours ? `${minHours}-{maxHours}` + ' ' + `${hoursUnit}` : `${maxHours}` + ' ' + `${hoursUnit}`;
+  }
   const minDays = quote?.estimatedDaysMin;
   const maxDays = quote?.estimatedDaysMax || quote?.estimatedDays;
   const daysUnit = t('days_unit') || t('days') || 'días';
-  const hoursUnit = t('hours_unit') || 'horas';
 
   if (minDays && maxDays && minDays !== maxDays) {
     return `${minDays}-${maxDays} ${daysUnit}`;
@@ -1780,7 +1797,7 @@ const Quote = () => {
                 </div>
                 <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
                   <span>{t('estimated_delivery_label') || 'Entrega estimada'}:</span>
-                  <span className="font-bold text-gray-800 dark:text-gray-200">{selectedQuote.estimatedDays} {t('days_unit') || t('days') || 'dias'}</span>
+                  <span className="font-bold text-gray-800 dark:text-gray-200">{formatDeliveryText(selectedQuote, t)}</span>
                 </div>
                 <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
                   <span>{t('total_packages_label') || 'Bultos totales'}:</span>

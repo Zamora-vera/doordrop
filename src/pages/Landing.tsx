@@ -455,6 +455,11 @@ export const Landing = () => {
                   {quotes.map((q: any, idx: number) => {
                     const carrier = resolveCarrierName(q);
                     const days = q.estimatedDays || q.estimatedDaysMax || q.estimatedDaysMin;
+                    const payload = q.providerPayload || q.provider_payload || {};
+                    const selectedService = payload.selectedService || payload.raw || payload;
+                    const apiHours = String(q.providerCode || q.provider_code || '').toLowerCase() === 'spediamopro'
+                      ? Number(q.estimatedHours || selectedService.deliveryTime || selectedService.delivery_time || 0)
+                      : 0;
                     const price = Number(q.total ?? q.customerPrice ?? 0);
                     const cur = String(q.currency || 'EUR').toUpperCase();
                     const service = String(q.service || q.serviceTypeLabel || 'Standard').replace(/\s+/g, ' ').slice(0, 80);
@@ -478,9 +483,9 @@ export const Landing = () => {
                             </div>
                             <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5 truncate">{service}</p>
                             <div className="flex flex-wrap gap-2 mt-2">
-                              {days != null && (
+                              {(apiHours > 0 || days != null) && (
                                 <span className="inline-flex items-center text-[11px] font-bold text-blue-700 dark:text-cyan-300 bg-blue-50 dark:bg-blue-950/30 px-2.5 py-1 rounded-lg border border-blue-100 dark:border-blue-900/40">
-                                  {days} {t('days') || t('estimated_days')}
+                                  {apiHours > 0 ? `${apiHours}` + ' ' + `${t('hours_unit') || t('hours') || 'hours'}` : `${days}` + ' ' + `${t('days') || t('estimated_days')}`}
                                 </span>
                               )}
                               <span className="inline-flex items-center text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/20 px-2.5 py-1 rounded-lg border border-emerald-100 dark:border-emerald-900/30">

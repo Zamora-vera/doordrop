@@ -10346,7 +10346,10 @@ app.post('/api/shipments/quote', async (req: any, res) => {
             const service = offer?.courierService || {};
             const courierName = spediamoProCourierName(service?.courier);
             const serviceName = compactText(`${courierName} ${service?.code || offer?.serviceCode || 'Standard'}`, 160);
-            const days = safeEstimatedDays(offer?.deliveryTime || 3, 3);
+            // SpediamoPro returns deliveryTime in transit hours (for example 72).
+            const deliveryHoursRaw = Number(offer?.deliveryTime);
+            const deliveryHours = Number.isFinite(deliveryHoursRaw) && deliveryHoursRaw > 0 ? Math.ceil(deliveryHoursRaw) : 72;
+            const days = Math.max(1, Math.ceil(deliveryHours / 24));
             const pointTypes = spediamoProServicePointTypes(offer);
             const flowLabel = `${pointTypes.departure === 'point' ? 'Punto de recogida' : 'Retiro a domicilio'} → ${pointTypes.arrival === 'point' ? 'Punto de entrega' : 'Entrega a domicilio'}`;
             const profile = inferServiceProfile({ ...offer, serviceName, collectionTypeName: `${service?.code || ''} ${flowLabel}` }, days, days);
@@ -10370,7 +10373,10 @@ app.post('/api/shipments/quote', async (req: any, res) => {
               serviceId: String(offer?.service || service?.id || ''),
               service: serviceName,
               collectionTypeName: flowLabel,
-              deliveryText: `${days} días`,
+              deliveryText: `${deliveryHours} horas`,
+              estimatedHours: deliveryHours,
+              estimatedHoursMin: deliveryHours,
+              estimatedHoursMax: deliveryHours,
               estimatedDays: days,
               estimatedDaysMin: days,
               estimatedDaysMax: days,
