@@ -31,9 +31,11 @@ export function setupMarketplaceRoutes(app: any, options: {
     returnUrl: string;
     cancelUrl: string;
   }) => Promise<{ orderId: string; checkoutUrl: string; chargeAmount: number; chargeCurrency: string }>;
+  prepareOrderShipment?: (orderId: string, packageData?: any) => Promise<any>;
+  requestSellerPayout?: (orderId: string, sellerId: string) => Promise<any>;
 }) {
   const router = Router();
-  const { authMiddleware, requireSuperAdmin, UserRepo, pool, walletMutation: mutateWallet, paypalCreateOrder } = options;
+  const { authMiddleware, requireSuperAdmin, UserRepo, pool, walletMutation: mutateWallet, paypalCreateOrder, prepareOrderShipment, requestSellerPayout } = options;
 
   // Ensure uploads directory exists
   const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'marketplace');
@@ -139,137 +141,44 @@ export function setupMarketplaceRoutes(app: any, options: {
   // ---------------------------------------------------------------------------
   // 3. Logistics Quote for a Listing (Buyer enters destination)
   // ---------------------------------------------------------------------------
-  router.post('/listings/:idOrSlug/quote', async (req: Request, res: Response) => {
+  router.post('/listings/:idOrSlug/quote', async (req: any, res: Response) => {
     try {
       const { destCountry, destZip, destCity } = req.body;
-      if (!destCountry || !destZip) {
-        return res.status(400).json({ error: 'Por favor indica el paÃ­s y cÃ³digo postal de destino.' });
-      }
-
+      if (!destCountry || !destZip) return res.status(400).json({ error: 'Por favor indica el país y código postal de destino.' });
       const listing = await MarketplaceRepo.getListingById(req.params.idOrSlug);
-      if (!listing) {
-        return res.status(404).json({ error: 'PublicaciÃ³n no encontrada.' });
-      }
-
-      // Convert weight and dimensions for DoorDrop quote
-      const weightKg = Math.max(0.2, (listing.weight_grams || 1000) / 1000);
-      const lengthCm = listing.length_cm || 20;
-      const widthCm = listing.width_cm || 15;
-      const heightCm = listing.height_cm || 10;
-
-      // Real quote request payload
-      const originCountry = listing.country_code || 'IT';
-      const originZip = listing.postal_code || '20121';
-      const originCity = listing.city || 'Milano';
-
-      // Check if product is direct from Matterhorn (via MH- tag in description)
-      const isMatterhorn = listing.description && listing.description.includes('MH-');
-      let quotes: any[] = [];
-
-      if (isMatterhorn) {
-        // Direct Supplier Delivery via Matterhorn API (/DICTIONARIES/DELIVERY/{country_code})
-        let matterhornDeliveries: any[] = [];
-        try {
-          const destCode = String(destCountry || 'IT').toUpperCase().slice(0, 2);
-          const matterhornApiKey = process.env.MATTERHORN_API_KEY;
-          if (!matterhornApiKey) throw new Error('Matterhorn delivery is not configured');
-          const mhRes = await fetch(`https://matterhorn-wholesale.com/B2BAPI/DICTIONARIES/DELIVERY/${destCode}`, {
-            headers: { 'Authorization': matterhornApiKey, 'Accept': 'application/json' }
-          });
-          if (mhRes.ok) {
-            matterhornDeliveries = await mhRes.json();
-          }
-        } catch (e) {
-          console.warn('[Marketplace] Error consultando delivery API Matterhorn:', e);
-        }
-
-        if (Array.isArray(matterhornDeliveries) && matterhornDeliveries.length > 0) {
-          quotes = matterhornDeliveries.slice(0, 3).map((d: any, idx: number) => ({
-            id: `quote_mh_${d.delivery_id || idx}_${listing.id}`,
-            carrier: `Spedizione Diretta (${d.shipping_method || 'Corriere Internazionale'})`,
-            serviceName: `Consegna Diretta Fornitore (${d.shipping_method || 'Standard'})`,
-            deliveryTime: `${d.delivery_time_days || '3-4'} giorni lavorativi`,
-            price: Number(d.price || 7.90),
-            currency: 'EUR',
-            badge: idx === 0 ? 'Miglior tariffa' : 'Espresso',
-            trackingIncluded: true,
-            isDirectSupplier: true
-          }));
-        } else {
-          // Fallback direct supplier quote
-          quotes = [
-            {
-              id: `quote_mh_global_${listing.id}`,
-              carrier: 'Spedizione Diretta (GLOBAL Express)',
-              serviceName: 'Consegna Diretta Fornitore',
-              deliveryTime: '3-4 giorni lavorativi',
-              price: 7.90,
-              currency: 'EUR',
-              badge: 'Miglior tariffa',
-              trackingIncluded: true,
-              isDirectSupplier: true
-            },
-            {
-              id: `quote_mh_dpd_${listing.id}`,
-              carrier: 'Spedizione Diretta (DPD Europa)',
-              serviceName: 'Consegna Diretta Fornitore DPD',
-              deliveryTime: '4 giorni lavorativi',
-              price: 9.90,
-              currency: 'EUR',
-              badge: 'Espresso',
-              trackingIncluded: true,
-              isDirectSupplier: true
-            }
-          ];
-        }
-      } else {
-        // Standard marketplace item
-        const isDomestic = originCountry.toUpperCase() === String(destCountry).toUpperCase();
-        const baseFee = isDomestic ? 4.90 : 9.90;
-        const weightExtra = (weightKg - 1) > 0 ? (weightKg - 1) * 1.50 : 0;
-
-        quotes = [
-          {
-            id: `quote_standard_${listing.id}`,
-            carrier: isDomestic ? (originCountry === 'IT' ? 'Poste Italiane / SDA' : 'Correos') : 'UPS Standard',
-            serviceName: 'Spedizione Standard (Punto / Domicilio)',
-            deliveryTime: isDomestic ? '48-72h' : '3-5 giorni lavorativi',
-            price: Number((baseFee + weightExtra).toFixed(2)),
-            currency: listing.currency || 'EUR',
-            badge: 'PiÃ¹ economico',
-            trackingIncluded: true
-          },
-          {
-            id: `quote_express_${listing.id}`,
-            carrier: isDomestic ? (originCountry === 'IT' ? 'BRT / Bartolini' : 'SEUR Express') : 'DHL Express',
-            serviceName: 'Spedizione Express 24-48h',
-            deliveryTime: isDomestic ? '24-48h' : '48-72h',
-            price: Number(((baseFee * 1.5) + weightExtra).toFixed(2)),
-            currency: listing.currency || 'EUR',
-            badge: 'PiÃ¹ rapido',
-            trackingIncluded: true
-          }
-        ];
-      }
-
-      res.json({
-        quotes,
-        product: {
-          id: listing.id,
-          title: listing.title,
-          priceMinor: listing.price_minor,
-          currency: listing.currency,
-          originCountry,
-          originCity
-        }
+      if (!listing) return res.status(404).json({ error: 'Publicación no encontrada.' });
+      const baseUrl = String(process.env.INTERNAL_APP_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
+      const authorization = String(req.headers?.authorization || '');
+      const cookie = String(req.headers?.cookie || '');
+      const coreResponse = await fetch(`${baseUrl}/api/shipments/quote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(authorization ? { Authorization: authorization } : {}), ...(cookie ? { Cookie: cookie } : {}) },
+        body: JSON.stringify({
+          originCountry: listing.country_code || 'IT',
+          originZip: listing.postal_code || '', originCity: listing.city || '',
+          destCountry: String(destCountry).toUpperCase().slice(0, 2),
+          destZip: String(destZip).trim(), destCity: String(destCity || '').trim(),
+          packages: [{ width: Math.max(1, Number(listing.width_cm || 10)), height: Math.max(1, Number(listing.height_cm || 10)), length: Math.max(1, Number(listing.length_cm || 10)), weight: Math.max(0.1, Number(listing.weight_grams || 1000) / 1000), qty: 1 }],
+          currency: listing.currency || 'EUR', persistQuotes: true
+        })
       });
+      const payload: any = await coreResponse.json().catch(() => ({}));
+      if (!coreResponse.ok) return res.status(coreResponse.status).json(payload);
+      const quotes = (Array.isArray(payload.quotes) ? payload.quotes : []).map((quote: any) => ({
+        ...quote, id: quote.id,
+        carrier: quote.carrierName || quote.providerDisplayName || quote.provider || 'DoorDrop',
+        serviceName: quote.service || quote.serviceName || 'Servicio de transporte',
+        price: Number(quote.total ?? quote.customerPrice ?? quote.price ?? 0),
+        currency: quote.currency || listing.currency || 'EUR',
+        pointRequired: quote.departureType === 'point' || quote.arrivalType === 'point'
+      })).filter((quote: any) => quote.id && quote.price > 0);
+      res.json({ quotes, product: { id: listing.id, title: listing.title, priceMinor: listing.price_minor, currency: listing.currency, originCountry: listing.country_code || 'IT', originCity: listing.city || '' }});
     } catch (error: any) {
-      console.error('[Marketplace] Error al cotizar envÃ­o:', error);
-      res.status(500).json({ error: 'No se pudo cotizar el envÃ­o para este producto.' });
+      console.error('[Marketplace] Error al cotizar envío real:', error?.message || error);
+      res.status(500).json({ error: 'No se pudo cotizar el envío para este producto.' });
     }
   });
 
-  // ---------------------------------------------------------------------------
   // 4. Public Seller Profile
   // ---------------------------------------------------------------------------
   router.get('/sellers/:slug', async (req: Request, res: Response) => {
@@ -359,7 +268,8 @@ export function setupMarketplaceRoutes(app: any, options: {
   router.get('/seller/profile', authMiddleware, async (req: any, res: Response) => {
     try {
       const profile = await MarketplaceRepo.getSellerProfileByUserId(req.user.id);
-      res.json({ profile });
+      const user = await UserRepo.getById(req.user.id).catch(() => null);
+      res.json({ profile: profile ? { ...profile, paypalConnected: Boolean(user?.paypal_connected), paypalEmail: user?.paypal_email || null } : null });
     } catch (error: any) {
       res.status(500).json({ error: 'No se pudo obtener el perfil de vendedor.' });
     }
@@ -398,6 +308,19 @@ export function setupMarketplaceRoutes(app: any, options: {
       res.json({ success: true, profile: updated });
     } catch (error: any) {
       res.status(500).json({ error: 'No se pudo actualizar el perfil de vendedor.' });
+    }
+  });
+
+  router.post('/seller/paypal/payout-link', authMiddleware, requireAcceptedSellerTerms, async (req: any, res: Response) => {
+    try {
+      if (req.user.role !== 'customer') return res.status(403).json({ error: 'Esta cuenta no puede recibir retiros.' });
+      const user = await UserRepo.getById(req.user.id);
+      if (user?.paypal_connected && user?.paypal_email) {
+        return res.json({ connected: true, paypalEmail: user.paypal_email });
+      }
+      res.status(428).json({ connected: false, error: 'Vincula tu cuenta PayPal desde Seguridad y pagos antes de solicitar un retiro.', connectPath: '/api/user/paypal/connect' });
+    } catch {
+      res.status(500).json({ error: 'No se pudo comprobar la cuenta PayPal.' });
     }
   });
 
@@ -823,10 +746,12 @@ export function setupMarketplaceRoutes(app: any, options: {
       const sellerProfile = await MarketplaceRepo.getSellerProfileByUserId(listing.seller_id);
       const sellerAddress = {
         name: sellerProfile?.display_name || 'Vendedor DoorDrop',
+        email: (await UserRepo.getById(listing.seller_id).catch(() => null))?.email || '',
+        address: sellerProfile?.address || '',
         city: listing.city,
         region: listing.region,
         country: listing.country_code,
-        postalCode: listing.postal_code,
+        postalCode: listing.postal_code || sellerProfile?.zip_code || '',
         phone: sellerProfile?.phone || ''
       };
 
@@ -919,6 +844,10 @@ export function setupMarketplaceRoutes(app: any, options: {
         throw error;
       }
 
+      const shipmentPreparation = prepareOrderShipment
+        ? await prepareOrderShipment(order.id).catch((error: any) => ({ success: false, pending: true, error: error?.message || 'Preparación pendiente.' }))
+        : null;
+
       // Notify seller via system message in conversation
       try {
         const conv = await MarketplaceRepo.findOrCreateConversation(listingId, req.user.id, listing.seller_id);
@@ -981,10 +910,58 @@ export function setupMarketplaceRoutes(app: any, options: {
         }).catch(() => null)
       ]);
 
-      res.json({ success: true, order });
+      res.json({ success: true, order, shipment: shipmentPreparation });
     } catch (error: any) {
       console.error('[Marketplace] Error al crear pedido:', error);
       res.status(500).json({ error: error.message || 'No se pudo procesar la compra.' });
+    }
+  });
+
+  router.post('/orders/:id/package', authMiddleware, requireAcceptedSellerTerms, async (req: any, res: Response) => {
+    try {
+      if (!prepareOrderShipment) return res.status(503).json({ error: 'La preparación logística no está disponible temporalmente.' });
+      const order = await MarketplaceRepo.getOrderById(req.params.id, req.user.id);
+      if (!order || order.seller_id !== req.user.id) return res.status(404).json({ error: 'Pedido no encontrado.' });
+      if (!['paid', 'preparing'].includes(String(order.status))) return res.status(409).json({ error: 'El pedido aún no está listo para preparar el envío.' });
+      const weightKg = Number(req.body?.weightKg);
+      const lengthCm = Number(req.body?.lengthCm);
+      const widthCm = Number(req.body?.widthCm);
+      const heightCm = Number(req.body?.heightCm);
+      if (![weightKg, lengthCm, widthCm, heightCm].every(Number.isFinite) || weightKg <= 0 || lengthCm <= 0 || widthCm <= 0 || heightCm <= 0) {
+        return res.status(400).json({ error: 'Indica peso y medidas reales mayores que cero.' });
+      }
+      const result = await prepareOrderShipment(order.id, { weightKg, lengthCm, widthCm, heightCm, services: req.body?.services || null });
+      res.status(result?.success === false ? 409 : 200).json(result);
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || 'No se pudo preparar el envío.' });
+    }
+  });
+
+  router.post('/orders/:id/payout-request', authMiddleware, requireAcceptedSellerTerms, async (req: any, res: Response) => {
+    try {
+      if (!requestSellerPayout) return res.status(503).json({ error: 'Los retiros no están disponibles temporalmente.' });
+      const order = await MarketplaceRepo.getOrderById(req.params.id, req.user.id);
+      if (!order || order.seller_id !== req.user.id) return res.status(404).json({ error: 'Pedido no encontrado.' });
+      const result = await requestSellerPayout(order.id, req.user.id);
+      res.status(result?.success === false ? 409 : 201).json(result);
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || 'No se pudo solicitar el retiro.' });
+    }
+  });
+
+  router.get('/seller/payouts', authMiddleware, requireAcceptedSellerTerms, async (req: any, res: Response) => {
+    try {
+      const [rows]: any = await pool.query(
+        `SELECT p.*, o.order_number, l.title AS listing_title
+           FROM marketplace_payout_requests p
+           JOIN marketplace_orders o ON o.id = p.order_id
+           JOIN marketplace_listings l ON l.id = o.listing_id
+          WHERE p.seller_id = ? ORDER BY p.requested_at DESC LIMIT 100`,
+        [req.user.id]
+      );
+      res.json({ payouts: rows });
+    } catch {
+      res.status(500).json({ error: 'No se pudieron cargar los retiros.' });
     }
   });
 

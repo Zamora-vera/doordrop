@@ -168,6 +168,7 @@ export interface MarketplaceOrder {
   status: 'pending_payment' | 'paid' | 'preparing' | 'shipped' | 'in_transit' | 'delivered' | 'protection_period' | 'completed' | 'dispute' | 'refunded' | 'cancelled';
   payment_method: string | null;
   payment_reference: string | null;
+  paypal_capture_id?: string | null;
   buyer_address_json: any;
   seller_address_json: any;
   shipping_service_name: string | null;
@@ -175,6 +176,14 @@ export interface MarketplaceOrder {
   tracking_code: string | null;
   label_url: string | null;
   protection_ends_at: string | null;
+  package_weight_kg?: number | null;
+  package_length_cm?: number | null;
+  package_width_cm?: number | null;
+  package_height_cm?: number | null;
+  package_confirmed_at?: string | null;
+  carrier_cost_minor?: number | null;
+  shipping_block_reason?: string | null;
+  delivered_at?: string | null;
   dispute_reason: string | null;
   dispute_opened_at: string | null;
   completed_at: string | null;
@@ -184,4 +193,20 @@ export interface MarketplaceOrder {
   listing_title?: string;
   buyer_name?: string;
   seller_name?: string;
+}
+
+export interface MarketplacePayoutRequest {
+  id: string;
+  order_id: string;
+  seller_id: string;
+  paypal_email: string;
+  amount_minor: number;
+  currency: string;
+  status: 'requested' | 'eligible' | 'processing' | 'paid' | 'failed' | 'cancelled';
+  eligible_at: string;
+  paypal_batch_id: string | null;
+  paypal_item_id: string | null;
+  failure_reason: string | null;
+  requested_at: string;
+  processed_at: string | null;
 }

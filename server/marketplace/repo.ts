@@ -880,9 +880,9 @@ export const MarketplaceRepo = {
 
       await conn.query(
         `UPDATE marketplace_orders
-            SET status = 'paid', payment_reference = ?, updated_at = NOW()
+            SET status = 'paid', payment_reference = ?, paypal_capture_id = ?, updated_at = NOW()
           WHERE id = ? AND status = 'pending_payment'`,
-        [paymentReference, orderId]
+        [paymentReference, paymentReference, orderId]
       );
       if (Number(order.listing_quantity) <= 1) {
         await conn.query(`UPDATE marketplace_listings SET status = 'sold', updated_at = NOW() WHERE id = ?`, [order.listing_id]);

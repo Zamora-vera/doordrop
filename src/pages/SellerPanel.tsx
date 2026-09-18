@@ -857,7 +857,7 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
                         </button>
 
                         <Link
-                          to={`/panel/shipments`}
+                          to={order.tracking_code ? '/track/' + encodeURIComponent(order.tracking_code) : '/panel/shipments'}
                           className="px-3.5 py-2 rounded-xl bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 text-blue-700 dark:text-blue-300 font-bold text-xs flex items-center gap-1.5 transition-colors"
                         >
                           <Truck className="w-3.5 h-3.5" />
@@ -1534,6 +1534,15 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
                   <h3 className="text-base font-black text-slate-900 dark:text-white">
                     {language === 'it' ? 'Vendite e Spedizioni ai Clienti' : 'Ventas y Env√≠os'}
                   </h3>
+                  {!sellerProfile?.paypalConnected && (
+                    <button type="button" onClick={async () => {
+                      try { const result = await api.startPaypalLink(); if (result?.url) window.location.assign(result.url); }
+                      catch (error: any) { alert(error?.message || 'No se pudo vincular PayPal.'); }
+                    }} className="px-4 py-2 rounded-xl bg-[#0070ba] text-white text-xs font-bold">
+                      Vincular PayPal para retiros
+                    </button>
+                  )}
+
 
                   {sellerOrders.length === 0 ? (
                     <div className="text-center py-16 bg-white dark:bg-dark-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-8 space-y-2">
@@ -1563,6 +1572,28 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-bold text-slate-500">{order.shipping_service_name || 'DoorDrop Express'}</span>
+
+                            {['paid', 'preparing'].includes(order.status) && !order.package_confirmed_at && (
+                              <button onClick={async () => {
+                                const weightKg = Number(window.prompt('Peso real del paquete en kg'));
+                                const lengthCm = Number(window.prompt('Largo real en cm'));
+                                const widthCm = Number(window.prompt('Ancho real en cm'));
+                                const heightCm = Number(window.prompt('Alto real en cm'));
+                                if (![weightKg, lengthCm, widthCm, heightCm].every(Number.isFinite) || [weightKg, lengthCm, widthCm, heightCm].some(value => value <= 0)) return;
+                                try { const result = await api.confirmMarketplaceOrderPackage(order.id, { weightKg, lengthCm, widthCm, heightCm }); alert(result?.message || 'Medidas guardadas. DoorDrop prepara el envÌo cuando haya saldo.'); await loadSellerOrders(); }
+                                catch (error: any) { alert(error?.message || 'No se pudieron guardar las medidas.'); }
+                              }} className="px-3 py-1.5 rounded-xl bg-amber-100 text-amber-800 text-xs font-bold">
+                                Confirmar medidas y preparar etiqueta
+                              </button>
+                            )}
+                            {['delivered', 'protection_period'].includes(order.status) && (
+                              <button onClick={async () => {
+                                try { const result = await api.requestMarketplacePayout(order.id); alert(result?.message || 'Solicitud de retiro creada.'); await loadSellerOrders(); }
+                                catch (error: any) { alert(error?.message || 'No se pudo solicitar el retiro.'); }
+                              }} className="px-3 py-1.5 rounded-xl bg-emerald-100 text-emerald-800 text-xs font-bold">
+                                Solicitar retiro
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}

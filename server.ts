@@ -3683,6 +3683,7 @@ async function updateShipmentOperationalStatus(shipment: any, mapped: any, descr
   if (changed) {
     await sendShipmentStatusEmail({ ...shipment, status: newStatus, status_label: label, tracking_code: trackingCode }, newStatus, label, description || label).catch(() => null);
   }
+  await syncMarketplaceOrderFromShipment(shipment.id).catch(() => null);
   return changed;
 }
 
@@ -14654,7 +14655,8 @@ app.get('/api/admin/status-cron/status', authMiddleware, requireSuperAdmin, asyn
 app.post('/api/admin/status-cron/run', authMiddleware, requireSuperAdmin, async (req: any, res) => {
   try {
     const results = await processShipmentStatusUpdates(Number(req.body?.limit || 25));
-    res.json({ success: true, processed: results.length, results });
+    const payouts = await processMarketplacePayouts(Number(req.body?.payoutLimit || 10));
+    res.json({ success: true, processed: results.length, results, payouts });
   } catch (error) {
     console.error('[DiagnÃ³stico Interno] Error actualizando estados:', error);
     res.status(500).json({ error: 'No se pudo completar la operaciÃ³n.' });
@@ -14669,7 +14671,8 @@ app.get('/api/cron/shipments/status', async (req: any, res) => {
       return res.status(403).json({ ok: false, message: 'Acceso no disponible.' });
     }
     const results = await processShipmentStatusUpdates(Number(req.query.limit || 25));
-    res.json({ ok: true, processed: results.length, results });
+    const payouts = await processMarketplacePayouts(Number(req.query.payoutLimit || 10));
+    res.json({ ok: true, processed: results.length, results, payouts });
   } catch (error) {
     console.error('[DiagnÃ³stico Interno] Error cron estados:', error);
     res.status(500).json({ ok: false, message: 'No se pudo completar la operaciÃ³n.' });
@@ -15524,7 +15527,7 @@ app.post('/api/webhooks/paypal', async (req: any, res) => {
       if (marketplaceOrderId) {
         const paymentReference = String(resource.id || reference).trim();
         const paidOrder = await MarketplaceRepo.markOrderPaid(String(marketplaceOrderId), paymentReference);
-        if (paidOrder.activated) {
+        if (paidOrder.activated || ['paid', 'preparing'].includes(String(paidOrder.order?.status || ''))) {
           const [orderRows]: any = await pool.query(
             `SELECT o.*, l.title AS listing_title, ub.name AS buyer_name, ub.email AS buyer_email,
                     us.name AS seller_name, us.email AS seller_email
@@ -15537,6 +15540,9 @@ app.post('/api/webhooks/paypal', async (req: any, res) => {
           );
           const paid = orderRows?.[0];
           if (paid) {
+            await prepareMarketplaceOrderShipment(String(paid.id)).catch((error: any) => {
+              console.error('[Marketplace] Preparación después de PayPal pendiente:', error?.message || error);
+            });
             const appUrl = appBaseUrl().replace(/\/+$/, '');
             const orderUrl = `${appUrl}/panel/marketplace?tab=orders`;
             const total = (Number(paid.total_amount_minor || 0) / 100).toFixed(2);
@@ -17361,6 +17367,193 @@ app.get('/api/currencies', async (req, res) => {
   }
 });
 
+// Marketplace shipping and settlement bridge. Marketplace orders never call a
+// carrier directly: the existing DoorDrop quote/create/retry pipeline remains
+// the only place that can debit the seller wallet or buy a label.
+async function syncMarketplaceOrderFromShipment(shipmentId: string) {
+  const [rows]: any = await pool.query(
+    `SELECT o.id, o.status AS order_status, s.status AS shipment_status,
+            s.tracking_code, s.label_url, s.provider_code, s.status_label
+       FROM marketplace_orders o
+       JOIN shipments s ON s.id = o.shipment_id
+      WHERE s.id = ? LIMIT 1`,
+    [shipmentId]
+  );
+  const row = rows?.[0];
+  if (!row || ['cancelled', 'refunded', 'dispute', 'completed'].includes(String(row.order_status))) return;
+  const shipmentStatus = String(row.shipment_status || '').toLowerCase();
+  let orderStatus = String(row.order_status || 'preparing');
+  let deliveredSql = '';
+  if (['entregado', 'delivered'].includes(shipmentStatus)) {
+    orderStatus = 'protection_period';
+    deliveredSql = `, delivered_at = COALESCE(delivered_at, NOW()),
+      protection_ends_at = COALESCE(protection_ends_at, DATE_ADD(NOW(), INTERVAL 14 DAY))`;
+  } else if (['en_transito', 'in_transit', 'en_reparto', 'out_for_delivery'].includes(shipmentStatus)) {
+    orderStatus = 'in_transit';
+  } else if (row.label_url || ['tramitado', 'label_ready', 'pending_pickup', 'recogida_pendiente'].includes(shipmentStatus)) {
+    orderStatus = 'shipped';
+  } else if (['paid', 'preparing'].includes(orderStatus)) {
+    orderStatus = shipmentStatus === 'pending_customer_balance' ? 'preparing' : orderStatus;
+  }
+  await pool.query(
+    `UPDATE marketplace_orders
+        SET status = ?, tracking_code = COALESCE(?, tracking_code),
+            label_url = COALESCE(?, label_url), shipping_provider_code = COALESCE(?, shipping_provider_code),
+            shipping_block_reason = CASE WHEN ? = 'pending_customer_balance' THEN 'Saldo insuficiente del vendedor' ELSE NULL END,
+            updated_at = NOW()${deliveredSql}
+      WHERE id = ? AND status NOT IN ('cancelled','refunded','dispute','completed')`,
+    [orderStatus, row.tracking_code || null, row.label_url || null, row.provider_code || null, shipmentStatus, row.id]
+  );
+}
+
+async function refreshMarketplaceCarrierQuote(order: any, packageData: any) {
+  const [buyerRows]: any = await pool.query('SELECT id, auth_token_version FROM users WHERE id = ? LIMIT 1', [order.buyer_id]);
+  const buyer = buyerRows?.[0];
+  const address = parseJsonSafe(order.buyer_address_json);
+  const seller = parseJsonSafe(order.seller_address_json);
+  const token = buyer ? generateToken({ userId: String(buyer.id), role: 'customer', authTokenVersion: Number(buyer.auth_token_version || 1) }) : '';
+  const baseUrl = String(process.env.INTERNAL_APP_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
+  const response = await fetch(`${baseUrl}/api/shipments/quote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({
+      originCountry: seller.country || 'IT', originZip: seller.postalCode || seller.zipCode || '', originCity: seller.city || '',
+      destCountry: address.country || 'IT', destZip: address.zipCode || address.postalCode || '', destCity: address.city || '',
+      packages: [{ width: Number(packageData.widthCm), height: Number(packageData.heightCm), length: Number(packageData.lengthCm), weight: Number(packageData.weightKg), qty: 1 }],
+      currency: order.currency || 'EUR', persistQuotes: true
+    })
+  });
+  const payload: any = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.error || 'No se pudo recalcular el transporte real.');
+  const quoteList = Array.isArray(payload.quotes) ? payload.quotes : [];
+  const selected = quoteList.find((item: any) => String(item.id) === String(order.quote_id)) || quoteList[0];
+  if (!selected?.id) throw new Error('No hay una tarifa real disponible para estas medidas y ruta.');
+  const [quoteRows]: any = await pool.query('SELECT * FROM quotes WHERE id = ? LIMIT 1', [selected.id]);
+  if (!quoteRows?.[0]) throw new Error('La cotización real no pudo guardarse.');
+  return quoteRows[0];
+}
+
+async function prepareMarketplaceOrderShipment(orderId: string, packageData?: any) {
+  const [rows]: any = await pool.query(
+    `SELECT o.*, l.title AS listing_title, l.weight_grams, l.length_cm, l.width_cm, l.height_cm,
+            u.email AS seller_email
+       FROM marketplace_orders o
+       JOIN marketplace_listings l ON l.id = o.listing_id
+       JOIN users u ON u.id = o.seller_id
+      WHERE o.id = ? LIMIT 1`,
+    [orderId]
+  );
+  const order = rows?.[0];
+  if (!order) throw new Error('Pedido Marketplace no encontrado.');
+  if (String(order.status) === 'pending_payment') return { success: false, pendingPayment: true, message: 'El pago aún no está confirmado.' };
+  if (!packageData && !order.package_confirmed_at) {
+    await pool.query(`UPDATE marketplace_orders SET status = 'paid', shipping_block_reason = 'Pendiente de confirmación del peso y medidas reales', updated_at = NOW() WHERE id = ? AND status = 'paid'`, [orderId]);
+    return { success: true, pendingMeasurement: true, message: 'El pago fue confirmado. El vendedor debe confirmar el peso y las medidas reales antes de generar la etiqueta.' };
+  }
+  const measured = packageData || {
+    weightKg: Number(order.package_weight_kg || Number(order.weight_grams || 1000) / 1000),
+    lengthCm: Number(order.package_length_cm || order.length_cm || 10),
+    widthCm: Number(order.package_width_cm || order.width_cm || 10),
+    heightCm: Number(order.package_height_cm || order.height_cm || 10)
+  };
+  if (![measured.weightKg, measured.lengthCm, measured.widthCm, measured.heightCm].every((value: any) => Number.isFinite(Number(value)) && Number(value) > 0)) {
+    throw new Error('Peso y medidas reales no válidos.');
+  }
+  const quote = await refreshMarketplaceCarrierQuote(order, measured);
+  const providerCode = String(quote.provider_code || '').toLowerCase();
+  if (!['parcelabc', 'genei', 'paccofacile', 'spedirepro', 'spediamopro', 'easypost', 'logihub_intl'].includes(providerCode)) {
+    throw new Error('La cotización no pertenece a un proveedor logístico real habilitado.');
+  }
+  let shipmentId = String(order.shipment_id || '');
+  if (!shipmentId) {
+    shipmentId = generateId('shp_');
+    const seller = parseJsonSafe(order.seller_address_json);
+    const buyer = parseJsonSafe(order.buyer_address_json);
+    const tracking = `S24G-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
+    await ShipmentRepo.create({
+      id: shipmentId, user_id: order.seller_id, quote_id: quote.id,
+      provider_id: quote.provider_id || null, provider_code: providerCode,
+      provider_shipment_code: null, provider_tracking_code: null, tracking_code: tracking,
+      order_number: shipmentId, reference: order.order_number,
+      status: 'pending_customer_balance', status_label: 'Pendiente de saldo',
+      sender: { ...seller, email: order.seller_email }, recipient: { ...buyer },
+      packages: [{ width: Number(measured.widthCm), height: Number(measured.heightCm), length: Number(measured.lengthCm), weight: Number(measured.weightKg), qty: 1 }],
+      label_url: null, label_base64: null, track_url: null, payment_url: null,
+      provider_payload_json: { marketplaceOrderId: order.id, quoteId: quote.id, services: packageData?.services || null },
+      walletDeduction: 0, currency: quote.currency || order.currency || 'EUR'
+    });
+    await pool.query(
+      `UPDATE marketplace_orders SET shipment_id = ?, quote_id = ?, status = 'preparing',
+        shipping_provider_code = ?, shipping_service_name = ?, package_weight_kg = ?, package_length_cm = ?,
+        package_width_cm = ?, package_height_cm = ?, package_confirmed_at = NOW(), carrier_cost_minor = ?,
+        shipping_block_reason = NULL, updated_at = NOW() WHERE id = ? AND shipment_id IS NULL`,
+      [shipmentId, quote.id, providerCode, quote.service_name || null, Number(measured.weightKg), Number(measured.lengthCm), Number(measured.widthCm), Number(measured.heightCm), Math.round(Number(quote.total_amount || 0) * 100), order.id]
+    );
+    await TrackingEventRepo.create({ shipment_id: shipmentId, tracking_code: tracking, status: 'pending_customer_balance', status_label: 'Pendiente de saldo', description: 'El envío Marketplace espera saldo del vendedor para comprar la etiqueta.' }).catch(() => null);
+    await ensureShipmentJob(shipmentId, order.seller_id, 'payment_manifest', 'pending', 'Pendiente de saldo del vendedor.');
+  }
+  const result = await processShipmentPreparation(shipmentId);
+  await syncMarketplaceOrderFromShipment(shipmentId);
+  const [freshRows]: any = await pool.query('SELECT * FROM shipments WHERE id = ? LIMIT 1', [shipmentId]);
+  const fresh = freshRows?.[0];
+  return { success: Boolean(result?.success), shipmentId, pendingLabel: !fresh?.label_url && !fresh?.label_base64, pendingBalance: fresh?.status === 'pending_customer_balance', trackingCode: fresh?.tracking_code || null, labelUrl: fresh?.label_url || null, message: result?.message || 'Envío en preparación.' };
+}
+
+async function requestMarketplaceSellerPayout(orderId: string, sellerId: string) {
+  const [rows]: any = await pool.query(
+    `SELECT o.*, u.paypal_connected, u.paypal_email
+       FROM marketplace_orders o JOIN users u ON u.id = o.seller_id
+      WHERE o.id = ? AND o.seller_id = ? LIMIT 1`, [orderId, sellerId]
+  );
+  const order = rows?.[0];
+  if (!order) throw new Error('Pedido Marketplace no encontrado.');
+  if (!order.paypal_connected || !order.paypal_email) throw new Error('Vincula PayPal antes de solicitar el retiro.');
+  if (!['protection_period', 'delivered', 'completed'].includes(String(order.status))) throw new Error('El retiro solo puede solicitarse después de la entrega.');
+  const eligibleAt = order.protection_ends_at ? new Date(order.protection_ends_at) : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+  const amountMinor = Math.max(0, Number(order.product_amount_minor || 0) - Number(order.commission_amount_minor || 0));
+  if (!amountMinor) throw new Error('El importe disponible para retiro no es válido.');
+  const payoutId = generateId('mpp_');
+  await pool.query(
+    `INSERT INTO marketplace_payout_requests (id, order_id, seller_id, paypal_email, amount_minor, currency, status, eligible_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'requested', ?)
+     ON DUPLICATE KEY UPDATE updated_at = NOW()`,
+    [payoutId, order.id, sellerId, String(order.paypal_email).toLowerCase(), amountMinor, order.currency || 'EUR', eligibleAt]
+  );
+  const [payoutRows]: any = await pool.query('SELECT * FROM marketplace_payout_requests WHERE order_id = ? LIMIT 1', [order.id]);
+  return { success: true, payout: payoutRows?.[0], message: `Solicitud creada. El retiro estará disponible después de la entrega más 14 días (${eligibleAt.toISOString().slice(0, 10)}).` };
+}
+
+async function processMarketplacePayouts(limit = 10) {
+  const [rows]: any = await pool.query(
+    `SELECT p.*, o.order_number FROM marketplace_payout_requests p JOIN marketplace_orders o ON o.id = p.order_id
+      WHERE p.status IN ('requested','eligible') AND p.eligible_at <= NOW() AND o.status IN ('protection_period','completed')
+      ORDER BY p.eligible_at ASC LIMIT ?`, [Math.max(1, Math.min(25, Number(limit || 10)))]
+  );
+  const results: any[] = [];
+  for (const payout of rows) {
+    const [claim]: any = await pool.query(`UPDATE marketplace_payout_requests SET status = 'processing', updated_at = NOW() WHERE id = ? AND status IN ('requested','eligible')`, [payout.id]);
+    if (!claim.affectedRows) continue;
+    try {
+      const keys = await ApiKeysRepo.get();
+      const token = await ship24goGetPayPalAccessToken(keys);
+      const batchId = `DD-MP-${payout.id}`.slice(0, 50);
+      const response = await fetch(`${ship24goPayPalApiBase(keys?.paypalEnvironment)}/v1/payments/payouts`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'PayPal-Request-Id': batchId },
+        body: JSON.stringify({ sender_batch_header: { sender_batch_id: batchId, email_subject: 'Tu retiro DoorDrop está en proceso', email_message: 'Tu saldo Marketplace fue liberado después del periodo de protección.' }, items: [{ recipient_type: 'EMAIL', amount: { value: (Number(payout.amount_minor) / 100).toFixed(2), currency: payout.currency || 'EUR' }, receiver: payout.paypal_email, note: `DoorDrop Marketplace ${payout.order_number}`, sender_item_id: payout.id }] })
+      });
+      const data: any = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.batch_header?.payout_batch_id) throw new Error(data?.message || 'PayPal no aceptó el retiro.');
+      await pool.query(`UPDATE marketplace_payout_requests SET status = 'paid', paypal_batch_id = ?, processed_at = NOW(), updated_at = NOW() WHERE id = ?`, [data.batch_header.payout_batch_id, payout.id]);
+      await pool.query(`UPDATE marketplace_orders SET status = 'completed', completed_at = COALESCE(completed_at, NOW()), updated_at = NOW() WHERE id = ? AND status IN ('protection_period','completed')`, [payout.order_id]);
+      results.push({ id: payout.id, status: 'paid' });
+    } catch (error: any) {
+      await pool.query(`UPDATE marketplace_payout_requests SET status = 'failed', failure_reason = ?, processed_at = NOW(), updated_at = NOW() WHERE id = ?`, [String(error?.message || 'No se pudo procesar el retiro.').slice(0, 500), payout.id]);
+      results.push({ id: payout.id, status: 'failed' });
+    }
+  }
+  return results;
+}
+
 // --- MARKETPLACE INTEGRATION ---
 import { setupMarketplaceRoutes } from './server/marketplace/routes';
 import { MarketplaceRepo } from './server/marketplace/repo';
@@ -17374,7 +17567,9 @@ setupMarketplaceRoutes(app, {
   walletMutation: applyWalletMutationCommitted,
   paypalCreateOrder: async (options) => {
     return ship24goCreatePayPalCheckoutOrder({ ...options, purpose: 'marketplace_order' });
-  }
+  },
+  prepareOrderShipment: prepareMarketplaceOrderShipment,
+  requestSellerPayout: requestMarketplaceSellerPayout
 });
 app.use('/api/pod', podRoutes);
 app.use(podRoutes);
