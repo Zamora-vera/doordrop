@@ -50,6 +50,11 @@ fi
 mkdir -p "$BACKUP_ROOT/runtime"
 tar -czf "$BACKUP_ROOT/runtime/doordrop_runtime_$(date -u +%Y%m%dT%H%M%SZ).tar.gz" --ignore-failed-read server.cjs index.html assets 2>/dev/null || true
 
+if ! docker exec "$CONTAINER" node -e "require('dotenv').config({path:'/app/.env'}); const mysql=require('mysql2/promise'); async function main(){const c=await mysql.createConnection({host:process.env.MYSQL_HOST,port:Number(process.env.MYSQL_PORT||3306),user:process.env.MYSQL_USER,password:process.env.MYSQL_PASSWORD,database:process.env.MYSQL_DATABASE}); await c.query('ALTER TABLE marketplace_seller_profiles ADD COLUMN IF NOT EXISTS terms_version VARCHAR(32) NULL AFTER terms_accepted_at, ADD COLUMN IF NOT EXISTS terms_language VARCHAR(5) NULL AFTER terms_version'); await c.end()} main().catch(error=>{console.error(error.message); process.exit(1)})"; then
+  log "Migración de términos del Marketplace fallida; no se reinició el servicio."
+  exit 1
+fi
+
 if ! docker exec "$CONTAINER" sh -lc 'PUPPETEER_CACHE_DIR=/app/.cache/puppeteer npm ci --include=dev'; then
   log "Instalación de dependencias fallida; no se reinició el servicio y se reintentará en la próxima ejecución."
   exit 1

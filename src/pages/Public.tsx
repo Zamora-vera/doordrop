@@ -7,6 +7,7 @@ import { LanguageSelector } from '../components/LanguageSelector';
 import { Landing } from './Landing';
 import OmnichannelSales from './OmnichannelSales';
 import { BrandMark, useBrand } from '../lib/brand';
+import MarketplaceTermsDocument from '../components/MarketplaceTermsDocument';
 
 const Navbar = () => {
   const { t } = useI18n();
@@ -193,6 +194,7 @@ export default function PublicPages() {
   return (
     <Routes>
       <Route path="/" element={<Landing />} />
+      <Route path="/terms" element={<MarketplaceTermsDocument />} />
       <Route path="/tracking" element={<Tracking />} />
       <Route path="/omnichannel" element={<OmnichannelSales />} />
     </Routes>

@@ -41,6 +41,31 @@ export function setupMarketplaceRoutes(app: any, options: {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
   const maxMarketplaceImageBytes = 12 * 1024 * 1024;
+  const MARKETPLACE_TERMS_VERSION = '1.0';
+  const normalizeMarketplaceTermsLanguage = (value: any): 'es' | 'it' | 'en' | null => {
+    const language = String(value || '').toLowerCase().slice(0, 2);
+    return language === 'es' || language === 'it' || language === 'en' ? language : null;
+  };
+  const requireAcceptedSellerTerms = async (req: any, res: Response, next: any) => {
+    try {
+      const profile = await MarketplaceRepo.getSellerProfileByUserId(req.user.id);
+      if (!profile) {
+        return res.status(403).json({ error: 'Debes activar tu perfil de vendedor antes de utilizar esta función.' });
+      }
+      if (profile.terms_accepted_at === null || profile.terms_version !== MARKETPLACE_TERMS_VERSION) {
+        return res.status(428).json({
+          error: 'Debes leer y aceptar los términos y condiciones del Marketplace.',
+          termsRequired: true,
+          termsVersion: MARKETPLACE_TERMS_VERSION
+        });
+      }
+      req.marketplaceSellerProfile = profile;
+      next();
+    } catch (error) {
+      console.error('[Marketplace] Error al validar términos del vendedor:', error);
+      res.status(500).json({ error: 'No se pudo validar la aceptación de términos.' });
+    }
+  };
 
   // ---------------------------------------------------------------------------
   // 1. Categories (Public)
@@ -287,13 +312,20 @@ export function setupMarketplaceRoutes(app: any, options: {
   // ---------------------------------------------------------------------------
   router.post('/become-seller', authMiddleware, async (req: any, res: Response) => {
     try {
-      const { displayName, description, phone, country, city, region, zipCode, address, sellerType } = req.body;
+      const { displayName, description, phone, country, city, region, zipCode, address, sellerType, termsAccepted, termsLanguage, language } = req.body;
 
       if (!displayName || !displayName.trim()) {
         return res.status(400).json({ error: 'El nombre público del vendedor es obligatorio.' });
       }
       if (!country) {
         return res.status(400).json({ error: 'El país del vendedor es obligatorio.' });
+      }
+      if (termsAccepted !== true) {
+        return res.status(400).json({ error: 'Debes aceptar los términos y condiciones del Marketplace.' });
+      }
+      const acceptedLanguage = normalizeMarketplaceTermsLanguage(termsLanguage || language);
+      if (!acceptedLanguage) {
+        return res.status(400).json({ error: 'Debes seleccionar uno de los idiomas disponibles para los términos: español, italiano o inglés.' });
       }
 
       // Check if already a seller
@@ -312,7 +344,9 @@ export function setupMarketplaceRoutes(app: any, options: {
         region,
         zipCode,
         address,
-        sellerType: sellerType || 'individual'
+        sellerType: sellerType || 'individual',
+        termsVersion: MARKETPLACE_TERMS_VERSION,
+        termsLanguage: acceptedLanguage
       });
 
       res.json({ success: true, profile });
@@ -331,6 +365,27 @@ export function setupMarketplaceRoutes(app: any, options: {
     }
   });
 
+  router.post('/seller/terms/accept', authMiddleware, async (req: any, res: Response) => {
+    try {
+      if (req.body?.accepted !== true) {
+        return res.status(400).json({ error: 'Debes confirmar la aceptación de los términos.' });
+      }
+      const acceptedLanguage = normalizeMarketplaceTermsLanguage(req.body?.termsLanguage || req.body?.language);
+      if (!acceptedLanguage) {
+        return res.status(400).json({ error: 'El idioma de los términos no es válido.' });
+      }
+      const profile = await MarketplaceRepo.getSellerProfileByUserId(req.user.id);
+      if (!profile) {
+        return res.status(404).json({ error: 'No tienes un perfil de vendedor registrado.' });
+      }
+      const updated = await MarketplaceRepo.acceptSellerTerms(req.user.id, MARKETPLACE_TERMS_VERSION, acceptedLanguage);
+      res.json({ success: true, profile: updated });
+    } catch (error: any) {
+      console.error('[Marketplace] Error al aceptar términos del vendedor:', error);
+      res.status(500).json({ error: 'No se pudo guardar la aceptación de términos.' });
+    }
+  });
+
   router.put('/seller/profile', authMiddleware, async (req: any, res: Response) => {
     try {
       const profile = await MarketplaceRepo.getSellerProfileByUserId(req.user.id);
@@ -346,7 +401,7 @@ export function setupMarketplaceRoutes(app: any, options: {
     }
   });
 
-  router.get('/seller/dashboard', authMiddleware, async (req: any, res: Response) => {
+  router.get('/seller/dashboard', authMiddleware, requireAcceptedSellerTerms, async (req: any, res: Response) => {
     try {
       const stats = await MarketplaceRepo.getSellerStats(req.user.id);
       const profile = await MarketplaceRepo.getSellerProfileByUserId(req.user.id);
@@ -359,7 +414,7 @@ export function setupMarketplaceRoutes(app: any, options: {
   // ---------------------------------------------------------------------------
   // 6. Protected: Seller Listing Management
   // ---------------------------------------------------------------------------
-  router.get('/seller/listings', authMiddleware, async (req: any, res: Response) => {
+  router.get('/seller/listings', authMiddleware, requireAcceptedSellerTerms, async (req: any, res: Response) => {
     try {
       const listings = await MarketplaceRepo.listSellerListings(req.user.id);
       res.json({ listings });
@@ -368,7 +423,7 @@ export function setupMarketplaceRoutes(app: any, options: {
     }
   });
 
-  router.post('/seller/listings', authMiddleware, async (req: any, res: Response) => {
+  router.post('/seller/listings', authMiddleware, requireAcceptedSellerTerms, async (req: any, res: Response) => {
     try {
       const {
         title,
@@ -410,17 +465,6 @@ export function setupMarketplaceRoutes(app: any, options: {
         return res.status(400).json({ error: 'El país es obligatorio.' });
       }
 
-      // Auto ensure seller profile exists
-      let profile = await MarketplaceRepo.getSellerProfileByUserId(req.user.id);
-      if (!profile) {
-        profile = await MarketplaceRepo.createSellerProfile({
-          userId: req.user.id,
-          displayName: req.user.name || 'Vendedor DoorDrop',
-          country: countryCode.toUpperCase().slice(0, 2),
-          city
-        });
-      }
-
       const listing = await MarketplaceRepo.createListing({
         sellerId: req.user.id,
         categoryId: categoryId ? Number(categoryId) : null,
@@ -451,7 +495,7 @@ export function setupMarketplaceRoutes(app: any, options: {
     }
   });
 
-  router.put('/seller/listings/:id', authMiddleware, async (req: any, res: Response) => {
+  router.put('/seller/listings/:id', authMiddleware, requireAcceptedSellerTerms, async (req: any, res: Response) => {
     try {
       const updates = { ...req.body };
       if (updates.price !== undefined) {
@@ -466,7 +510,7 @@ export function setupMarketplaceRoutes(app: any, options: {
     }
   });
 
-  router.patch('/seller/listings/:id/status', authMiddleware, async (req: any, res: Response) => {
+  router.patch('/seller/listings/:id/status', authMiddleware, requireAcceptedSellerTerms, async (req: any, res: Response) => {
     try {
       const { status } = req.body;
       const validStatuses = ['active', 'paused', 'sold', 'archived', 'draft'];
@@ -480,7 +524,7 @@ export function setupMarketplaceRoutes(app: any, options: {
     }
   });
 
-  router.delete('/seller/listings/:id', authMiddleware, async (req: any, res: Response) => {
+  router.delete('/seller/listings/:id', authMiddleware, requireAcceptedSellerTerms, async (req: any, res: Response) => {
     try {
       await MarketplaceRepo.deleteListing(req.params.id, req.user.id);
       res.json({ success: true });
@@ -492,7 +536,7 @@ export function setupMarketplaceRoutes(app: any, options: {
   // ---------------------------------------------------------------------------
   // 7. Image Upload (Base64 or JSON payload)
   // ---------------------------------------------------------------------------
-  router.post('/upload-image', authMiddleware, async (req: any, res: Response) => {
+  router.post('/upload-image', authMiddleware, requireAcceptedSellerTerms, async (req: any, res: Response) => {
     try {
       const { imageBase64, filename } = req.body;
       if (!imageBase64) {

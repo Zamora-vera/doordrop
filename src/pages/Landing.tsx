@@ -713,7 +713,7 @@ export const Landing = () => {
             </p>
             <div className="flex space-x-4 text-xs text-gray-400 dark:text-gray-500">
               <a href="#" className="hover:text-gray-900 dark:hover:text-white">{t('footer_privacy') || 'Privacidad'}</a>
-              <a href="#" className="hover:text-gray-900 dark:hover:text-white">{t('footer_terms') || 'Términos'}</a>
+              <Link to="/terms" className="hover:text-gray-900 dark:hover:text-white">{t('footer_terms') || 'Términos'}</Link>
               <a href="#" className="hover:text-gray-900 dark:hover:text-white">{t('footer_cookies') || 'Cookies'}</a>
             </div>
           </div>

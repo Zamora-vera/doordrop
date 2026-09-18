@@ -36,6 +36,7 @@ import {
 import { api } from '../lib/api';
 import { loadGuestChatIntent, clearGuestChatIntent } from '../lib/marketplaceGuestChat';
 import { useI18n } from '../lib/i18n';
+import MarketplaceTermsDocument, { MARKETPLACE_TERMS_VERSION, resolveMarketplaceTermsLanguage } from '../components/MarketplaceTermsDocument';
 
 const prepareMarketplaceImage = (file: File): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -118,6 +119,8 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
   });
   const [submittingOnboarding, setSubmittingOnboarding] = useState(false);
   const [onboardingError, setOnboardingError] = useState('');
+  const [termsModalOpen, setTermsModalOpen] = useState(false);
+  const [acceptingTerms, setAcceptingTerms] = useState(false);
 
   // Listing Form
   const [listingForm, setListingForm] = useState({
@@ -388,7 +391,7 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
     setSubmittingOnboarding(true);
     setOnboardingError('');
     try {
-      const res = await api.becomeMarketplaceSeller(onboardingForm);
+      const res = await api.becomeMarketplaceSeller({ ...onboardingForm, termsLanguage: legalTermsLanguage });
       setSellerProfile(res.profile);
       if (onProfileUpdated) onProfileUpdated();
       setSearchParams({ tab: 'seller', sub: 'dashboard' });
@@ -399,6 +402,26 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
       setOnboardingError(err.message || 'No se pudo completar el registro.');
     } finally {
       setSubmittingOnboarding(false);
+    }
+  };
+
+  const handleAcceptSellerTerms = async () => {
+    if (!onboardingForm.termsAccepted) {
+      setOnboardingError(language === 'it' ? 'Devi confermare di aver letto e accettato i termini.' : language === 'en' ? 'Please confirm that you have read and accepted the terms.' : 'Confirma que has leído y aceptado los términos.');
+      return;
+    }
+    setAcceptingTerms(true);
+    try {
+      const res = await api.acceptMarketplaceSellerTerms({ accepted: true, termsLanguage: legalTermsLanguage });
+      setSellerProfile(res.profile);
+      setOnboardingForm(prev => ({ ...prev, termsAccepted: false }));
+      setTermsModalOpen(false);
+      setToastMessage(language === 'it' ? 'Termini accettati.' : language === 'en' ? 'Terms accepted.' : 'Términos aceptados.');
+      setTimeout(() => setToastMessage(''), 5000);
+    } catch (err: any) {
+      setOnboardingError(err.message || (language === 'it' ? "Impossibile salvare l'accettazione." : language === 'en' ? 'Could not save your acceptance.' : 'No se pudo guardar la aceptación.'));
+    } finally {
+      setAcceptingTerms(false);
     }
   };
 
@@ -483,6 +506,11 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
     ? 'messages'
     : 'buyer';
 
+  const legalTermsLanguage = resolveMarketplaceTermsLanguage(language);
+  const sellerTermsAccepted = Boolean(
+    sellerProfile?.terms_accepted_at && sellerProfile?.terms_version === MARKETPLACE_TERMS_VERSION
+  );
+
   const sellerSubTab = ['dashboard', 'listings', 'publish', 'orders', 'offers'].includes(currentTab)
     ? currentTab
     : subTab;
@@ -518,6 +546,21 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
           <button onClick={() => setToastMessage('')} className="p-1 hover:bg-white/20 rounded-lg">
             <X className="w-4 h-4" />
           </button>
+        </div>
+      )}
+
+      {termsModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 p-3 sm:p-8 flex items-center justify-center">
+          <div className="relative w-full max-w-4xl max-h-[92vh] overflow-y-auto rounded-3xl bg-white dark:bg-dark-900 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => setTermsModalOpen(false)}
+              className="absolute right-4 top-4 z-10 rounded-full bg-slate-100 dark:bg-slate-800 px-3 py-1.5 text-xs font-black text-slate-600 dark:text-slate-200"
+            >
+              {language === 'it' ? 'Chiudi' : language === 'en' ? 'Close' : 'Cerrar'}
+            </button>
+            <MarketplaceTermsDocument language={legalTermsLanguage} compact />
+          </div>
         </div>
       )}
 
@@ -1010,8 +1053,14 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
                       />
                       <span className="text-xs text-slate-600 dark:text-slate-400 leading-snug">
                         {language === 'it'
-                          ? 'Accetto le condizioni per i venditori DoorDrop, gli standard di spedizione e l\'impegno a preparare i pacchi venduti entro 48 ore.'
-                          : 'Acepto las condiciones para vendedores de DoorDrop, los estándares de envío y el compromiso de despachar los pedidos confirmados en 48 horas.'}
+                          ? 'Accetto i Termini e Condizioni del Marketplace DoorDrop e gli standard applicabili ai venditori.'
+                          : language === 'en'
+                          ? 'I accept the DoorDrop Marketplace Terms and Conditions and the standards applicable to sellers.'
+                          : 'Acepto los Términos y Condiciones del Marketplace DoorDrop y los estándares aplicables a los vendedores.'}
+                        {' '}
+                        <button type="button" onClick={() => setTermsModalOpen(true)} className="font-black text-blue-600 hover:underline">
+                          {language === 'it' ? 'Leggi i termini' : language === 'en' ? 'Read the terms' : 'Leer los términos'}
+                        </button>
                       </span>
                     </label>
                   </div>
@@ -1029,6 +1078,43 @@ export function SellerPanel({ profile, onProfileUpdated }: any) {
                   </div>
                 </form>
               </div>
+            </div>
+          ) : !sellerTermsAccepted ? (
+            <div className="rounded-3xl border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-6 sm:p-8 space-y-5">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-6 h-6 text-amber-600 shrink-0" />
+                <div>
+                  <h2 className="text-xl font-black text-slate-900 dark:text-white">
+                    {language === 'it' ? 'Accettazione dei termini richiesta' : language === 'en' ? 'Terms acceptance required' : 'Debes aceptar los términos para continuar'}
+                  </h2>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                    {language === 'it' ? 'Per pubblicare e gestire articoli devi accettare la versione vigente dei termini del Marketplace.' : language === 'en' ? 'To publish and manage listings, you must accept the current Marketplace terms.' : 'Para publicar y gestionar productos debes aceptar la versión vigente de los términos del Marketplace.'}
+                  </p>
+                </div>
+              </div>
+              <label className="flex items-start gap-2.5 cursor-pointer text-sm text-slate-700 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={onboardingForm.termsAccepted}
+                  onChange={e => setOnboardingForm(prev => ({ ...prev, termsAccepted: e.target.checked }))}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
+                />
+                <span>
+                  {language === 'it' ? 'Ho letto e accetto i termini e condizioni del Marketplace DoorDrop.' : language === 'en' ? 'I have read and accept the DoorDrop Marketplace Terms and Conditions.' : 'He leído y acepto los Términos y Condiciones del Marketplace DoorDrop.'}
+                  {' '}
+                  <button type="button" onClick={() => setTermsModalOpen(true)} className="font-black text-blue-600 hover:underline">
+                    {language === 'it' ? 'Leggi i termini' : language === 'en' ? 'Read the terms' : 'Leer los términos'}
+                  </button>
+                </span>
+              </label>
+              <button
+                type="button"
+                onClick={handleAcceptSellerTerms}
+                disabled={acceptingTerms || !onboardingForm.termsAccepted}
+                className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-black text-white disabled:opacity-50"
+              >
+                {acceptingTerms ? (language === 'it' ? 'Salvataggio…' : language === 'en' ? 'Saving…' : 'Guardando…') : (language === 'it' ? 'Accetta e continua' : language === 'en' ? 'Accept and continue' : 'Aceptar y continuar')}
+              </button>
             </div>
           ) : (
             /* ACTIVE SELLER: Full Vendor Dashboard */

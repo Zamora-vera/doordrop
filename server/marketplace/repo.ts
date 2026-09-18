@@ -71,6 +71,8 @@ export const MarketplaceRepo = {
     zipCode?: string;
     address?: string;
     sellerType?: 'individual' | 'business';
+    termsVersion: string;
+    termsLanguage: 'es' | 'it' | 'en';
   }): Promise<MarketplaceSellerProfile> {
     const id = generateUuid();
     const slug = buildSlug(data.displayName, data.city || '');
@@ -78,8 +80,8 @@ export const MarketplaceRepo = {
     await pool.query(
       `INSERT INTO marketplace_seller_profiles (
         id, user_id, display_name, slug, description, phone, country, city, region, zip_code, address,
-        seller_type, verification_level, is_active, terms_accepted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unverified', 1, NOW())`,
+        seller_type, verification_level, is_active, terms_accepted_at, terms_version, terms_language
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unverified', 1, NOW(), ?, ?)`,
       [
         id,
         data.userId,
@@ -92,7 +94,9 @@ export const MarketplaceRepo = {
         data.region || null,
         data.zipCode || null,
         data.address || null,
-        data.sellerType || 'individual'
+        data.sellerType || 'individual',
+        data.termsVersion,
+        data.termsLanguage
       ]
     );
 
@@ -105,6 +109,16 @@ export const MarketplaceRepo = {
     const created = await this.getSellerProfileById(id);
     if (!created) throw new Error('No se pudo crear el perfil de vendedor.');
     return created;
+  },
+
+  async acceptSellerTerms(userId: string, version: string, language: 'es' | 'it' | 'en'): Promise<MarketplaceSellerProfile | null> {
+    await pool.query(
+      `UPDATE marketplace_seller_profiles
+       SET terms_accepted_at = NOW(), terms_version = ?, terms_language = ?, updated_at = NOW()
+       WHERE user_id = ?`,
+      [version, language, userId]
+    );
+    return this.getSellerProfileByUserId(userId);
   },
 
   async updateSellerProfile(id: string, fields: Partial<MarketplaceSellerProfile>): Promise<void> {

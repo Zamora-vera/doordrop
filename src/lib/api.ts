@@ -274,6 +274,7 @@ export const api = {
   getMarketplaceSeller: (slug: string) => fetchAPI(`/marketplace/sellers/${encodeURIComponent(slug)}`),
   becomeMarketplaceSeller: (data: any) => fetchAPI('/marketplace/become-seller', { method: 'POST', body: JSON.stringify(data) }),
   getMarketplaceSellerProfile: () => fetchAPI('/marketplace/seller/profile'),
+  acceptMarketplaceSellerTerms: (data: { accepted: boolean; termsLanguage: 'es' | 'it' | 'en' }) => fetchAPI('/marketplace/seller/terms/accept', { method: 'POST', body: JSON.stringify(data) }),
   updateMarketplaceSellerProfile: (data: any) => fetchAPI('/marketplace/seller/profile', { method: 'PUT', body: JSON.stringify(data) }),
   getMarketplaceSellerDashboard: () => fetchAPI('/marketplace/seller/dashboard'),
   getMarketplaceSellerListings: () => fetchAPI('/marketplace/seller/listings'),
