@@ -25,6 +25,7 @@ import { GlobalHeader } from '../components/GlobalHeader';
 import { GlobalFooter } from '../components/GlobalFooter';
 import { useI18n } from '../lib/i18n';
 import { saveGuestChatIntent } from '../lib/marketplaceGuestChat';
+import { ShippingTermsConsent } from '../components/ShippingTermsConsent';
 
 export function ProductPage() {
   const { slug } = useParams();
@@ -45,6 +46,7 @@ export function ProductPage() {
   const [selectedQuote, setSelectedQuote] = useState<any>(null);
   const [quoting, setQuoting] = useState(false);
   const [quoteError, setQuoteError] = useState('');
+  const [shippingTermsAccepted, setShippingTermsAccepted] = useState(false);
 
   // Modals State
   const [showCheckout, setShowCheckout] = useState(false);
@@ -124,13 +126,13 @@ export function ProductPage() {
 
   // Load quote automatically when listing is ready
   useEffect(() => {
-    if (listing?.id && listing.shipping_available) {
+    if (listing?.id && listing.shipping_available && shippingTermsAccepted) {
       calculateShipping();
     }
-  }, [listing?.id, destCountry]);
+  }, [listing?.id, destCountry, shippingTermsAccepted]);
 
   const calculateShipping = async () => {
-    if (!listing?.id) return;
+    if (!listing?.id || !shippingTermsAccepted) return;
     setQuoting(true);
     setQuoteError('');
     try {
@@ -545,6 +547,8 @@ export function ProductPage() {
                 </span>
               </div>
 
+              <ShippingTermsConsent onAcceptedChange={setShippingTermsAccepted} />
+
               {/* Destination inputs */}
               <div className="grid grid-cols-3 gap-2 text-xs">
                 <div className="col-span-1">
@@ -573,7 +577,7 @@ export function ProductPage() {
                 <div className="col-span-1 flex items-end">
                   <button
                     onClick={calculateShipping}
-                    disabled={quoting}
+                    disabled={quoting || !shippingTermsAccepted}
                     className="w-full py-2 bg-slate-900 dark:bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors"
                   >
                     {quoting ? '...' : (language === 'it' ? 'Calcola' : 'Cotizar')}
