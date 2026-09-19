@@ -12853,6 +12853,8 @@ function normalizeClientForAdmin(u: any) {
     name: u.name,
     email: u.email,
     phone: u.phone || '',
+    language: u.language || 'es',
+    clientCode: u.client_code || '',
     country: u.country || 'ES',
     currency: normalizeCurrencyCode(u.currency || 'EUR'),
     businessType: u.business_type,

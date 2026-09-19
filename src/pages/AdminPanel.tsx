@@ -427,6 +427,7 @@ const AdminClients = ({ readOnly = false }: { readOnly?: boolean }) => {
   const [actionLoading, setActionLoading] = useState('');
   const [notice, setNotice] = useState('');
   const [recharge, setRecharge] = useState({ amount: '25', currency: 'EUR', note: '' });
+  const [clientFilters, setClientFilters] = useState({ query: '', country: '', status: '', currency: '' });
 
   const loadClients = async () => {
     setLoading(true);
@@ -541,6 +542,17 @@ const AdminClients = ({ readOnly = false }: { readOnly?: boolean }) => {
     ? convertAdminPreview(Number(recharge.amount || 0), recharge.currency, selectedClient.currency || 'EUR', rates)
     : 0;
 
+  const clientCountries = Array.from(new Set(clients.map(client => String(client.country || '').toUpperCase()).filter(Boolean))).sort();
+  const clientCurrencies = Array.from(new Set(clients.map(client => String(client.currency || '').toUpperCase()).filter(Boolean))).sort();
+  const normalizedClientQuery = clientFilters.query.trim().toLowerCase();
+  const filteredClients = clients.filter(client => {
+    const searchable = [client.name, client.email, client.phone, client.clientCode].map(value => String(value || '').toLowerCase()).join(' ');
+    return (!normalizedClientQuery || searchable.includes(normalizedClientQuery))
+      && (!clientFilters.country || String(client.country || '').toUpperCase() === clientFilters.country)
+      && (!clientFilters.status || String(client.status || '') === clientFilters.status)
+      && (!clientFilters.currency || String(client.currency || '').toUpperCase() === clientFilters.currency);
+  });
+
   return (
     <div className="p-4 sm:p-6 md:p-8">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
@@ -551,6 +563,25 @@ const AdminClients = ({ readOnly = false }: { readOnly?: boolean }) => {
         <button onClick={loadClients} className="px-4 py-2 rounded-xl bg-white border border-gray-200 text-sm font-bold text-gray-700 hover:border-blue-200 hover:text-blue-600 transition-colors">
           Actualizar
         </button>
+      </div>
+
+      <div className="mb-6 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+          <label className="flex-1 text-xs font-black uppercase tracking-wider text-gray-500">Buscar cliente
+            <input value={clientFilters.query} onChange={event => setClientFilters(previous => ({ ...previous, query: event.target.value }))} placeholder="Nombre, correo, teléfono o código..." className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 text-sm font-semibold normal-case tracking-normal text-gray-700 outline-none focus:border-blue-500" />
+          </label>
+          <label className="w-full lg:w-44 text-xs font-black uppercase tracking-wider text-gray-500">Origen
+            <select value={clientFilters.country} onChange={event => setClientFilters(previous => ({ ...previous, country: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold normal-case tracking-normal text-gray-700 outline-none focus:border-blue-500"><option value="">Todos los países</option>{clientCountries.map(code => { const country = adminCountry(code); return <option key={code} value={code}>{code}{country ? ` · ${country.nameEs}` : ''}</option>; })}</select>
+          </label>
+          <label className="w-full lg:w-40 text-xs font-black uppercase tracking-wider text-gray-500">Estado
+            <select value={clientFilters.status} onChange={event => setClientFilters(previous => ({ ...previous, status: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold normal-case tracking-normal text-gray-700 outline-none focus:border-blue-500"><option value="">Todos</option><option value="active">Activo</option><option value="suspended">Bloqueado</option><option value="closed">Cerrado</option></select>
+          </label>
+          <label className="w-full lg:w-36 text-xs font-black uppercase tracking-wider text-gray-500">Moneda
+            <select value={clientFilters.currency} onChange={event => setClientFilters(previous => ({ ...previous, currency: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold normal-case tracking-normal text-gray-700 outline-none focus:border-blue-500"><option value="">Todas</option>{clientCurrencies.map(code => <option key={code} value={code}>{code}</option>)}</select>
+          </label>
+          <button type="button" onClick={() => setClientFilters({ query: '', country: '', status: '', currency: '' })} className="h-11 rounded-xl border border-gray-200 px-4 text-sm font-black text-gray-600 hover:border-blue-200 hover:text-blue-600">Limpiar</button>
+        </div>
+        <p className="mt-3 text-xs font-bold text-gray-400">Mostrando {filteredClients.length} de {clients.length} clientes</p>
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -575,7 +606,7 @@ const AdminClients = ({ readOnly = false }: { readOnly?: boolean }) => {
                 </tr>
               </thead>
               <tbody>
-                {clients.map((c: any) => (
+                {filteredClients.length === 0 ? <tr><td colSpan={9} className="p-12 text-center text-gray-500 font-semibold">No hay clientes que coincidan con los filtros.</td></tr> : filteredClients.map((c: any) => (
                   <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                     <td className="p-6 font-bold text-gray-900">
                       <div className="flex items-center gap-3">
@@ -671,6 +702,18 @@ const AdminClients = ({ readOnly = false }: { readOnly?: boolean }) => {
                     </div>
 
                     <div className="rounded-2xl border border-gray-100 overflow-hidden">
+                      <div className="p-4 bg-gray-50 border-b border-gray-100"><h3 className="font-black text-gray-900">Ficha completa del cliente</h3></div>
+                      <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                        <div><p className="text-xs font-black uppercase tracking-wider text-gray-400">Teléfono</p><p className="mt-1 font-semibold text-gray-700">{selectedClient.phone || 'No informado'}</p></div>
+                        <div><p className="text-xs font-black uppercase tracking-wider text-gray-400">Código de cliente</p><p className="mt-1 font-mono font-semibold text-gray-700">{selectedClient.clientCode || selectedClient.id}</p></div>
+                        <div><p className="text-xs font-black uppercase tracking-wider text-gray-400">Idioma de cuenta</p><p className="mt-1 font-semibold text-gray-700">{String(selectedClient.language || 'es').toUpperCase()}</p></div>
+                        <div><p className="text-xs font-black uppercase tracking-wider text-gray-400">Tipo de cuenta</p><p className="mt-1 font-semibold text-gray-700">{selectedClient.businessType || 'Cuenta cliente'}</p></div>
+                        <div><p className="text-xs font-black uppercase tracking-wider text-gray-400">Alta</p><p className="mt-1 font-semibold text-gray-700">{formatAdminDateTime(selectedClient.createdAt).date} {formatAdminDateTime(selectedClient.createdAt).time}</p></div>
+                        <div><p className="text-xs font-black uppercase tracking-wider text-gray-400">Última actualización</p><p className="mt-1 font-semibold text-gray-700">{formatAdminDateTime(selectedClient.updatedAt).date} {formatAdminDateTime(selectedClient.updatedAt).time}</p></div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-gray-100 overflow-hidden">
                       <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
                         <h3 className="font-black text-gray-900">Datos de pago</h3>
                         <ShieldCheck className="w-5 h-5 text-blue-500" />
@@ -715,6 +758,12 @@ const AdminClients = ({ readOnly = false }: { readOnly?: boolean }) => {
                         ))}
                       </div>
                     </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      <div className="rounded-2xl border border-gray-100 p-5 bg-white"><h3 className="font-black text-gray-900 mb-3">Empresas</h3>{(clientDetails?.companies || []).length === 0 ? <p className="text-sm text-gray-500">No hay empresas registradas.</p> : <div className="space-y-2">{clientDetails.companies.map((company: any) => <div key={company.id} className="rounded-xl bg-gray-50 p-3"><p className="font-bold text-gray-800">{company.name || company.legal_name || 'Empresa'}</p><p className="text-xs text-gray-500">{company.tax_id || company.rnc || 'Sin identificador fiscal'}</p></div>)}</div>}</div>
+                      <div className="rounded-2xl border border-gray-100 p-5 bg-white"><h3 className="font-black text-gray-900 mb-3">Tiendas conectadas</h3>{(clientDetails?.stores || []).length === 0 ? <p className="text-sm text-gray-500">No hay tiendas conectadas.</p> : <div className="space-y-2">{clientDetails.stores.map((store: any) => <div key={store.id} className="rounded-xl bg-gray-50 p-3"><p className="font-bold text-gray-800">{store.store_name || store.platform || 'Tienda'}</p><p className="text-xs text-gray-500">{store.platform || '—'} · {store.status || '—'}</p></div>)}</div>}</div>
+                      <div className="rounded-2xl border border-gray-100 p-5 bg-white"><h3 className="font-black text-gray-900 mb-3">Recargas</h3>{(clientDetails?.topups || []).length === 0 ? <p className="text-sm text-gray-500">No hay recargas registradas.</p> : <div className="space-y-2">{clientDetails.topups.map((topup: any) => <div key={topup.id} className="rounded-xl bg-gray-50 p-3"><p className="font-bold text-gray-800">{formatClientMoney(topup.amount, topup.currency)}</p><p className="text-xs text-gray-500">{topup.method || '—'} · {topup.status || '—'}</p><p className="text-[11px] text-gray-400">{formatAdminDateTime(topup.created_at).date}</p></div>)}</div>}</div>
+                    </div>
                   </div>
 
                   <div className="space-y-6">
@@ -757,10 +806,11 @@ const AdminClients = ({ readOnly = false }: { readOnly?: boolean }) => {
                         <p className="text-sm text-gray-500 font-medium">No hay envíos para mostrar.</p>
                       ) : (
                         <div className="space-y-3">
-                          {(clientDetails?.shipments || []).slice(0, 5).map((shipment: any) => (
+                          {(clientDetails?.shipments || []).map((shipment: any) => (
                             <div key={shipment.id} className="p-3 rounded-xl bg-gray-50 border border-gray-100">
                               <p className="font-mono text-xs font-black text-blue-600">{shipment.tracking_code}</p>
-                              <p className="text-xs text-gray-500 font-semibold">{shipment.status_label || 'Registrado'}</p>
+                              <p className="text-xs text-gray-500 font-semibold">{shipment.status_label || 'Registrado'} · {shipment.provider_code || 'DoorDrop'}</p>
+                              <p className="text-[11px] text-gray-400">{formatAdminDateTime(shipment.created_at).date} {formatAdminDateTime(shipment.created_at).time}</p>
                             </div>
                           ))}
                         </div>
