@@ -2604,9 +2604,14 @@ const Quote = () => {
   );
 };
 
-const CUSTOMER_SERVICE_TERMS: Record<string, { title: string; body: string[] }> = {
+const CUSTOMER_SERVICE_TERMS: Record<string, { title: string; subtitle: string; notice: string; acknowledge: string; openLabel: string; closeLabel: string; body: string[] }> = {
   es: {
     title: 'Condiciones del servicio',
+    subtitle: 'Información importante antes de preparar o descargar la etiqueta.',
+    notice: 'Revisa la dirección, el contenido, el valor declarado, el peso y las dimensiones antes de finalizar el envío.',
+    acknowledge: 'Entendido',
+    openLabel: 'Condiciones',
+    closeLabel: 'Cerrar',
     body: [
       'Este servicio es de puerta a puerta. Si el tiempo de tránsito es importante para usted, pero el precio de la opción Express es prohibitivo, y necesita un servicio con seguimiento online, entrega confirmada y además a través de uno de nuestros colaboradores más fiables, entonces este es el servicio para usted. El tiempo de tránsito suele ser entre 3 a 5 días laborables entre la mayoría de los países de la UE, con un par de días más cuando las distancias son grandes.',
       'Para evitar demoras innecesarias, sobrecargos y penalizaciones, por favor asegúrese de declarar correctamente el contenido de su envío y no declarar por debajo de sus valores reales los pesos y las dimensiones de su(s) bulto(s).',
@@ -2617,6 +2622,11 @@ const CUSTOMER_SERVICE_TERMS: Record<string, { title: string; body: string[] }> 
   },
   en: {
     title: 'Service conditions',
+    subtitle: 'Important information before preparing or downloading the label.',
+    notice: 'Review the address, contents, declared value, weight, and dimensions before finalizing the shipment.',
+    acknowledge: 'Understood',
+    openLabel: 'Conditions',
+    closeLabel: 'Close',
     body: [
       'This is a door-to-door service. If transit time matters to you, but the Express option is too expensive, and you need online tracking, confirmed delivery, and service through one of our most reliable logistics partners, this service is designed for you. Transit time is usually 3 to 5 business days between most EU countries, with a few extra days when distances are longer.',
       'To avoid unnecessary delays, surcharges, and penalties, please make sure you declare the shipment contents correctly and do not underdeclare the real weight, value, or dimensions of your parcel(s).',
@@ -2627,6 +2637,11 @@ const CUSTOMER_SERVICE_TERMS: Record<string, { title: string; body: string[] }> 
   },
   it: {
     title: 'Condizioni del servizio',
+    subtitle: 'Informazioni importanti prima di preparare o scaricare l\u2019etichetta.',
+    notice: 'Controlla l\u2019indirizzo, il contenuto, il valore dichiarato, il peso e le dimensioni prima di finalizzare la spedizione.',
+    acknowledge: 'Ho capito',
+    openLabel: 'Condizioni',
+    closeLabel: 'Chiudi',
     body: [
       'Questo è un servizio porta a porta. Se il tempo di transito è importante per te, ma l’opzione Express è troppo costosa, e hai bisogno di tracciamento online, consegna confermata e servizio tramite uno dei nostri partner logistici più affidabili, questo servizio è adatto a te. Il tempo di transito è solitamente tra 3 e 5 giorni lavorativi nella maggior parte dei paesi dell’UE, con qualche giorno in più quando le distanze sono maggiori.',
       'Per evitare ritardi non necessari, supplementi e penali, assicurati di dichiarare correttamente il contenuto della spedizione e di non indicare valori inferiori a quelli reali per peso, valore e dimensioni dei colli.',
@@ -2637,7 +2652,11 @@ const CUSTOMER_SERVICE_TERMS: Record<string, { title: string; body: string[] }> 
   }
 };
 
-const getCustomerServiceTerms = (language: string) => CUSTOMER_SERVICE_TERMS[language] || CUSTOMER_SERVICE_TERMS.en || CUSTOMER_SERVICE_TERMS.es;
+const getCustomerServiceTerms = (language: string) => {
+  const normalized = String(language || '').trim().toLowerCase();
+  const baseLanguage = normalized.split('-')[0];
+  return CUSTOMER_SERVICE_TERMS[normalized] || CUSTOMER_SERVICE_TERMS[baseLanguage] || CUSTOMER_SERVICE_TERMS.en;
+};
 
 const getCustomerShipmentStatus = (shipment: any) => {
   const label = String(shipment?.status || '').toLowerCase();
@@ -3041,7 +3060,7 @@ const Shipments = () => {
                           </span>
                         )}
                         <button onClick={() => setTermsOpen(true)} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-100 dark:bg-dark-800 dark:text-slate-300">
-                          <FileText className="w-4 h-4" /> Condiciones
+                          <FileText className="w-4 h-4" /> {serviceTerms.openLabel}
                         </button>
                         {s.canEdit && (
                           <button onClick={() => openEditShipment(s)} className="inline-flex items-center gap-1.5 rounded-xl bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 hover:bg-blue-100 dark:bg-blue-950/30 dark:text-neon-cyan">
@@ -3095,16 +3114,16 @@ const Shipments = () => {
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-600 dark:text-neon-cyan">DoorDrop</p>
                 <h3 className="text-2xl font-black text-gray-900 dark:text-white mt-1">{serviceTerms.title}</h3>
-                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Información importante antes de preparar o descargar la etiqueta.</p>
+                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{serviceTerms.subtitle}</p>
               </div>
-              <button onClick={() => setTermsOpen(false)} className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-dark-800 text-gray-500">
+              <button onClick={() => setTermsOpen(false)} aria-label={serviceTerms.closeLabel} className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-dark-800 text-gray-500">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-6 space-y-4 text-sm leading-7 text-gray-700 dark:text-gray-300">
               <div className="rounded-2xl bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30 p-4 flex gap-3">
                 <Info className="w-5 h-5 text-blue-600 dark:text-neon-cyan flex-shrink-0 mt-0.5" />
-                <p className="font-bold text-blue-900 dark:text-blue-100">Revisa dirección, contenido, valor declarado, peso y dimensiones antes de finalizar el envío.</p>
+                <p className="font-bold text-blue-900 dark:text-blue-100">{serviceTerms.notice}</p>
               </div>
               {serviceTerms.body.map((paragraph, index) => (
                 <p key={index}>{paragraph}</p>
@@ -3112,7 +3131,7 @@ const Shipments = () => {
             </div>
             <div className="p-6 border-t border-gray-100 dark:border-gray-800 flex justify-end">
               <button onClick={() => setTermsOpen(false)} className="rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-black px-5 py-3 transition-colors">
-                Entendido
+                {serviceTerms.acknowledge}
               </button>
             </div>
           </div>
