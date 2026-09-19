@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useI18n } from '../lib/i18n';
 import { api } from '../lib/api';
-import { LifeBuoy, Send, MessageSquare, ChevronRight, Clock, User, Sparkles, AlertTriangle, ArrowLeft, CheckCircle, HelpCircle, Shield, Check, XCircle, Wallet } from 'lucide-react';
+import { LifeBuoy, Send, MessageSquare, ChevronRight, Clock, User, Sparkles, AlertTriangle, ArrowLeft, CheckCircle, HelpCircle, Shield, Check, XCircle, Wallet, Search, RefreshCw, SlidersHorizontal, Inbox, CheckCircle2 } from 'lucide-react';
 
 export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive?: boolean }) {
   const { t, language } = useI18n();
@@ -12,6 +12,9 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
   const [replyLoading, setReplyLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSuggestedText, setAiSuggestedText] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'resolved'>('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
 
   useEffect(() => {
     fetchTickets();
@@ -138,6 +141,29 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
     }
   };
 
+  const ticketCategories: string[] = Array.from(new Set(tickets.map((ticket) => String(ticket.category || '')).filter(Boolean)));
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredTickets = tickets.filter((ticket) => {
+    const latestReply = ticket.replies?.[ticket.replies.length - 1];
+    const searchFields = [
+      ticket.userName,
+      ticket.userEmail,
+      ticket.id,
+      ticket.subject,
+      ticket.description,
+      ticket.tracking_code,
+      latestReply?.message
+    ].filter(Boolean).join(' ').toLowerCase();
+    const matchesSearch = !normalizedSearch || searchFields.includes(normalizedSearch);
+    const matchesStatus = statusFilter === 'all' || ticket.status === statusFilter;
+    const matchesCategory = categoryFilter === 'all' || ticket.category === categoryFilter;
+    return matchesSearch && matchesStatus && matchesCategory;
+  });
+
+  const getTicketName = (ticket: any) => ticket.userName || ticket.userEmail || 'Cliente DoorDrop';
+  const getTicketInitials = (ticket: any) => getTicketName(ticket).split(/\s+/).filter(Boolean).slice(0, 2).map((part: string) => part[0]).join('').toUpperCase() || 'US';
+  const formatTicketDate = (value: any) => value ? new Date(value).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : 'Sin fecha';
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
@@ -148,19 +174,70 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto font-sans">
+    <div className="min-h-full bg-[#f6f8fb] p-4 sm:p-6 lg:p-8 max-w-[1440px] mx-auto font-sans">
       {/* HEADER SECTION */}
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-lg">
-            <LifeBuoy className="w-6 h-6" />
+      <div className="relative overflow-hidden rounded-[28px] bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 px-5 py-6 sm:px-8 sm:py-7 text-white shadow-xl shadow-slate-200/60 mb-6">
+        <div className="absolute -right-12 -top-20 h-64 w-64 rounded-full bg-blue-500/20 blur-3xl pointer-events-none" />
+        <div className="absolute right-20 bottom-[-90px] h-48 w-48 rounded-full bg-indigo-400/10 blur-3xl pointer-events-none" />
+        <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-white/10 ring-1 ring-white/20 text-blue-200 flex items-center justify-center shadow-lg backdrop-blur-sm">
+              <LifeBuoy className="w-7 h-7" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <span className="text-[11px] font-black uppercase tracking-[0.2em] text-blue-300">Centro de operaciones</span>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 px-2.5 py-1 text-[10px] font-bold text-emerald-200 ring-1 ring-emerald-300/20">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> Atención activa
+                </span>
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-black tracking-tight">Soporte y Copiloto IA</h1>
+              <p className="mt-1 max-w-2xl text-sm text-slate-300">Resuelve incidencias, revisa conversaciones y responde a tus clientes desde una sola vista.</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-3xl font-black text-gray-900">Soporte, Tickets & Copiloto IA</h1>
-            <p className="text-sm text-gray-500 font-medium">Panel de administración para resolver incidencias de clientes y simular respuestas generadas por Inteligencia Artificial.</p>
-          </div>
+          {!activeTicket && (
+            <button
+              type="button"
+              onClick={fetchTickets}
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-bold text-white ring-1 ring-white/20 transition hover:bg-white/20 disabled:opacity-60"
+              disabled={loading}
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Actualizar
+            </button>
+          )}
         </div>
       </div>
+
+      {!activeTicket && (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 mb-6">
+            <div className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm shadow-blue-100/40">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Total tickets</span>
+                <span className="rounded-xl bg-blue-50 p-2 text-blue-600"><Inbox className="h-4 w-4" /></span>
+              </div>
+              <p className="mt-3 text-2xl font-black text-slate-900">{tickets.length}</p>
+              <p className="mt-1 text-xs font-medium text-slate-500">Todas las conversaciones recibidas</p>
+            </div>
+            <div className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm shadow-emerald-100/40">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Pendientes</span>
+                <span className="rounded-xl bg-emerald-50 p-2 text-emerald-600"><CheckCircle2 className="h-4 w-4" /></span>
+              </div>
+              <p className="mt-3 text-2xl font-black text-slate-900">{tickets.filter((ticket) => ticket.status === 'open').length}</p>
+              <p className="mt-1 text-xs font-medium text-slate-500">Requieren atención del equipo</p>
+            </div>
+            <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm shadow-violet-100/40">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Resueltos</span>
+                <span className="rounded-xl bg-violet-50 p-2 text-violet-600"><CheckCircle className="h-4 w-4" /></span>
+              </div>
+              <p className="mt-3 text-2xl font-black text-slate-900">{tickets.filter((ticket) => ticket.status !== 'open').length}</p>
+              <p className="mt-1 text-xs font-medium text-slate-500">Casos cerrados por el equipo</p>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* TICKET DETAIL / RESPONSE VIEW */}
       {activeTicket ? (
@@ -410,76 +487,122 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
         </div>
       ) : (
         /* TICKET LIST VIEW */
-        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-          {tickets.length === 0 ? (
-            <div className="p-20 text-center">
-              <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center text-3xl mx-auto mb-4">
-                <LifeBuoy className="w-8 h-8" />
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm shadow-slate-200/60 sm:p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+              <label className="relative flex-1">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="search"
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Buscar por cliente, correo, asunto o ID..."
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                {([
+                  { value: 'all', label: 'Todos' },
+                  { value: 'open', label: 'Abiertos' },
+                  { value: 'resolved', label: 'Resueltos' }
+                ] as const).map((filter) => (
+                  <button
+                    type="button"
+                    key={filter.value}
+                    onClick={() => setStatusFilter(filter.value)}
+                    className={`h-10 rounded-xl px-3.5 text-xs font-bold transition ${statusFilter === filter.value ? 'bg-slate-900 text-white shadow-md shadow-slate-900/15' : 'bg-slate-50 text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100'}`}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+                {ticketCategories.length > 0 && (
+                  <label className="relative flex h-10 items-center">
+                    <SlidersHorizontal className="pointer-events-none absolute left-3 h-3.5 w-3.5 text-slate-400" />
+                    <select
+                      value={categoryFilter}
+                      onChange={(event) => setCategoryFilter(event.target.value)}
+                      className="h-10 max-w-[190px] appearance-none rounded-xl border border-slate-200 bg-white pl-8 pr-8 text-xs font-bold text-slate-600 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+                    >
+                      <option value="all">Todas las categorías</option>
+                      {ticketCategories.map((category) => <option key={category} value={category}>{getCategoryLabel(category)}</option>)}
+                    </select>
+                  </label>
+                )}
               </div>
-              <h3 className="font-bold text-xl text-gray-900 mb-2">No hay incidencias registradas</h3>
-              <p className="text-sm text-gray-500 max-w-md mx-auto">
-                Los clientes no han abierto tickets todavía. Cuando lo hagan, aparecerán listados aquí para que puedas darles respuesta usando la Inteligencia Artificial.
-              </p>
+            </div>
+            <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-xs font-semibold text-slate-500">
+              <span>{filteredTickets.length} de {tickets.length} conversaciones</span>
+              {(searchTerm || statusFilter !== 'all' || categoryFilter !== 'all') && (
+                <button type="button" onClick={() => { setSearchTerm(''); setStatusFilter('all'); setCategoryFilter('all'); }} className="font-bold text-blue-600 hover:text-blue-700">
+                  Limpiar filtros
+                </button>
+              )}
+            </div>
+          </div>
+
+          {tickets.length === 0 ? (
+            <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-20 text-center shadow-sm">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
+                <LifeBuoy className="h-8 w-8" />
+              </div>
+              <h3 className="mb-2 text-xl font-black text-slate-900">No hay incidencias registradas</h3>
+              <p className="mx-auto max-w-md text-sm font-medium leading-6 text-slate-500">Los clientes no han abierto tickets todavía. Cuando lo hagan, aparecerán listados aquí para que puedas darles respuesta.</p>
+            </div>
+          ) : filteredTickets.length === 0 ? (
+            <div className="rounded-3xl border border-slate-200 bg-white px-6 py-16 text-center shadow-sm">
+              <Search className="mx-auto mb-3 h-8 w-8 text-slate-300" />
+              <h3 className="text-lg font-black text-slate-900">No encontramos coincidencias</h3>
+              <p className="mt-1 text-sm font-medium text-slate-500">Prueba con otro término o limpia los filtros para ver todos los tickets.</p>
             </div>
           ) : (
-            <div className="divide-y divide-gray-150">
-              <div className="p-5 bg-slate-50/50 grid grid-cols-12 text-xs font-bold text-gray-400 uppercase tracking-wider">
-                <div className="col-span-4">Cliente & ID</div>
-                <div className="col-span-3">Asunto / Categoría</div>
-                <div className="col-span-3">Último Mensaje</div>
-                <div className="col-span-2 text-right">Estado</div>
-              </div>
+            <div className="space-y-3">
+              {filteredTickets.map((ticket) => {
+                const latestReply = ticket.replies?.[ticket.replies.length - 1];
+                const isOpen = ticket.status === 'open';
+                return (
+                  <button
+                    type="button"
+                    key={ticket.id}
+                    onClick={() => setActiveTicket(ticket)}
+                    className="group w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm shadow-slate-200/40 transition duration-200 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg hover:shadow-blue-100/50 sm:p-5"
+                  >
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+                      <div className="flex min-w-0 flex-1 items-center gap-3 sm:min-w-[220px] lg:max-w-[30%]">
+                        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-sm font-black ${isOpen ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-100' : 'bg-slate-100 text-slate-500'}`}>
+                          {getTicketInitials(ticket)}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black text-slate-900">{getTicketName(ticket)}</p>
+                          <p className="truncate text-xs font-medium text-slate-500">{ticket.userEmail || 'Cliente DoorDrop'}</p>
+                          <p className="mt-1 truncate font-mono text-[10px] font-semibold text-slate-400">{ticket.id}</p>
+                        </div>
+                      </div>
 
-              {tickets.map((t) => (
-                <div 
-                  key={t.id}
-                  onClick={() => setActiveTicket(t)}
-                  className="p-5 grid grid-cols-12 items-center hover:bg-slate-50/60 transition-colors cursor-pointer"
-                >
-                  <div className="col-span-4 flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-sm shrink-0">
-                      {t.userName ? t.userName.substring(0, 2).toUpperCase() : 'US'}
+                      <div className="min-w-0 flex-1 lg:max-w-[28%]">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate text-sm font-black text-slate-900">{ticket.subject || 'Consulta de soporte'}</p>
+                          <span className="inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700 ring-1 ring-blue-100">{getCategoryLabel(ticket.category)}</span>
+                        </div>
+                        <p className="mt-2 line-clamp-2 text-xs font-medium leading-5 text-slate-500">{ticket.description || 'Sin descripción disponible.'}</p>
+                      </div>
+
+                      <div className="min-w-0 flex-1 lg:max-w-[28%]">
+                        <p className="mb-1 text-[10px] font-black uppercase tracking-wider text-slate-400">Última actividad</p>
+                        <p className="line-clamp-2 text-xs font-medium leading-5 text-slate-600">{latestReply ? `${latestReply.senderName || 'Cliente'}: ${latestReply.message}` : 'Sin mensajes adicionales'}</p>
+                        <p className="mt-2 text-[11px] font-semibold text-slate-400">{formatTicketDate(ticket.createdAt || ticket.created_at)}</p>
+                      </div>
+
+                      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-100 pt-3 lg:border-0 lg:pt-0">
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-black ${isOpen ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100' : 'bg-slate-100 text-slate-500'}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${isOpen ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                          {isOpen ? 'Abierto' : 'Resuelto'}
+                        </span>
+                        <ChevronRight className="h-5 w-5 text-slate-300 transition group-hover:translate-x-1 group-hover:text-blue-600" />
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-bold text-gray-900 text-sm leading-tight">{t.userName}</p>
-                      <p className="text-xs text-gray-500 font-medium mt-0.5">{t.userEmail}</p>
-                      <p className="font-mono text-[10px] text-gray-400 mt-1">{t.id}</p>
-                    </div>
-                  </div>
-
-                  <div className="col-span-3 pr-4">
-                    <p className="font-bold text-gray-850 text-sm leading-tight line-clamp-1">{t.subject}</p>
-                    <div className="mt-1">
-                      <span className="inline-block px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded-full border border-blue-100">
-                        {getCategoryLabel(t.category)}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="col-span-3 text-sm text-gray-600 font-medium line-clamp-2 pr-4">
-                    {t.replies && t.replies.length > 0 ? (
-                      <span className="italic">
-                        {t.replies[t.replies.length - 1].senderName}: {t.replies[t.replies.length - 1].message}
-                      </span>
-                    ) : (
-                      <span className="italic text-gray-400">Sin mensajes</span>
-                    )}
-                  </div>
-
-                  <div className="col-span-2 text-right flex items-center justify-end gap-2">
-                    {t.status === 'open' ? (
-                      <span className="px-2.5 py-1 bg-green-50 text-green-700 text-xs font-bold rounded-full border border-green-100">
-                        Abierto
-                      </span>
-                    ) : (
-                      <span className="px-2.5 py-1 bg-gray-100 text-gray-500 text-xs font-bold rounded-full">
-                        Resuelto
-                      </span>
-                    )}
-                    <ChevronRight className="w-4 h-4 text-gray-400" />
-                  </div>
-                </div>
-              ))}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
