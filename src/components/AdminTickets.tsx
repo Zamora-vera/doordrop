@@ -163,6 +163,11 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
   const getTicketName = (ticket: any) => ticket.userName || ticket.userEmail || 'Cliente DoorDrop';
   const getTicketInitials = (ticket: any) => getTicketName(ticket).split(/\s+/).filter(Boolean).slice(0, 2).map((part: string) => part[0]).join('').toUpperCase() || 'US';
   const formatTicketDate = (value: any) => value ? new Date(value).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : 'Sin fecha';
+  const formatTicketDateTime = (value: any) => {
+    if (!value) return 'Sin fecha';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 'Sin fecha' : date.toLocaleString();
+  };
 
   if (loading) {
     return (
@@ -255,8 +260,8 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
             <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
               <div className="pb-4 border-b border-gray-100">
                 <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Cliente Emisor</span>
-                <p className="font-bold text-gray-900 mt-1">{activeTicket.userName}</p>
-                <p className="text-xs text-slate-500 font-medium font-mono mt-0.5">{activeTicket.userEmail}</p>
+                <p className="font-bold text-gray-900 mt-1">{getTicketName(activeTicket)}</p>
+                <p className="text-xs text-slate-500 font-medium font-mono mt-0.5">{activeTicket.userEmail || 'Cliente DoorDrop'}</p>
               </div>
 
               <div>
@@ -278,11 +283,11 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
                 </div>
               </div>
 
-              {activeTicket.trackingCode && (
+              {(activeTicket.trackingCode || activeTicket.tracking_code) && (
                 <div>
                   <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Código de Seguimiento</span>
                   <p className="font-mono text-sm text-blue-600 font-bold mt-1 underline">
-                    {activeTicket.trackingCode}
+                    {activeTicket.trackingCode || activeTicket.tracking_code}
                   </p>
                 </div>
               )}
@@ -306,7 +311,7 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
                 <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Fecha de Creación</span>
                 <p className="text-sm text-gray-700 font-medium mt-1 flex items-center gap-1.5">
                   <Clock className="w-4 h-4 text-gray-400" />
-                  {new Date(activeTicket.createdAt).toLocaleString()}
+                  {formatTicketDateTime(activeTicket.createdAt || activeTicket.created_at)}
                 </p>
               </div>
 
@@ -411,7 +416,7 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
                     <User className="w-4 h-4" />
                   </div>
                   <div className="bg-slate-50 p-4 rounded-2xl rounded-tl-none border border-slate-100">
-                    <p className="text-xs text-blue-600 font-bold mb-1">{activeTicket.userName} (Cliente)</p>
+                    <p className="text-xs text-blue-600 font-bold mb-1">{getTicketName(activeTicket)} (Cliente)</p>
                     <p className="text-sm text-gray-800 font-medium whitespace-pre-wrap">{activeTicket.description}</p>
                     <span className="text-[10px] text-gray-400 block mt-2 text-right">
                       {new Date(activeTicket.createdAt).toLocaleTimeString()}
