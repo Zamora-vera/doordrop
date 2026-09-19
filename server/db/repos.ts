@@ -1026,7 +1026,12 @@ export const TrackingEventRepo = {
 // 9. Tickets de Soporte (Tickets & Replies)
 export const TicketRepo = {
   async getAll(): Promise<any[]> {
-    const [rows]: any = await pool.query('SELECT * FROM tickets ORDER BY created_at DESC');
+    const [rows]: any = await pool.query(
+      `SELECT t.*, u.name AS userName, u.email AS userEmail, u.country AS userCountry
+       FROM tickets t
+       LEFT JOIN users u ON u.id = t.user_id
+       ORDER BY t.created_at DESC`
+    );
     // Fetch replies for each ticket
     for (const t of rows) {
       const [replies]: any = await pool.query('SELECT * FROM ticket_replies WHERE ticket_id = ? ORDER BY created_at ASC', [t.id]);
@@ -1042,7 +1047,14 @@ export const TicketRepo = {
   },
 
   async getByUserId(userId: string): Promise<any[]> {
-    const [rows]: any = await pool.query('SELECT * FROM tickets WHERE user_id = ? ORDER BY created_at DESC', [userId]);
+    const [rows]: any = await pool.query(
+      `SELECT t.*, u.name AS userName, u.email AS userEmail, u.country AS userCountry
+       FROM tickets t
+       LEFT JOIN users u ON u.id = t.user_id
+       WHERE t.user_id = ?
+       ORDER BY t.created_at DESC`,
+      [userId]
+    );
     for (const t of rows) {
       const [replies]: any = await pool.query('SELECT * FROM ticket_replies WHERE ticket_id = ? ORDER BY created_at ASC', [t.id]);
       t.replies = replies.map((r: any) => ({
@@ -1057,7 +1069,13 @@ export const TicketRepo = {
   },
 
   async getById(id: string): Promise<any | null> {
-    const [rows]: any = await pool.query('SELECT * FROM tickets WHERE id = ?', [id]);
+    const [rows]: any = await pool.query(
+      `SELECT t.*, u.name AS userName, u.email AS userEmail, u.country AS userCountry
+       FROM tickets t
+       LEFT JOIN users u ON u.id = t.user_id
+       WHERE t.id = ?`,
+      [id]
+    );
     const ticket = rows[0] || null;
     if (ticket) {
       const [replies]: any = await pool.query('SELECT * FROM ticket_replies WHERE ticket_id = ? ORDER BY created_at ASC', [id]);

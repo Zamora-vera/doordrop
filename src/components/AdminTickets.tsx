@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useI18n } from '../lib/i18n';
 import { api } from '../lib/api';
-import { LifeBuoy, Send, MessageSquare, ChevronRight, Clock, User, Sparkles, AlertTriangle, ArrowLeft, CheckCircle, HelpCircle, Shield, Check, XCircle, Wallet, Search, RefreshCw, SlidersHorizontal, Inbox, CheckCircle2 } from 'lucide-react';
+import { LifeBuoy, Send, MessageSquare, ChevronRight, ChevronLeft, Clock, User, Sparkles, AlertTriangle, ArrowLeft, CheckCircle, HelpCircle, Shield, Check, XCircle, Wallet, Search, RefreshCw, SlidersHorizontal, Inbox, CheckCircle2 } from 'lucide-react';
 
 export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive?: boolean }) {
   const { t, language } = useI18n();
@@ -15,10 +15,16 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'resolved'>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     fetchTickets();
   }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, categoryFilter, pageSize]);
 
   const fetchTickets = async () => {
     setLoading(true);
@@ -162,6 +168,12 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
 
   const getTicketName = (ticket: any) => ticket.userName || ticket.userEmail || 'Cliente DoorDrop';
   const getTicketInitials = (ticket: any) => getTicketName(ticket).split(/\s+/).filter(Boolean).slice(0, 2).map((part: string) => part[0]).join('').toUpperCase() || 'US';
+  const getCountryCode = (ticket: any) => String(ticket.userCountry || ticket.country || '').trim().toUpperCase();
+  const getCountryFlag = (ticket: any) => {
+    const code = getCountryCode(ticket);
+    if (!/^[A-Z]{2}$/.test(code)) return '🌐';
+    return String.fromCodePoint(...[...code].map((letter) => 127397 + letter.charCodeAt(0)));
+  };
   const formatTicketDate = (value: any) => value ? new Date(value).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : 'Sin fecha';
   const formatTicketDateTime = (value: any) => {
     if (!value) return 'Sin fecha';
@@ -173,6 +185,11 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? 'Sin hora' : date.toLocaleTimeString();
   };
+  const totalPages = Math.max(1, Math.ceil(filteredTickets.length / pageSize));
+  const visiblePage = Math.min(currentPage, totalPages);
+  const paginatedTickets = filteredTickets.slice((visiblePage - 1) * pageSize, visiblePage * pageSize);
+  const firstVisibleTicket = filteredTickets.length === 0 ? 0 : (visiblePage - 1) * pageSize + 1;
+  const lastVisibleTicket = Math.min(visiblePage * pageSize, filteredTickets.length);
 
   if (loading) {
     return (
@@ -267,6 +284,10 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
                 <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Cliente Emisor</span>
                 <p className="font-bold text-gray-900 mt-1">{getTicketName(activeTicket)}</p>
                 <p className="text-xs text-slate-500 font-medium font-mono mt-0.5">{activeTicket.userEmail || 'Cliente DoorDrop'}</p>
+                <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-600 ring-1 ring-slate-200">
+                  <span>{getCountryFlag(activeTicket)}</span>
+                  <span>{getCountryCode(activeTicket) || 'País no disponible'}</span>
+                </div>
               </div>
 
               <div>
@@ -566,7 +587,7 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredTickets.map((ticket) => {
+              {paginatedTickets.map((ticket) => {
                 const latestReply = ticket.replies?.[ticket.replies.length - 1];
                 const isOpen = ticket.status === 'open';
                 return (
@@ -584,7 +605,10 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
                         <div className="min-w-0">
                           <p className="truncate text-sm font-black text-slate-900">{getTicketName(ticket)}</p>
                           <p className="truncate text-xs font-medium text-slate-500">{ticket.userEmail || 'Cliente DoorDrop'}</p>
-                          <p className="mt-1 truncate font-mono text-[10px] font-semibold text-slate-400">{ticket.id}</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-bold text-slate-400">
+                            <span className="inline-flex items-center gap-1"><span>{getCountryFlag(ticket)}</span>{getCountryCode(ticket) || 'País no disponible'}</span>
+                            <span className="font-mono">{ticket.id}</span>
+                          </div>
                         </div>
                       </div>
 
@@ -613,6 +637,44 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
                   </button>
                 );
               })}
+            </div>
+          )}
+          {filteredTickets.length > 0 && (
+            <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-500 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <span>Mostrando {firstVisibleTicket}-{lastVisibleTicket} de {filteredTickets.length}</span>
+                <label className="flex items-center gap-2 border-l border-slate-200 pl-3">
+                  <span className="hidden sm:inline">Por página</span>
+                  <select
+                    value={pageSize}
+                    onChange={(event) => setPageSize(Number(event.target.value))}
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-bold text-slate-700 outline-none focus:border-blue-400"
+                  >
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                  </select>
+                </label>
+              </div>
+              <div className="flex items-center justify-between gap-2 sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                  disabled={visiblePage <= 1}
+                  className="inline-flex items-center gap-1 rounded-lg px-3 py-2 font-bold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-4 w-4" /> Anterior
+                </button>
+                <span className="min-w-[88px] text-center text-slate-700">Página {visiblePage} de {totalPages}</span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                  disabled={visiblePage >= totalPages}
+                  className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-2 font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Siguiente <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           )}
         </div>
