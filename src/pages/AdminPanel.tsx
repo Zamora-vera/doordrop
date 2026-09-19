@@ -126,7 +126,7 @@ const AdminSidebar = ({ isMobileMenuOpen, toggleMobileMenu, currentUser, isDark,
         )}
 
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
-          {menu.map(item => {
+          {menu.filter(item => currentUser?.role === 'super_admin' || ['/admin/shipments', '/admin/tickets'].includes(item.path)).map(item => {
             const active = location.pathname === item.path || (location.pathname.startsWith(item.path) && item.path !== '/admin');
             const handleClick = () => {
               if (window.innerWidth < 768) {
@@ -3593,7 +3593,7 @@ export default function AdminPanel() {
     api.getProfile()
       .then((res: any) => {
         const user = res.user;
-        if (!user || user.role !== 'super_admin') {
+        if (!user || !['super_admin', 'support'].includes(user.role)) {
           removeAuthToken();
           navigate('/auth/login', { replace: true });
           return;
@@ -3646,6 +3646,10 @@ export default function AdminPanel() {
     );
   }
 
+  if (currentUser?.role === 'support' && !['/admin/shipments', '/admin/tickets'].includes(location.pathname)) {
+    return <Navigate to="/admin/shipments" replace />;
+  }
+
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 dark:bg-dark-900 font-sans transition-colors relative">
       {/* Mobile Top Header */}
@@ -3674,7 +3678,7 @@ export default function AdminPanel() {
         />
         <main className="flex-1 overflow-y-auto h-[calc(100vh-4rem)] md:h-screen bg-slate-50 dark:bg-dark-900 transition-colors">
           <Routes>
-            <Route path="/" element={<AdminDashboard />} />
+            <Route path="/" element={currentUser?.role === 'support' ? <Navigate to="/admin/shipments" replace /> : <AdminDashboard />} />
             <Route path="/clients" element={<AdminClients />} />
             <Route path="/staff" element={<Staff />} />
             <Route path="/shipments" element={<AdminShipments />} />
@@ -3698,7 +3702,7 @@ export default function AdminPanel() {
             <Route path="/settings/smtp/template/" element={<EmailTemplates />} />
             <Route path="/settings/email/logs" element={<AdminEmailLogs />} />
             <Route path="/webmail" element={<Webmail />} />
-            <Route path="/tickets" element={<AdminTickets />} />
+            <Route path="/tickets" element={<AdminTickets canReviewSensitive={currentUser?.role === 'super_admin'} />} />
             <Route path="/copilot" element={<Navigate to="/admin/assistance" replace />} />
             <Route path="*" element={<div className="p-4 md:p-8 text-slate-500 dark:text-slate-400">Módulo en preparación para el Super Admin</div>} />
           </Routes>

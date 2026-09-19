@@ -6181,6 +6181,18 @@ const authMiddleware = async (req: any, res: any, next: any) => {
       return res.status(403).json({ error: 'Cuenta no disponible temporalmente.' });
     }
 
+    let staffPermissions: string[] = [];
+    if (user.role === 'support') {
+      const [staffRows]: any = await pool.query(
+        'SELECT permissions_json FROM admin_staff WHERE user_id = ? LIMIT 1',
+        [user.id]
+      );
+      const configured = safeJsonParse(staffRows?.[0]?.permissions_json, []);
+      staffPermissions = Array.isArray(configured)
+        ? Array.from(new Set(configured.map((item: any) => String(item || '').trim()).filter(Boolean)))
+        : [];
+    }
+
     // Normalizar estructura de campos booleanos y JSON para que coincidan con el código frontend
     req.user = {
       id: user.id,
@@ -6204,6 +6216,7 @@ const authMiddleware = async (req: any, res: any, next: any) => {
       adminUserId: decoded.adminUserId || null,
       isSeller: Boolean(user.is_seller),
       sellerProfileId: user.seller_profile_id || null,
+      staffPermissions,
       createdAt: user.created_at
     };
     next();
@@ -6236,6 +6249,21 @@ const DEFAULT_STAFF_PERMISSIONS = ['clients.read', 'shipments.read', 'tickets.re
 function normalizeStaffPermissions(value: any, fallback = DEFAULT_STAFF_PERMISSIONS): string[] {
   const source = Array.isArray(value) ? value : fallback;
   return Array.from(new Set(source.map((item: any) => String(item || '').trim()).filter((item: string) => (STAFF_PERMISSION_KEYS as readonly string[]).includes(item))));
+}
+
+function requireAdminPermission(permission: typeof STAFF_PERMISSION_KEYS[number]) {
+  return (req: any, res: any, next: any) => {
+    if (req.user?.role === 'super_admin') return next();
+    if (req.user?.role === 'support' && Array.isArray(req.user.staffPermissions) && req.user.staffPermissions.includes(permission)) {
+      return next();
+    }
+    return res.status(403).json({ error: 'Acceso denegado. No tienes permisos para esta operación.' });
+  };
+}
+
+function hasAdminPermission(req: any, permission: typeof STAFF_PERMISSION_KEYS[number]): boolean {
+  return req.user?.role === 'super_admin'
+    || (req.user?.role === 'support' && Array.isArray(req.user.staffPermissions) && req.user.staffPermissions.includes(permission));
 }
 
 function normalizeStaffEmail(value: any): string {
@@ -11671,7 +11699,8 @@ app.put('/api/shipments/:id', authMiddleware, async (req: any, res) => {
 app.post('/api/shipments/:id/retry-label', authMiddleware, async (req: any, res) => {
   try {
     const shipment = await ShipmentRepo.getById(req.params.id);
-    if (!shipment || (req.user.role !== 'super_admin' && shipment.user_id !== req.user.id)) {
+    const canOperateAllShipments = hasAdminPermission(req, 'shipments.manage');
+    if (!shipment || (!canOperateAllShipments && shipment.user_id !== req.user.id)) {
       return res.status(404).json({ error: 'No hay datos para mostrar.' });
     }
     const result = await processShipmentPreparation(shipment.id);
@@ -13124,7 +13153,7 @@ async function processAdminShipmentNotificationJobs(limit = 20) {
 }
 
 // Admin: Envíos
-app.get('/api/admin/shipments', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.get('/api/admin/shipments', authMiddleware, requireAdminPermission('shipments.read'), async (req: any, res) => {
   try {
     const search = String(req.query?.q || '').trim();
     const page = Math.max(1, Number.parseInt(String(req.query?.page || '1'), 10) || 1);
@@ -13237,6 +13266,7 @@ app.get('/api/admin/shipments', authMiddleware, requireSuperAdmin, async (req: a
       for (const provider of providersDb) providerMap.set(String(provider.code || '').toLowerCase(), provider);
     }
 
+    const canViewInternalShipment = hasAdminPermission(req, 'shipments.read');
     const normalized = shipmentsList.map(s => {
       const provider = providerMap.get(String(s.provider_code || '').toLowerCase());
       const payload = parseJsonSafe(s.provider_payload_json);
@@ -13250,7 +13280,7 @@ app.get('/api/admin/shipments', authMiddleware, requireSuperAdmin, async (req: a
       userId: s.user_id,
       customer: { id: s.user_id, name: s.user_name || '', email: s.user_email || '', language: s.user_language || 'es', clientCode: s.user_client_code || '' },
       trackingCode: s.tracking_code,
-      providerTracking: s.provider_tracking_code || '',
+      providerTracking: canViewInternalShipment ? (s.provider_tracking_code || '') : '',
       providerShipmentCode: s.provider_shipment_code || '',
       reference: s.reference || '',
       orderNumber: s.order_number || '',
@@ -13259,8 +13289,8 @@ app.get('/api/admin/shipments', authMiddleware, requireSuperAdmin, async (req: a
       providerInternalName,
       providerDisplayName: publicProviderName(provider || {}),
       carrierName,
-      status: req.user.role === 'super_admin' ? (s.status_label || 'Creado') : customerPublicShipmentStatus(s),
-      statusCode: req.user.role === 'super_admin' ? (s.status || 'created') : customerPublicShipmentStatusCode(s),
+      status: canViewInternalShipment ? (s.status_label || 'Creado') : customerPublicShipmentStatus(s),
+      statusCode: canViewInternalShipment ? (s.status || 'created') : customerPublicShipmentStatusCode(s),
       labelStatus: s.label_status || (s.label_base64 || s.label_url ? 'available' : 'pending'),
       labelReady: Boolean(s.label_base64 || s.label_url),
       isDraft: String(s.status || '').toLowerCase() === 'draft',
@@ -13290,7 +13320,7 @@ app.get('/api/admin/shipments', authMiddleware, requireSuperAdmin, async (req: a
 });
 
 // Admin: Actualizar Estado del Envío
-app.post('/api/admin/shipments/:id/status', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.post('/api/admin/shipments/:id/status', authMiddleware, requireAdminPermission('shipments.manage'), async (req: any, res) => {
   try {
     const status = String(req.body?.status || '').trim();
     const reason = String(req.body?.reason || '').trim().slice(0, 1000);
@@ -13317,7 +13347,7 @@ app.post('/api/admin/shipments/:id/status', authMiddleware, requireSuperAdmin, a
 });
 
 // Admin: Notificar al cliente usando una plantilla existente y el idioma de su cuenta.
-app.post('/api/admin/shipments/:id/notify', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.post('/api/admin/shipments/:id/notify', authMiddleware, requireAdminPermission('shipments.manage'), async (req: any, res) => {
   try {
     const shipment = await ShipmentRepo.getById(req.params.id);
     if (!shipment) return res.status(404).json({ error: 'Envío no encontrado.' });
@@ -13343,7 +13373,7 @@ app.post('/api/admin/shipments/:id/notify', authMiddleware, requireSuperAdmin, a
   }
 });
 
-app.get('/api/admin/shipments/:id/timeline', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.get('/api/admin/shipments/:id/timeline', authMiddleware, requireAdminPermission('shipments.read'), async (req: any, res) => {
   try {
     const shipment = await ShipmentRepo.getById(req.params.id);
     if (!shipment) return res.status(404).json({ error: 'Envío no encontrado.' });
@@ -13361,7 +13391,7 @@ app.get('/api/admin/shipments/:id/timeline', authMiddleware, requireSuperAdmin, 
   }
 });
 
-app.post('/api/admin/shipments/bulk/status', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.post('/api/admin/shipments/bulk/status', authMiddleware, requireAdminPermission('shipments.manage'), async (req: any, res) => {
   try {
     const ids: string[] = Array.from(new Set<string>((Array.isArray(req.body?.shipmentIds) ? req.body.shipmentIds : []).map((id: any) => String(id || '').trim()).filter(Boolean))).slice(0, 100);
     const status = String(req.body?.status || '').trim();
@@ -13384,7 +13414,7 @@ app.post('/api/admin/shipments/bulk/status', authMiddleware, requireSuperAdmin, 
   }
 });
 
-app.post('/api/admin/shipments/bulk/notify', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.post('/api/admin/shipments/bulk/notify', authMiddleware, requireAdminPermission('shipments.manage'), async (req: any, res) => {
   try {
     await ensureAdminShipmentOpsSchema();
     const ids: string[] = Array.from(new Set<string>((Array.isArray(req.body?.shipmentIds) ? req.body.shipmentIds : []).map((id: any) => String(id || '').trim()).filter(Boolean))).slice(0, 100);
@@ -13416,7 +13446,7 @@ app.post('/api/admin/shipments/bulk/notify', authMiddleware, requireSuperAdmin, 
   }
 });
 
-app.get('/api/admin/notification-jobs/status', authMiddleware, requireSuperAdmin, async (_req: any, res) => {
+app.get('/api/admin/notification-jobs/status', authMiddleware, requireAdminPermission('shipments.read'), async (_req: any, res) => {
   try {
     await ensureAdminShipmentOpsSchema();
     const [rows]: any = await pool.query(`SELECT status, COUNT(*) AS total FROM admin_shipment_notification_jobs GROUP BY status`);
@@ -13424,14 +13454,14 @@ app.get('/api/admin/notification-jobs/status', authMiddleware, requireSuperAdmin
   } catch { res.status(500).json({ error: 'No se pudo cargar la cola.' }); }
 });
 
-app.post('/api/admin/notification-jobs/run', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.post('/api/admin/notification-jobs/run', authMiddleware, requireAdminPermission('shipments.manage'), async (req: any, res) => {
   try {
     const results = await processAdminShipmentNotificationJobs(Number(req.body?.limit || 20));
     res.json({ success: true, processed: results.length, results });
   } catch { res.status(500).json({ error: 'No se pudo procesar la cola.' }); }
 });
 
-app.get('/api/admin/shipment-filters', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.get('/api/admin/shipment-filters', authMiddleware, requireAdminPermission('shipments.read'), async (req: any, res) => {
   try {
     await ensureAdminShipmentOpsSchema();
     const [rows]: any = await pool.query(`SELECT id, name, filters_json AS filters, created_at AS createdAt, updated_at AS updatedAt FROM admin_saved_filters WHERE admin_user_id = ? ORDER BY name ASC`, [req.user.id]);
@@ -13439,7 +13469,7 @@ app.get('/api/admin/shipment-filters', authMiddleware, requireSuperAdmin, async 
   } catch { res.status(500).json({ error: 'No se pudieron cargar los filtros guardados.' }); }
 });
 
-app.post('/api/admin/shipment-filters', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.post('/api/admin/shipment-filters', authMiddleware, requireAdminPermission('shipments.manage'), async (req: any, res) => {
   try {
     await ensureAdminShipmentOpsSchema();
     const name = String(req.body?.name || '').trim().slice(0, 120);
@@ -13454,7 +13484,7 @@ app.post('/api/admin/shipment-filters', authMiddleware, requireSuperAdmin, async
   }
 });
 
-app.delete('/api/admin/shipment-filters/:id', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.delete('/api/admin/shipment-filters/:id', authMiddleware, requireAdminPermission('shipments.manage'), async (req: any, res) => {
   try {
     await ensureAdminShipmentOpsSchema();
     await pool.query(`DELETE FROM admin_saved_filters WHERE id = ? AND admin_user_id = ?`, [req.params.id, req.user.id]);
@@ -13462,7 +13492,7 @@ app.delete('/api/admin/shipment-filters/:id', authMiddleware, requireSuperAdmin,
   } catch { res.status(500).json({ error: 'No se pudo eliminar el filtro.' }); }
 });
 
-app.get('/api/admin/shipments/export.csv', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.get('/api/admin/shipments/export.csv', authMiddleware, requireAdminPermission('shipments.read'), async (req: any, res) => {
   try {
     const search = String(req.query?.q || '').trim();
     const status = String(req.query?.status || '').trim().toLowerCase();
@@ -13494,7 +13524,7 @@ app.get('/api/admin/shipments/export.csv', authMiddleware, requireSuperAdmin, as
   } catch { res.status(500).json({ error: 'No se pudo exportar la información.' }); }
 });
 
-app.post('/api/admin/shipments/:id/label-upload', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.post('/api/admin/shipments/:id/label-upload', authMiddleware, requireAdminPermission('shipments.manage'), async (req: any, res) => {
   try {
     const shipment = await ShipmentRepo.getById(req.params.id);
     if (!shipment) return res.status(404).json({ error: 'Envío no encontrado.' });
@@ -17581,7 +17611,8 @@ app.post('/api/admin/cancellation-requests/:id/reject', authMiddleware, requireS
 app.get('/api/tickets', authMiddleware, async (req: any, res) => {
   try {
     let ticketsList = [];
-    if (req.user.role === 'super_admin') {
+    const canReadAllTickets = hasAdminPermission(req, 'tickets.read');
+    if (canReadAllTickets) {
       ticketsList = await TicketRepo.getAll();
       ticketsList = await attachCancellationRequestsToTickets(ticketsList);
     } else {
@@ -17645,11 +17676,12 @@ app.post('/api/tickets/:id/reply', authMiddleware, async (req: any, res) => {
       return res.status(404).json({ error: 'Ticket no encontrado.' });
     }
 
-    if (req.user.role !== 'super_admin' && ticket.user_id !== req.user.id) {
+    const canManageTickets = hasAdminPermission(req, 'tickets.manage');
+    if (!canManageTickets && ticket.user_id !== req.user.id) {
       return res.status(403).json({ error: 'Acceso denegado.' });
     }
 
-    const roleMapped = req.user.role === 'super_admin' ? 'super_admin' : 'customer';
+    const roleMapped = canManageTickets ? (req.user.role === 'super_admin' ? 'super_admin' : 'support') : 'customer';
     
     await TicketRepo.addReply({
       id: generateId('rep_'),
@@ -17662,7 +17694,7 @@ app.post('/api/tickets/:id/reply', authMiddleware, async (req: any, res) => {
     const updatedTicket = await TicketRepo.getById(ticket.id);
     const reply = updatedTicket.replies[updatedTicket.replies.length - 1];
 
-    if (roleMapped === 'super_admin') {
+    if (roleMapped === 'super_admin' || roleMapped === 'support') {
       const customer = await UserRepo.getById(ticket.user_id);
       const customerEmail = isValidEmailForProvider(customer?.email);
       if (customerEmail) {
@@ -17720,7 +17752,8 @@ app.post('/api/tickets/:id/resolve', authMiddleware, async (req: any, res) => {
       return res.status(404).json({ error: 'Ticket no encontrado.' });
     }
 
-    if (req.user.role !== 'super_admin' && ticket.user_id !== req.user.id) {
+    const canManageTickets = hasAdminPermission(req, 'tickets.manage');
+    if (!canManageTickets && ticket.user_id !== req.user.id) {
       return res.status(403).json({ error: 'Acceso denegado.' });
     }
 

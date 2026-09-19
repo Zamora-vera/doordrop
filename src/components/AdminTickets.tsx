@@ -3,7 +3,7 @@ import { useI18n } from '../lib/i18n';
 import { api } from '../lib/api';
 import { LifeBuoy, Send, MessageSquare, ChevronRight, Clock, User, Sparkles, AlertTriangle, ArrowLeft, CheckCircle, HelpCircle, Shield, Check, XCircle, Wallet } from 'lucide-react';
 
-export function AdminTickets() {
+export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive?: boolean }) {
   const { t, language } = useI18n();
   const [tickets, setTickets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -240,7 +240,7 @@ export function AdminTickets() {
                   </div>
                   <p className="text-xs text-amber-900 font-bold">Importe a revisar: {Number(activeTicket.cancellationRequest.amount || 0).toFixed(2)} {activeTicket.cancellationRequest.currency || 'EUR'}</p>
                   <p className="text-xs text-amber-700">Estado: {activeTicket.cancellationRequest.status}</p>
-                  {activeTicket.cancellationRequest.status === 'pending_review' && (
+                  {canReviewSensitive && activeTicket.cancellationRequest.status === 'pending_review' && (
                     <div className="grid grid-cols-1 gap-2">
                       <button onClick={handleApproveCancellation} className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm flex items-center justify-center gap-2">
                         <CheckCircle className="w-4 h-4" /> Aprobar y reembolsar
@@ -345,7 +345,7 @@ export function AdminTickets() {
                 {/* Thread Messages */}
                 {(activeTicket.replies || []).map((reply: any) => {
                   const isAI = reply.sender === 'ai';
-                  const isAdmin = reply.sender === 'admin' || reply.sender === 'super_admin';
+                  const isAdmin = reply.sender === 'admin' || reply.sender === 'super_admin' || reply.sender === 'support';
                   
                   return (
                     <div key={reply.id} className={`flex gap-3 max-w-[85%] ${isAdmin ? 'ml-auto flex-row-reverse' : ''}`}>

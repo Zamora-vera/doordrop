@@ -181,8 +181,8 @@ const Login = () => {
       const res = await api.login(form);
       setAuthToken(res.token);
 
-      if (res.user.role === 'super_admin') {
-        navigate('/admin');
+      if (res.user.role === 'super_admin' || res.user.role === 'support') {
+        navigate(res.user.role === 'support' ? '/admin/shipments' : '/admin');
       } else {
         const next = resolvePostAuthNavigation(location.state);
         navigate(next.path, next.state ? { state: next.state } : undefined);
