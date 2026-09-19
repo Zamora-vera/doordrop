@@ -1,0 +1,6 @@
+-- Documentación de las operaciones administrativas de envíos.
+-- La aplicación crea estas estructuras de forma idempotente durante el arranque
+-- para instalaciones que no ejecutan archivos numerados automáticamente.
+--
+-- Incluye filtros guardados, cola de notificaciones y formato de etiqueta manual.
+-- No modifica el flujo de compra de etiquetas ni ejecuta acciones externas.

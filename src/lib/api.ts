@@ -171,8 +171,15 @@ export const api = {
     });
     return fetchAPI(`/admin/shipments${query.toString() ? `?${query.toString()}` : ''}`);
   },
-  updateAdminShipmentStatus: (id: string, status: string) => fetchAPI(`/admin/shipments/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) }),
+  updateAdminShipmentStatus: (id: string, status: string, reason: string) => fetchAPI(`/admin/shipments/${id}/status`, { method: 'POST', body: JSON.stringify({ status, reason }) }),
+  bulkUpdateAdminShipmentStatus: (shipmentIds: string[], status: string, reason: string) => fetchAPI('/admin/shipments/bulk/status', { method: 'POST', body: JSON.stringify({ shipmentIds, status, reason }) }),
+  bulkNotifyAdminShipments: (shipmentIds: string[], eventCode: string) => fetchAPI('/admin/shipments/bulk/notify', { method: 'POST', body: JSON.stringify({ shipmentIds, eventCode }) }),
   notifyAdminShipment: (id: string, eventCode: string) => fetchAPI(`/admin/shipments/${id}/notify`, { method: 'POST', body: JSON.stringify({ eventCode }) }),
+  getAdminShipmentTimeline: (id: string) => fetchAPI(`/admin/shipments/${id}/timeline`),
+  getAdminShipmentFilters: () => fetchAPI('/admin/shipment-filters'),
+  saveAdminShipmentFilter: (name: string, filters: any) => fetchAPI('/admin/shipment-filters', { method: 'POST', body: JSON.stringify({ name, filters }) }),
+  deleteAdminShipmentFilter: (id: string) => fetchAPI(`/admin/shipment-filters/${id}`, { method: 'DELETE' }),
+  uploadAdminShipmentLabel: (id: string, data: any) => fetchAPI(`/admin/shipments/${id}/label-upload`, { method: 'POST', body: JSON.stringify(data) }),
   getAdminProviders: () => fetchAPI('/admin/providers'),
   updateAdminProviders: (providers: any) => fetchAPI('/admin/providers', { method: 'POST', body: JSON.stringify({ providers }) }),
   testAdminProvider: (providerCode: string) => fetchAPI('/admin/providers/test', { method: 'POST', body: JSON.stringify({ providerCode }) }),

@@ -778,6 +778,52 @@ function convertMoneyAmountStrict(amount: number, fromCurrency: string, toCurren
 let walletCurrencySchemaReady = false;
 let walletCurrencySchemaPromise: Promise<void> | null = null;
 
+let adminShipmentOpsSchemaReady = false;
+let adminShipmentOpsSchemaPromise: Promise<void> | null = null;
+
+async function ensureAdminShipmentOpsSchema() {
+  if (adminShipmentOpsSchemaReady) return;
+  if (adminShipmentOpsSchemaPromise) return adminShipmentOpsSchemaPromise;
+  adminShipmentOpsSchemaPromise = (async () => {
+    await pool.query(`CREATE TABLE IF NOT EXISTS admin_saved_filters (
+      id CHAR(36) PRIMARY KEY,
+      admin_user_id CHAR(36) NOT NULL,
+      name VARCHAR(120) NOT NULL,
+      filters_json JSON NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_admin_saved_filter_name (admin_user_id, name),
+      INDEX idx_admin_saved_filter_admin (admin_user_id),
+      CONSTRAINT fk_admin_saved_filter_user FOREIGN KEY (admin_user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS admin_shipment_notification_jobs (
+      id CHAR(36) PRIMARY KEY,
+      shipment_id CHAR(36) NOT NULL,
+      admin_user_id CHAR(36) NOT NULL,
+      event_code VARCHAR(80) NOT NULL,
+      dedupe_key VARCHAR(191) NOT NULL,
+      status ENUM('pending','running','sent','failed','skipped') NOT NULL DEFAULT 'pending',
+      attempts INT NOT NULL DEFAULT 0,
+      next_run_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      locked_until DATETIME NULL,
+      error_message VARCHAR(500) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      sent_at DATETIME NULL,
+      UNIQUE KEY uq_admin_notification_dedupe (dedupe_key),
+      INDEX idx_admin_notification_queue (status, next_run_at),
+      INDEX idx_admin_notification_shipment (shipment_id),
+      CONSTRAINT fk_admin_notification_shipment FOREIGN KEY (shipment_id) REFERENCES shipments(id) ON DELETE CASCADE,
+      CONSTRAINT fk_admin_notification_admin FOREIGN KEY (admin_user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    try { await pool.query(`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS label_format VARCHAR(20) NULL`); } catch {}
+    adminShipmentOpsSchemaReady = true;
+  })().finally(() => {
+    adminShipmentOpsSchemaPromise = null;
+  });
+  return adminShipmentOpsSchemaPromise;
+}
+
 async function ensureWalletCurrencySchema() {
   if (walletCurrencySchemaReady) return;
   if (walletCurrencySchemaPromise) return walletCurrencySchemaPromise;
@@ -1200,6 +1246,9 @@ async function reconcileExpiredSubscriptions(source = 'runtime'): Promise<void> 
 
 // Inicializar base de datos
 initDb().then(() => {
+  void ensureAdminShipmentOpsSchema().catch((error: any) => {
+    console.warn('[MySQL] Operaciones administrativas de envíos reintentará al abrirse:', error?.message || 'schema unavailable');
+  });
   void ensureAdminAssistanceSchema().catch((error: any) => {
     console.warn('[MySQL] Centro de Asistencia interno reintentará al abrirse:', error?.message || 'schema unavailable');
   });
@@ -12571,9 +12620,12 @@ app.get('/api/shipments/:id/label/file', async (req: any, res) => {
       return res.send(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Etiqueta en preparación</title><style>body{font-family:Arial,sans-serif;background:#f8fafc;color:#0f172a;margin:0;display:grid;place-items:center;min-height:100vh}.card{background:#fff;border:1px solid #e2e8f0;border-radius:24px;box-shadow:0 20px 50px rgba(15,23,42,.08);max-width:520px;padding:32px;text-align:center}.pill{display:inline-block;background:#fef3c7;color:#92400e;border-radius:999px;padding:7px 12px;font-weight:800;font-size:13px}.btn{display:inline-block;margin-top:18px;background:#2563eb;color:white;text-decoration:none;font-weight:800;padding:12px 18px;border-radius:999px}</style></head><body><main class="card"><span class="pill">Etiqueta en preparación</span><h1>Tu etiqueta todavía no está disponible</h1><p>Estamos preparando la etiqueta. Te avisaremos cuando esté lista para descargar.</p><a class="btn" href="/panel/shipments">Volver a mis envíos</a></main></body></html>`);
     }
     const buffer = Buffer.from(String(shipment.label_base64), 'base64');
-    res.setHeader('Content-Type', 'application/pdf');
+    const labelFormat = String(shipment.label_format || 'pdf').toLowerCase();
+    const contentType = labelFormat === 'png' ? 'image/png' : labelFormat === 'jpg' || labelFormat === 'jpeg' ? 'image/jpeg' : 'application/pdf';
+    const extension = labelFormat === 'png' ? 'png' : labelFormat === 'jpg' || labelFormat === 'jpeg' ? 'jpg' : 'pdf';
+    res.setHeader('Content-Type', contentType);
     const disposition = String(req.query.download || '') === '1' ? 'attachment' : 'inline';
-    res.setHeader('Content-Disposition', `${disposition}; filename="${shipment.tracking_code || shipment.id}.pdf"`);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${shipment.tracking_code || shipment.id}.${extension}"`);
     res.setHeader('Cache-Control', 'private, max-age=300');
     return res.send(buffer);
   } catch (error) {
@@ -12987,6 +13039,80 @@ app.post('/api/admin/clients/:id/impersonate', authMiddleware, requireSuperAdmin
   }
 });
 
+const ADMIN_SHIPMENT_NOTIFICATION_EVENTS: Record<string, { statusCode: string; statusLabel: string }> = {
+  shipment_received: { statusCode: 'shipment_created', statusLabel: 'Envío recibido' },
+  shipment_pending_provider: { statusCode: 'pending_provider', statusLabel: 'Etiqueta en preparación' },
+  shipment_pending_label: { statusCode: 'pending_label', statusLabel: 'Etiqueta pendiente' },
+  shipment_label_ready: { statusCode: 'label_ready', statusLabel: 'Etiqueta disponible' },
+  shipment_tramitado: { statusCode: 'tramitado', statusLabel: 'Envío tramitado' },
+  shipment_en_transito: { statusCode: 'en_transito', statusLabel: 'En tránsito' },
+  shipment_en_reparto: { statusCode: 'en_reparto', statusLabel: 'En reparto' },
+  shipment_entregado: { statusCode: 'entregado', statusLabel: 'Entregado' },
+  shipment_incidencia: { statusCode: 'incidencia', statusLabel: 'Incidencia de envío' },
+  shipment_devuelto: { statusCode: 'devuelto', statusLabel: 'Envío devuelto' },
+  shipment_cancelado: { statusCode: 'cancelado', statusLabel: 'Envío cancelado' }
+};
+
+async function sendAdminShipmentNotification(shipment: any, eventCode: string) {
+  const event = ADMIN_SHIPMENT_NOTIFICATION_EVENTS[eventCode];
+  if (!event) return { success: false, skipped: true, reason: 'Tipo de notificación no permitido.' };
+  const user = await UserRepo.getById(shipment.user_id);
+  const toEmail = isValidEmailForProvider(user?.email) || '';
+  if (!toEmail) return { success: false, skipped: true, reason: 'El cliente no tiene un correo válido.' };
+  const language = detectCustomerEmailLanguage(user);
+  return sendNotificationEvent({
+    eventCode,
+    entityType: 'shipment',
+    entityId: String(shipment.id),
+    shipmentId: shipment.id,
+    userId: shipment.user_id,
+    providerCode: shipment.provider_code,
+    audience: 'customer',
+    toEmail,
+    recipientName: user?.name,
+    language,
+    variables: shipmentNotificationVariables(shipment, user, language, event.statusCode, event.statusLabel, shipment.label_error || event.statusLabel)
+  });
+}
+
+async function processAdminShipmentNotificationJobs(limit = 20) {
+  await ensureAdminShipmentOpsSchema();
+  const safeLimit = Math.max(1, Math.min(50, Number(limit || 20)));
+  const [jobs]: any = await pool.query(
+    `SELECT id, shipment_id AS shipmentId, admin_user_id AS adminUserId, event_code AS eventCode
+       FROM admin_shipment_notification_jobs
+      WHERE status = 'pending' AND next_run_at <= NOW()
+      ORDER BY created_at ASC LIMIT ?`, [safeLimit]
+  );
+  const results: any[] = [];
+  for (const job of jobs) {
+    const [claim]: any = await pool.query(
+      `UPDATE admin_shipment_notification_jobs
+          SET status = 'running', attempts = attempts + 1, locked_until = DATE_ADD(NOW(), INTERVAL 10 MINUTE), updated_at = NOW()
+        WHERE id = ? AND status = 'pending'`, [job.id]
+    );
+    if (!claim.affectedRows) continue;
+    try {
+      const shipment = await ShipmentRepo.getById(job.shipmentId);
+      if (!shipment) throw new Error('Envío no encontrado.');
+      const result: any = await sendAdminShipmentNotification(shipment, job.eventCode);
+      if (!result.success) {
+        await pool.query(`UPDATE admin_shipment_notification_jobs SET status = ?, error_message = ?, locked_until = NULL, updated_at = NOW() WHERE id = ?`, [result.skipped ? 'skipped' : 'failed', String(result.reason || 'No se pudo enviar la notificación.').slice(0, 500), job.id]);
+        results.push({ id: job.id, status: result.skipped ? 'skipped' : 'failed' });
+        continue;
+      }
+      await pool.query(`UPDATE admin_shipment_notification_jobs SET status = 'sent', sent_at = NOW(), error_message = NULL, locked_until = NULL, updated_at = NOW() WHERE id = ?`, [job.id]);
+      await writeAdminShipmentLog('shipment_notification_sent', { adminId: job.adminUserId, shipmentId: job.shipmentId, eventCode: job.eventCode, queued: true }, { success: true, templateId: result.templateId || null });
+      results.push({ id: job.id, status: 'sent' });
+    } catch (error: any) {
+      const message = String(error?.message || 'No se pudo procesar la notificación.').slice(0, 500);
+      await pool.query(`UPDATE admin_shipment_notification_jobs SET status = IF(attempts < 3, 'pending', 'failed'), next_run_at = DATE_ADD(NOW(), INTERVAL 5 MINUTE), error_message = ?, locked_until = NULL, updated_at = NOW() WHERE id = ?`, [message, job.id]);
+      results.push({ id: job.id, status: 'failed', message });
+    }
+  }
+  return results;
+}
+
 // Admin: Envíos
 app.get('/api/admin/shipments', authMiddleware, requireSuperAdmin, async (req: any, res) => {
   try {
@@ -13149,7 +13275,10 @@ app.get('/api/admin/shipments', authMiddleware, requireSuperAdmin, async (req: a
 // Admin: Actualizar Estado del Envío
 app.post('/api/admin/shipments/:id/status', authMiddleware, requireSuperAdmin, async (req: any, res) => {
   try {
-    const { status } = req.body;
+    const status = String(req.body?.status || '').trim();
+    const reason = String(req.body?.reason || '').trim().slice(0, 1000);
+    if (!status) return res.status(400).json({ error: 'Selecciona un estado válido.' });
+    if (reason.length < 5) return res.status(400).json({ error: 'El motivo es obligatorio y debe tener al menos 5 caracteres.' });
     const shipment = await ShipmentRepo.getById(req.params.id);
     if (!shipment) return res.status(404).json({ error: 'Envío no encontrado' });
     
@@ -13160,9 +13289,9 @@ app.post('/api/admin/shipments/:id/status', authMiddleware, requireSuperAdmin, a
       tracking_code: shipment.tracking_code,
       status: status.toLowerCase(),
       status_label: status,
-      description: `Estado actualizado a: ${status} por el administrador`
+      description: `Estado actualizado a: ${status} por el administrador. Motivo: ${reason}`
     });
-    await writeAdminShipmentLog('shipment_status_update', { adminId: req.user.id, shipmentId: shipment.id, status }, { success: true });
+    await writeAdminShipmentLog('shipment_status_update', { adminId: req.user.id, shipmentId: shipment.id, status, reason }, { success: true });
     
     res.json({ success: true });
   } catch (error) {
@@ -13177,40 +13306,8 @@ app.post('/api/admin/shipments/:id/notify', authMiddleware, requireSuperAdmin, a
     if (!shipment) return res.status(404).json({ error: 'Envío no encontrado.' });
 
     const eventCode = String(req.body?.eventCode || '').trim();
-    const statusByEvent: Record<string, { statusCode: string; statusLabel: string }> = {
-      shipment_received: { statusCode: 'shipment_created', statusLabel: 'Envío recibido' },
-      shipment_pending_provider: { statusCode: 'pending_provider', statusLabel: 'Etiqueta en preparación' },
-      shipment_pending_label: { statusCode: 'pending_label', statusLabel: 'Etiqueta pendiente' },
-      shipment_label_ready: { statusCode: 'label_ready', statusLabel: 'Etiqueta disponible' },
-      shipment_tramitado: { statusCode: 'tramitado', statusLabel: 'Envío tramitado' },
-      shipment_en_transito: { statusCode: 'en_transito', statusLabel: 'En tránsito' },
-      shipment_en_reparto: { statusCode: 'en_reparto', statusLabel: 'En reparto' },
-      shipment_entregado: { statusCode: 'entregado', statusLabel: 'Entregado' },
-      shipment_incidencia: { statusCode: 'incidencia', statusLabel: 'Incidencia de envío' },
-      shipment_devuelto: { statusCode: 'devuelto', statusLabel: 'Envío devuelto' },
-      shipment_cancelado: { statusCode: 'cancelado', statusLabel: 'Envío cancelado' }
-    };
-    const event = statusByEvent[eventCode];
-    if (!event) return res.status(400).json({ error: 'Tipo de notificación no permitido.' });
-
-    const user = await UserRepo.getById(shipment.user_id);
-    const toEmail = isValidEmailForProvider(user?.email) || '';
-    if (!toEmail) return res.status(400).json({ error: 'El cliente no tiene un correo válido.' });
-
-    const language = detectCustomerEmailLanguage(user);
-    const result = await sendNotificationEvent({
-      eventCode,
-      entityType: 'shipment',
-      entityId: String(shipment.id),
-      shipmentId: shipment.id,
-      userId: shipment.user_id,
-      providerCode: shipment.provider_code,
-      audience: 'customer',
-      toEmail,
-      recipientName: user?.name,
-      language,
-      variables: shipmentNotificationVariables(shipment, user, language, event.statusCode, event.statusLabel, shipment.label_error || event.statusLabel)
-    });
+    if (!ADMIN_SHIPMENT_NOTIFICATION_EVENTS[eventCode]) return res.status(400).json({ error: 'Tipo de notificación no permitido.' });
+    const result: any = await sendAdminShipmentNotification(shipment, eventCode);
 
     if (!result.success) {
       await writeAdminShipmentLog('shipment_notification_failed', { adminId: req.user.id, shipmentId: shipment.id, eventCode }, { success: false, reason: result.reason || 'send_failed' }, result.skipped ? 409 : 502);
@@ -13227,6 +13324,184 @@ app.post('/api/admin/shipments/:id/notify', authMiddleware, requireSuperAdmin, a
     console.error('[Diagnóstico Interno] Error notificando envío:', error);
     res.status(500).json({ error: 'No se pudo completar la notificación.' });
   }
+});
+
+app.get('/api/admin/shipments/:id/timeline', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+  try {
+    const shipment = await ShipmentRepo.getById(req.params.id);
+    if (!shipment) return res.status(404).json({ error: 'Envío no encontrado.' });
+    const [events]: any = await pool.query(
+      `SELECT id, tracking_code AS trackingCode, status_code AS statusCode, status_label AS statusLabel, description, location, event_time AS eventTime, created_at AS createdAt
+         FROM tracking_events WHERE shipment_id = ? ORDER BY event_time DESC, created_at DESC`, [shipment.id]
+    );
+    const [notifications]: any = await pool.query(
+      `SELECT id, event_code AS eventCode, status, language, error_message AS errorMessage, created_at AS createdAt, sent_at AS sentAt
+         FROM email_logs WHERE shipment_id = ? ORDER BY created_at DESC LIMIT 50`, [shipment.id]
+    ).catch(() => [[]]);
+    res.json({ shipmentId: shipment.id, events: events || [], notifications: notifications || [] });
+  } catch {
+    res.status(500).json({ error: 'No se pudo cargar el historial.' });
+  }
+});
+
+app.post('/api/admin/shipments/bulk/status', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+  try {
+    const ids: string[] = Array.from(new Set<string>((Array.isArray(req.body?.shipmentIds) ? req.body.shipmentIds : []).map((id: any) => String(id || '').trim()).filter(Boolean))).slice(0, 100);
+    const status = String(req.body?.status || '').trim();
+    const reason = String(req.body?.reason || '').trim().slice(0, 1000);
+    if (!ids.length) return res.status(400).json({ error: 'Selecciona al menos un envío.' });
+    if (!status) return res.status(400).json({ error: 'Selecciona un estado válido.' });
+    if (reason.length < 5) return res.status(400).json({ error: 'El motivo es obligatorio y debe tener al menos 5 caracteres.' });
+    const results: any[] = [];
+    for (const id of ids) {
+      const shipment = await ShipmentRepo.getById(id);
+      if (!shipment) { results.push({ id, status: 'not_found' }); continue; }
+      await ShipmentRepo.updateStatus(id, status.toLowerCase(), status);
+      await TrackingEventRepo.create({ shipment_id: id, tracking_code: shipment.tracking_code, status: status.toLowerCase(), status_label: status, description: `Estado actualizado a: ${status} por el administrador. Motivo: ${reason}` });
+      await writeAdminShipmentLog('shipment_status_update', { adminId: req.user.id, shipmentId: id, status, reason, bulk: true }, { success: true });
+      results.push({ id, status: 'updated' });
+    }
+    res.json({ success: true, updated: results.filter(item => item.status === 'updated').length, results });
+  } catch {
+    res.status(500).json({ error: 'No se pudieron actualizar los estados.' });
+  }
+});
+
+app.post('/api/admin/shipments/bulk/notify', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+  try {
+    await ensureAdminShipmentOpsSchema();
+    const ids: string[] = Array.from(new Set<string>((Array.isArray(req.body?.shipmentIds) ? req.body.shipmentIds : []).map((id: any) => String(id || '').trim()).filter(Boolean))).slice(0, 100);
+    const eventCode = String(req.body?.eventCode || '').trim();
+    if (!ids.length) return res.status(400).json({ error: 'Selecciona al menos un envío.' });
+    if (!ADMIN_SHIPMENT_NOTIFICATION_EVENTS[eventCode]) return res.status(400).json({ error: 'Tipo de notificación no permitido.' });
+    const queued: string[] = [];
+    const skipped: any[] = [];
+    for (const shipmentId of ids) {
+      const shipment = await ShipmentRepo.getById(shipmentId);
+      if (!shipment) { skipped.push({ id: shipmentId, reason: 'Envío no encontrado.' }); continue; }
+      const id = generateId('anq_');
+      const dedupeKey = `${shipmentId}:${eventCode}`;
+      try {
+        await pool.query(
+          `INSERT INTO admin_shipment_notification_jobs (id, shipment_id, admin_user_id, event_code, dedupe_key, status, next_run_at)
+           VALUES (?, ?, ?, ?, ?, 'pending', NOW())`, [id, shipmentId, req.user.id, eventCode, dedupeKey]
+        );
+        queued.push(id);
+      } catch (error: any) {
+        if (String(error?.code || '').includes('DUPLICATE')) skipped.push({ id: shipmentId, reason: 'Ya existe una notificación en cola o enviada para este evento.' });
+        else throw error;
+      }
+    }
+    await writeAdminShipmentLog('shipment_notification_bulk_queued', { adminId: req.user.id, shipmentIds: ids, eventCode }, { queued: queued.length, skipped: skipped.length });
+    res.json({ success: true, queued: queued.length, skipped, message: queued.length ? `${queued.length} notificación(es) añadida(s) a la cola.` : 'No había notificaciones nuevas para añadir.' });
+  } catch {
+    res.status(500).json({ error: 'No se pudieron poner las notificaciones en cola.' });
+  }
+});
+
+app.get('/api/admin/notification-jobs/status', authMiddleware, requireSuperAdmin, async (_req: any, res) => {
+  try {
+    await ensureAdminShipmentOpsSchema();
+    const [rows]: any = await pool.query(`SELECT status, COUNT(*) AS total FROM admin_shipment_notification_jobs GROUP BY status`);
+    res.json({ jobs: rows || [] });
+  } catch { res.status(500).json({ error: 'No se pudo cargar la cola.' }); }
+});
+
+app.post('/api/admin/notification-jobs/run', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+  try {
+    const results = await processAdminShipmentNotificationJobs(Number(req.body?.limit || 20));
+    res.json({ success: true, processed: results.length, results });
+  } catch { res.status(500).json({ error: 'No se pudo procesar la cola.' }); }
+});
+
+app.get('/api/admin/shipment-filters', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+  try {
+    await ensureAdminShipmentOpsSchema();
+    const [rows]: any = await pool.query(`SELECT id, name, filters_json AS filters, created_at AS createdAt, updated_at AS updatedAt FROM admin_saved_filters WHERE admin_user_id = ? ORDER BY name ASC`, [req.user.id]);
+    res.json({ filters: (rows || []).map((row: any) => ({ ...row, filters: parseJsonSafe(row.filters) || {} })) });
+  } catch { res.status(500).json({ error: 'No se pudieron cargar los filtros guardados.' }); }
+});
+
+app.post('/api/admin/shipment-filters', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+  try {
+    await ensureAdminShipmentOpsSchema();
+    const name = String(req.body?.name || '').trim().slice(0, 120);
+    const filters = req.body?.filters && typeof req.body.filters === 'object' ? req.body.filters : {};
+    if (name.length < 2) return res.status(400).json({ error: 'Escribe un nombre para el filtro.' });
+    await pool.query(`INSERT INTO admin_saved_filters (id, admin_user_id, name, filters_json) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE filters_json = VALUES(filters_json), updated_at = NOW()`, [generateId('af_'), req.user.id, name, JSON.stringify(filters)]);
+    const [rows]: any = await pool.query(`SELECT id, name, filters_json AS filters FROM admin_saved_filters WHERE admin_user_id = ? AND name = ? LIMIT 1`, [req.user.id, name]);
+    res.json({ success: true, filter: rows?.[0] ? { ...rows[0], filters: parseJsonSafe(rows[0].filters) || {} } : null });
+  } catch (error: any) {
+    if (String(error?.code || '').includes('DUPLICATE')) return res.status(409).json({ error: 'Ya existe un filtro con ese nombre.' });
+    res.status(500).json({ error: 'No se pudo guardar el filtro.' });
+  }
+});
+
+app.delete('/api/admin/shipment-filters/:id', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+  try {
+    await ensureAdminShipmentOpsSchema();
+    await pool.query(`DELETE FROM admin_saved_filters WHERE id = ? AND admin_user_id = ?`, [req.params.id, req.user.id]);
+    res.json({ success: true });
+  } catch { res.status(500).json({ error: 'No se pudo eliminar el filtro.' }); }
+});
+
+app.get('/api/admin/shipments/export.csv', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+  try {
+    const search = String(req.query?.q || '').trim();
+    const status = String(req.query?.status || '').trim().toLowerCase();
+    const labelStatus = String(req.query?.labelStatus || '').trim().toLowerCase();
+    const provider = String(req.query?.provider || '').trim().toLowerCase();
+    const dateFrom = String(req.query?.dateFrom || '').trim();
+    const dateTo = String(req.query?.dateTo || '').trim();
+    const where: string[] = [];
+    const params: any[] = [];
+    if (search) { const term = `%${search}%`; where.push(`(s.tracking_code LIKE ? OR s.provider_tracking_code LIKE ? OR s.reference LIKE ? OR s.order_number LIKE ? OR u.name LIKE ? OR u.email LIKE ? OR u.client_code LIKE ?)`); params.push(term, term, term, term, term, term, term); }
+    if (provider) { where.push(`LOWER(COALESCE(s.provider_code, '')) = ?`); params.push(provider); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) { where.push('s.created_at >= ?'); params.push(`${dateFrom} 00:00:00`); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) { where.push('s.created_at <= ?'); params.push(`${dateTo} 23:59:59`); }
+    if (labelStatus === 'available') where.push(`(s.label_status IN ('available','stored') OR s.label_base64 IS NOT NULL OR s.label_url IS NOT NULL)`);
+    if (labelStatus === 'pending') where.push(`COALESCE(s.label_status, 'pending') = 'pending' AND s.label_base64 IS NULL AND s.label_url IS NULL`);
+    if (labelStatus === 'error') where.push(`(COALESCE(s.label_status, '') IN ('error','failed') OR COALESCE(s.label_error, '') <> '')`);
+    if (status === 'created') where.push(`LOWER(COALESCE(s.status, '')) IN ('created','draft')`);
+    if (status === 'pending') where.push(`(LOWER(COALESCE(s.status, '')) IN ('pending_provider','pending_label','pending_customer_balance','tramitado') OR COALESCE(s.label_status, 'pending') = 'pending')`);
+    if (status === 'transit') where.push(`(LOWER(COALESCE(s.status, '')) LIKE '%transit%' OR LOWER(COALESCE(s.status_label, '')) LIKE '%transit%')`);
+    if (status === 'delivered') where.push(`(LOWER(COALESCE(s.status, '')) LIKE '%entreg%' OR LOWER(COALESCE(s.status_label, '')) LIKE '%entreg%')`);
+    if (status === 'issue') where.push(`(LOWER(COALESCE(s.status, '')) LIKE '%error%' OR LOWER(COALESCE(s.status, '')) LIKE '%incid%' OR LOWER(COALESCE(s.status_label, '')) LIKE '%error%' OR LOWER(COALESCE(s.status_label, '')) LIKE '%incid%')`);
+    const [rows]: any = await pool.query(`SELECT s.tracking_code, s.provider_tracking_code, s.provider_code, s.status, s.status_label, s.label_status, s.label_error, s.reference, s.order_number, s.created_at, s.updated_at, u.name AS customer_name, u.email AS customer_email, u.client_code FROM shipments s LEFT JOIN users u ON u.id = s.user_id ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY s.created_at DESC`, params);
+    const csvCell = (value: any) => `"${String(value ?? '').replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
+    const header = ['Tracking','Tracking proveedor','Proveedor','Estado','Etiqueta','Error etiqueta','Referencia','Pedido','Cliente','Correo','Código cliente','Creado','Actualizado'];
+    const lines = [header, ...(rows || []).map((row: any) => [row.tracking_code, row.provider_tracking_code, row.provider_code, row.status_label || row.status, row.label_status, row.label_error, row.reference, row.order_number, row.customer_name, row.customer_email, row.client_code, row.created_at, row.updated_at])].map((line: any[]) => line.map(csvCell).join(';'));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="doordrop-envios-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(`\uFEFF${lines.join('\r\n')}`);
+  } catch { res.status(500).json({ error: 'No se pudo exportar la información.' }); }
+});
+
+app.post('/api/admin/shipments/:id/label-upload', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+  try {
+    const shipment = await ShipmentRepo.getById(req.params.id);
+    if (!shipment) return res.status(404).json({ error: 'Envío no encontrado.' });
+    const mimeType = String(req.body?.mimeType || '').toLowerCase().trim();
+    const base64 = String(req.body?.contentBase64 || '').replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
+    const allowed = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/jpg']);
+    if (!allowed.has(mimeType)) return res.status(400).json({ error: 'Solo se admiten etiquetas PDF, PNG o JPG.' });
+    if (!base64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) return res.status(400).json({ error: 'El archivo de etiqueta no es válido.' });
+    const buffer = Buffer.from(base64, 'base64');
+    if (!buffer.length || buffer.length > 10 * 1024 * 1024) return res.status(400).json({ error: 'La etiqueta debe pesar como máximo 10 MB.' });
+    const validSignature = mimeType === 'application/pdf'
+      ? buffer.subarray(0, 5).toString('ascii') === '%PDF-'
+      : mimeType === 'image/png'
+        ? buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+        : buffer.subarray(0, 3).equals(Buffer.from([255, 216, 255]));
+    if (!validSignature) return res.status(400).json({ error: 'El contenido no coincide con el tipo de archivo seleccionado.' });
+    const format = mimeType === 'application/pdf' ? 'pdf' : mimeType === 'image/png' ? 'png' : 'jpg';
+    await pool.query(`UPDATE shipments SET label_base64 = ?, label_format = ?, label_status = 'stored', label_error = NULL, status = IF(status IN ('pending_provider','pending_label','pending_customer_balance','tramitado'), 'label_ready', status), status_label = IF(status_label IN ('Preparando etiqueta','Etiqueta en preparación','Pendiente de saldo','Tramitado'), 'Etiqueta disponible', status_label), updated_at = NOW() WHERE id = ?`, [base64, format, shipment.id]);
+    await pool.query(`INSERT INTO shipment_labels (id, shipment_id, format, label_url, label_base64) VALUES (?, ?, ?, NULL, ?)`, [generateId('lbl_'), shipment.id, format, base64]);
+    await TrackingEventRepo.create({ shipment_id: shipment.id, tracking_code: shipment.tracking_code, status: 'label_ready', status_label: 'Etiqueta disponible', description: `Etiqueta cargada manualmente por el administrador${req.body?.fileName ? `: ${String(req.body.fileName).slice(0, 120)}` : '.'}` });
+    await writeAdminShipmentLog('shipment_label_uploaded', { adminId: req.user.id, shipmentId: shipment.id, fileName: String(req.body?.fileName || '').slice(0, 120), mimeType, bytes: buffer.length }, { success: true });
+    const fresh = await ShipmentRepo.getById(shipment.id);
+    res.json({ success: true, labelReady: true, labelDownloadUrl: labelFileUrlForShipment(fresh), message: 'Etiqueta cargada correctamente.' });
+  } catch { res.status(500).json({ error: 'No se pudo cargar la etiqueta.' }); }
 });
 
 
@@ -14906,7 +15181,8 @@ app.post('/api/admin/status-cron/run', authMiddleware, requireSuperAdmin, async 
   try {
     const results = await processShipmentStatusUpdates(Number(req.body?.limit || 25));
     const payouts = await processMarketplacePayouts(Number(req.body?.payoutLimit || 10));
-    res.json({ success: true, processed: results.length, results, payouts });
+    const notifications = await processAdminShipmentNotificationJobs(Number(req.body?.notificationLimit || 20));
+    res.json({ success: true, processed: results.length, results, payouts, notifications });
   } catch (error) {
     console.error('[Diagnóstico Interno] Error actualizando estados:', error);
     res.status(500).json({ error: 'No se pudo completar la operación.' });
@@ -14922,7 +15198,8 @@ app.get('/api/cron/shipments/status', async (req: any, res) => {
     }
     const results = await processShipmentStatusUpdates(Number(req.query.limit || 25));
     const payouts = await processMarketplacePayouts(Number(req.query.payoutLimit || 10));
-    res.json({ ok: true, processed: results.length, results, payouts });
+    const notifications = await processAdminShipmentNotificationJobs(Number(req.query.notificationLimit || 20));
+    res.json({ ok: true, processed: results.length, results, payouts, notifications });
   } catch (error) {
     console.error('[Diagnóstico Interno] Error cron estados:', error);
     res.status(500).json({ ok: false, message: 'No se pudo completar la operación.' });
