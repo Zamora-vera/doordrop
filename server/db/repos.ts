@@ -191,6 +191,27 @@ export async function initDb() {
     UNIQUE KEY uq_email_shipment_event_to (shipment_id, event_code, to_email)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
+  await pool.query(`CREATE TABLE IF NOT EXISTS shipment_pickup_requests (
+    id CHAR(36) PRIMARY KEY,
+    shipment_id CHAR(36) NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    provider_code VARCHAR(80) NOT NULL,
+    mode ENUM('provider_default','scheduled') NOT NULL DEFAULT 'provider_default',
+    requested_date DATE NULL,
+    time_from TIME NULL,
+    time_to TIME NULL,
+    status ENUM('pending','requested','confirmed','failed','cancelled') NOT NULL DEFAULT 'pending',
+    provider_reference VARCHAR(191) NULL,
+    request_payload_json JSON NULL,
+    response_payload_json JSON NULL,
+    error_message VARCHAR(500) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_shipment_pickup_request (shipment_id),
+    INDEX idx_pickup_provider_status (provider_code, status, requested_date),
+    INDEX idx_pickup_user_status (user_id, status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
   // Internal Super Admin staff accounts are real users with role=support.
   // Keep their operational profile separate from customer-owned omnichannel_team.
   await pool.query(`CREATE TABLE IF NOT EXISTS admin_staff (
@@ -925,6 +946,20 @@ export const ShipmentRepo = {
           `INSERT INTO shipment_drafts (id, shipment_id, user_id, quote_id, reason, payload_json, status)
            VALUES (?, ?, ?, ?, ?, ?, 'open')`,
           [generateId('drf_'), shipment.id, shipment.user_id, shipment.quote_id || null, shipment.draftReason || 'pending', JSON.stringify(shipment.draftPayload || shipment)]
+        );
+      }
+
+      const pickup = shipment.services && typeof shipment.services === 'object' ? shipment.services.pickup : null;
+      if (pickup && (pickup.mode === 'scheduled' || pickup.mode === 'provider_default')) {
+        await conn.query(
+          `INSERT INTO shipment_pickup_requests
+            (id, shipment_id, user_id, provider_code, mode, requested_date, time_from, time_to, status, request_payload_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+           ON DUPLICATE KEY UPDATE provider_code = VALUES(provider_code), mode = VALUES(mode), requested_date = VALUES(requested_date), time_from = VALUES(time_from), time_to = VALUES(time_to), request_payload_json = VALUES(request_payload_json), updated_at = NOW()`,
+          [
+            generateId('pick_'), shipment.id, shipment.user_id, shipment.provider_code || 'unknown', pickup.mode,
+            pickup.date || null, pickup.timeFrom || null, pickup.timeTo || null, JSON.stringify(pickup)
+          ]
         );
       }
 

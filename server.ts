@@ -1827,13 +1827,50 @@ function spediamoProServicePointTypes(offer: any) {
   return { departure: departurePoint ? 'point' : 'home', arrival: requiresDeliveryPudo ? 'point' : 'home', deliveryPudoRequired: requiresDeliveryPudo };
 }
 
+function providerQuotePayload(quote: any) {
+  const persistedQuote = parseJsonSafe(quote?.quote_payload_json);
+  if (persistedQuote && typeof persistedQuote === 'object') return persistedQuote;
+  const storedPayload = parseJsonSafe(quote?.provider_payload_json);
+  return storedPayload && typeof storedPayload === 'object' ? storedPayload : {};
+}
+
+function spediamoProServiceId(offer: any) {
+  const candidates = [
+    offer?.service,
+    offer?.service_id,
+    offer?.serviceId,
+    offer?.courierService?.id,
+    offer?.courierService?.service,
+    offer?.courier_service_id
+  ];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isInteger(value) && value > 0) return value;
+  }
+  return 0;
+}
+
 function normalizeSpediamoProQuotationForAccept(offer: any) {
   return {
-    service: Number(offer?.service || offer?.courierService?.id || 0),
+    service: spediamoProServiceId(offer),
     expectedDeliveryDate: offer?.expectedDeliveryDate || new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
     firstAvailablePickupDate: offer?.firstAvailablePickupDate || new Date(Date.now() + 86400000).toISOString().slice(0, 10),
     priceBreakdown: offer?.priceBreakdown || { basePrice: Number(offer?.totalPrice || 0), fuelSurcharge: 0, accessoryServicePrice: 0, vatRate: 0, vatAmount: 0 }
   };
+}
+
+function normalizeShipmentPickupService(value: any) {
+  const raw = value && typeof value === 'object' ? value : {};
+  const mode = String(raw.mode || 'provider_default').trim().toLowerCase() === 'scheduled' ? 'scheduled' : 'provider_default';
+  const date = String(raw.date || raw.pickupDate || '').trim();
+  const timeFrom = String(raw.timeFrom || raw.from || '').trim();
+  const timeTo = String(raw.timeTo || raw.to || '').trim();
+  if (mode === 'provider_default') return { mode };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  if (timeFrom && !/^([01]\d|2[0-3]):[0-5]\d$/.test(timeFrom)) return null;
+  if (timeTo && !/^([01]\d|2[0-3]):[0-5]\d$/.test(timeTo)) return null;
+  if (timeFrom && timeTo && timeFrom >= timeTo) return null;
+  return { mode, date, timeFrom: timeFrom || null, timeTo: timeTo || null, note: compactText(raw.note || '', 180) || null };
 }
 
 function normalizeSpediamoProPudoPoints(data: any) {
@@ -3927,6 +3964,7 @@ async function callProviderCreate(args: {
   keys: any;
 }) {
   const { providerCode, quote, shipmentId, sender, recipient, packages, customs, content, reference, declaredValue, exportReason, termsOfTrade, manifest, services, keys } = args;
+  const pickupService = normalizeShipmentPickupService(services?.pickup);
   const result: any = {
     success: false,
     errorMessage: 'Proveedor no disponible todavÃ­a.',
@@ -3941,6 +3979,11 @@ async function callProviderCreate(args: {
     providerPackages: packages,
     providerPayload: null
   };
+
+  if (services?.pickup && !pickupService) {
+    result.errorMessage = 'La fecha o el horario de recogida programada no es vÃ¡lido.';
+    return result;
+  }
 
   
   // --- Conector internacional suspendido ---
@@ -3957,7 +4000,7 @@ async function callProviderCreate(args: {
       return result;
     }
 
-    const quoteEnvelope = parseJsonSafe(quote.provider_payload_json);
+    const quoteEnvelope = providerQuotePayload(quote);
     const raw = quoteEnvelope?.raw || quoteEnvelope || {};
     const serviceLevel = String(
       quoteEnvelope?.service_level ||
@@ -4078,7 +4121,7 @@ async function callProviderCreate(args: {
     }
 
     const providerContactEmail = ship24goProviderContactEmail();
-    const quoteEnvelope = parseJsonSafe(quote.provider_payload_json);
+    const quoteEnvelope = providerQuotePayload(quote);
     const quoteRaw = quoteEnvelope?.raw || quoteEnvelope || {};
     const selectedOffer = quoteRaw?.selectedService || quoteRaw;
     const senderForProvider = buildCustomerAddressPayload(sender || {});
@@ -4087,7 +4130,7 @@ async function callProviderCreate(args: {
       merchant_reference: compactText(reference || shipmentId, 80),
       include_return_label: false,
       include_price: true,
-      book_pickup: false,
+      book_pickup: pickupService?.mode === 'scheduled',
       courier_fallback: true,
       courier: String(quote.service_id || selectedOffer?.id || selectedOffer?.courier || '').trim(),
       sender: buildSpedireProAddress(senderForProvider, quote, quote.origin_country || senderForProvider?.country || 'IT', quote.origin_zip || senderForProvider?.zipCode || '', providerContactEmail),
@@ -4181,7 +4224,7 @@ async function callProviderCreate(args: {
     }
 
     const providerContactEmail = ship24goProviderContactEmail();
-    const quoteEnvelope = parseJsonSafe(quote.provider_payload_json);
+    const quoteEnvelope = providerQuotePayload(quote);
     const quoteRaw = quoteEnvelope?.raw || quoteEnvelope || {};
     const selectedOffer = quoteRaw?.selectedService || quoteRaw;
     const courierCode = String(selectedOffer?.courierService?.courier || selectedOffer?.courier || '').toLowerCase();
@@ -4205,13 +4248,18 @@ async function callProviderCreate(args: {
       parcels: buildSpediamoProParcels(packages),
       sender: buildSpediamoProShipmentContact(senderForProvider, quote, quote.origin_country || senderForProvider?.country || 'IT', quote.origin_zip || senderForProvider?.zipCode || '', providerContactEmail),
       consignee: buildSpediamoProShipmentContact(recipientForProvider, quote, quote.dest_country || recipientForProvider?.country || 'IT', quote.dest_zip || recipientForProvider?.zipCode || '', providerContactEmail),
-      quotation: normalizeSpediamoProQuotationForAccept(selectedOffer),
+      quotation: normalizeSpediamoProQuotationForAccept({ ...selectedOffer, service: selectedOffer?.service ?? quote.service_id }),
       labelFormat: courierCode === 'ups' ? 1 : 0,
       documents: null,
       consigneeNote: compactText(recipientForProvider?.observations || recipientForProvider?.note || '', 70) || null,
       externalId: compactText(shipmentId, 64),
       externalReference: compactText(reference || shipmentId, 64)
     };
+    if (!requestPayload.quotation.service) {
+      result.errorMessage = 'La cotizaciÃ³n del proveedor no contiene un servicio vÃ¡lido. Solicita una cotizaciÃ³n nueva.';
+      result.providerPayload = { apiMode: 'spediamopro_v2', selectedOffer };
+      return result;
+    }
     if (pointTypes.arrival === 'point' && receiverDrop?.PointID) requestPayload.deliveryPudo = compactText(receiverDrop.PointID, 16);
 
     const accepted = await callSpediamoPro(dbProvider, keys, 'POST', 'quotations/accept', requestPayload);
@@ -4268,7 +4316,7 @@ async function callProviderCreate(args: {
       return result;
     }
     const providerContactEmail = ship24goProviderContactEmail();
-    const quoteEnvelope = parseJsonSafe(quote.provider_payload_json);
+    const quoteEnvelope = providerQuotePayload(quote);
     const quoteRaw = quoteEnvelope?.raw || quoteEnvelope || {};
     const selectedRate = quoteRaw?.selectedRate || quoteRaw?.rate || quoteRaw;
     const quoteShipment = quoteRaw?.shipment || quoteRaw?.selectedShipment || null;
@@ -4467,7 +4515,7 @@ async function callProviderCreate(args: {
     }
 
     const providerContactEmail = ship24goProviderContactEmail();
-    const quoteEnvelope = parseJsonSafe(quote.provider_payload_json);
+    const quoteEnvelope = providerQuotePayload(quote);
     const quoteRaw = quoteEnvelope?.raw || quoteEnvelope || {};
     const quoteLocalities = quoteRaw?.ship24goLocalities || {};
     const senderForProvider = buildCustomerAddressPayload(sender || {});
@@ -4483,8 +4531,8 @@ async function callProviderCreate(args: {
     const allowBuy = paccofacileCanBuy(dbProvider);
     const requestPayload: any = {
       shipment_service: {
-        pickup_date: selectedOffer?.pickup_date?.first_date || nextBusinessDateIso(2),
-        pickup_range: selectedOffer?.pickup_date?.first_date_range || 'AM',
+        pickup_date: pickupService?.date || selectedOffer?.pickup_date?.first_date || nextBusinessDateIso(2),
+        pickup_range: pickupService?.timeFrom ? (Number(pickupService.timeFrom.slice(0, 2)) >= 13 ? 'PM' : 'AM') : (selectedOffer?.pickup_date?.first_date_range || 'AM'),
         service_id: Number(quote.service_id || selectedOffer?.service_id || 0),
         parcels: buildPaccofacileParcels(packages),
         accessories: [],
@@ -4564,7 +4612,7 @@ async function callProviderCreate(args: {
       const createFunction = geneiV1CreateFunction(dbProvider);
       const isSandbox = createFunction !== 'crear_envio';
       const providerContactEmail = ship24goProviderContactEmail();
-      const quoteEnvelope = parseJsonSafe(quote.provider_payload_json);
+      const quoteEnvelope = providerQuotePayload(quote);
       const quoteRaw = quoteEnvelope?.raw || quoteEnvelope || {};
       const senderForProvider = buildCustomerAddressPayload(sender || {});
       const recipientForProvider = buildCustomerAddressPayload(recipient || {});
@@ -4615,9 +4663,9 @@ async function callProviderCreate(args: {
         codigo_mercancia: compactText((customs as any)?.[0]?.codigoMercancia || (customs as any)?.[0]?.codigo_mercancia || '183', 20),
         recoger_tienda: senderDrop ? '1' : '0',
         cod_promo: '',
-        fecha_recogida: nextBusinessDateEs(2),
-        hora_recogida_desde: '10:30',
-        hora_recogida_hasta: '18:00',
+        fecha_recogida: pickupService?.date || nextBusinessDateEs(2),
+        hora_recogida_desde: pickupService?.timeFrom || '10:30',
+        hora_recogida_hasta: pickupService?.timeTo || '18:00',
         unidad_correo: receiverDrop?.id_oficina || senderDrop?.id_oficina || null,
         id_oficina_salida: senderDrop?.id_oficina || null,
         id_oficina_entrega: receiverDrop?.id_oficina || null,
@@ -4675,7 +4723,7 @@ async function callProviderCreate(args: {
     const token = await getGeneiToken(keys.genei);
     const senderDrop = geneiDropOfficePayload(services?.drops?.sender);
     const receiverDrop = geneiDropOfficePayload(services?.drops?.receiver);
-    const quoteEnvelope = parseJsonSafe(quote.provider_payload_json);
+    const quoteEnvelope = providerQuotePayload(quote);
     const quoteRaw = quoteEnvelope?.raw || quoteEnvelope || {};
     const quotePointTypes = { departure: String(quoteRaw?.departureType || quoteRaw?.departure_type || '').toLowerCase(), arrival: String(quoteRaw?.arrivalType || quoteRaw?.arrival_type || '').toLowerCase() };
     if (quotePointTypes.departure === 'point' && !senderDrop) {
@@ -10854,7 +10902,14 @@ app.post('/api/shipments/quote', async (req: any, res) => {
 // 8. Crear un EnvÃ­o
 app.post('/api/shipments', authMiddleware, async (req: any, res) => {
   try {
-    const { quoteId, sender, recipient, packages, customs, content, reference, declaredValue, exportReason, termsOfTrade, manifest, paymentMethod = 'wallet' } = req.body;
+    const { quoteId, sender, recipient, packages, customs, content, reference, declaredValue, exportReason, termsOfTrade, manifest, paymentMethod = 'wallet', services } = req.body;
+    const normalizedPickup = normalizeShipmentPickupService(services?.pickup);
+    if (services?.pickup && !normalizedPickup) {
+      return res.status(400).json({ error: 'La fecha o el horario de recogida programada no es vÃ¡lido.' });
+    }
+    const shipmentServices = services && typeof services === 'object'
+      ? { ...services, ...(services.pickup ? { pickup: normalizedPickup } : {}) }
+      : null;
     const normalizedPaymentMethod = String(paymentMethod || 'wallet').trim().toLowerCase();
     if (!['wallet', 'paypal'].includes(normalizedPaymentMethod)) {
       return res.status(400).json({ error: 'MÃ©todo de pago no vÃ¡lido.' });
@@ -10981,8 +11036,9 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
           declaredValue,
           exportReason,
           termsOfTrade,
-          services: req.body?.services || null
-        },
+          services: shipmentServices
+         },
+         services: shipmentServices,
         walletDeduction: 0,
         currency: quoteCurrency
       };
@@ -11069,7 +11125,8 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
         payment_url: providerResult?.paymentUrl || null,
         walletDeduction: 0,
         draftReason: reason,
-        draftPayload: { quoteId, sender: senderForShipment, recipient: recipientForShipment, packages: normalizedPackages, customs, content, reference, declaredValue, exportReason, termsOfTrade, manifest, services: req.body?.services || null },
+         draftPayload: { quoteId, sender: senderForShipment, recipient: recipientForShipment, packages: normalizedPackages, customs, content, reference, declaredValue, exportReason, termsOfTrade, manifest, services: shipmentServices },
+         services: shipmentServices,
         provider_payload_json: providerResult?.providerPayload || null
       };
       await ShipmentRepo.create(draftShipment);
@@ -11118,7 +11175,8 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
         label_base64: null,
         track_url: null,
         payment_url: null,
-        provider_payload_json: { quoteId, providerCode, pendingReason: 'customer_balance', content: compactText(content || 'General goods', 150), services: req.body?.services || null },
+         provider_payload_json: { quoteId, providerCode, pendingReason: 'customer_balance', content: compactText(content || 'General goods', 150), services: shipmentServices },
+         services: shipmentServices,
         walletDeduction: 0,
         currency: chargeCurrency || quote.currency || 'EUR'
       };
@@ -11159,7 +11217,7 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
       exportReason,
       termsOfTrade,
       manifest: providerManifest,
-      services: req.body?.services || null,
+       services: shipmentServices,
       keys
     });
 
@@ -11186,7 +11244,8 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
         label_base64: null,
         track_url: null,
         payment_url: null,
-        provider_payload_json: providerResult.providerPayload || null,
+         provider_payload_json: { ...(providerResult.providerPayload || {}), services: shipmentServices },
+         services: shipmentServices,
         walletDeduction,
         walletDescription: `Cargo por envÃ­o ${internalTracking} (${quote.service_name})`,
         currency: chargeCurrency || quote.currency || 'EUR'
@@ -11236,7 +11295,8 @@ app.post('/api/shipments', authMiddleware, async (req: any, res) => {
       label_base64: null,
       track_url: providerResult.trackUrl || (providerResult.trackingCode ? `${process.env.APP_URL || 'https://doordrop.lat'}/track/${providerResult.trackingCode}` : null),
       payment_url: providerResult.paymentUrl || null,
-      provider_payload_json: providerResult.providerPayload || null,
+       provider_payload_json: { ...(providerResult.providerPayload || {}), services: shipmentServices },
+       services: shipmentServices,
       walletDeduction,
       walletDescription: `Cargo por envÃ­o ${providerResult.trackingCode} (${quote.service_name})`,
       currency: chargeCurrency || quote.currency || 'EUR'
@@ -15547,7 +15607,7 @@ app.post('/api/webhooks/paypal', async (req: any, res) => {
           const paid = orderRows?.[0];
           if (paid) {
             await prepareMarketplaceOrderShipment(String(paid.id)).catch((error: any) => {
-              console.error('[Marketplace] Preparación después de PayPal pendiente:', error?.message || error);
+              console.error('[Marketplace] PreparaciÃ³n despuÃ©s de PayPal pendiente:', error?.message || error);
             });
             const appUrl = appBaseUrl().replace(/\/+$/, '');
             const orderUrl = `${appUrl}/panel/marketplace?tab=orders`;
@@ -17435,7 +17495,7 @@ async function refreshMarketplaceCarrierQuote(order: any, packageData: any) {
   const selected = quoteList.find((item: any) => String(item.id) === String(order.quote_id)) || quoteList[0];
   if (!selected?.id) throw new Error('No hay una tarifa real disponible para estas medidas y ruta.');
   const [quoteRows]: any = await pool.query('SELECT * FROM quotes WHERE id = ? LIMIT 1', [selected.id]);
-  if (!quoteRows?.[0]) throw new Error('La cotización real no pudo guardarse.');
+  if (!quoteRows?.[0]) throw new Error('La cotizaciÃ³n real no pudo guardarse.');
   return quoteRows[0];
 }
 
@@ -17451,9 +17511,9 @@ async function prepareMarketplaceOrderShipment(orderId: string, packageData?: an
   );
   const order = rows?.[0];
   if (!order) throw new Error('Pedido Marketplace no encontrado.');
-  if (String(order.status) === 'pending_payment') return { success: false, pendingPayment: true, message: 'El pago aún no está confirmado.' };
+  if (String(order.status) === 'pending_payment') return { success: false, pendingPayment: true, message: 'El pago aÃºn no estÃ¡ confirmado.' };
   if (!packageData && !order.package_confirmed_at) {
-    await pool.query(`UPDATE marketplace_orders SET status = 'paid', shipping_block_reason = 'Pendiente de confirmación del peso y medidas reales', updated_at = NOW() WHERE id = ? AND status = 'paid'`, [orderId]);
+    await pool.query(`UPDATE marketplace_orders SET status = 'paid', shipping_block_reason = 'Pendiente de confirmaciÃ³n del peso y medidas reales', updated_at = NOW() WHERE id = ? AND status = 'paid'`, [orderId]);
     return { success: true, pendingMeasurement: true, message: 'El pago fue confirmado. El vendedor debe confirmar el peso y las medidas reales antes de generar la etiqueta.' };
   }
   const measured = packageData || {
@@ -17463,12 +17523,12 @@ async function prepareMarketplaceOrderShipment(orderId: string, packageData?: an
     heightCm: Number(order.package_height_cm || order.height_cm || 10)
   };
   if (![measured.weightKg, measured.lengthCm, measured.widthCm, measured.heightCm].every((value: any) => Number.isFinite(Number(value)) && Number(value) > 0)) {
-    throw new Error('Peso y medidas reales no válidos.');
+    throw new Error('Peso y medidas reales no vÃ¡lidos.');
   }
   const quote = await refreshMarketplaceCarrierQuote(order, measured);
   const providerCode = String(quote.provider_code || '').toLowerCase();
   if (!['parcelabc', 'genei', 'paccofacile', 'spedirepro', 'spediamopro', 'easypost', 'logihub_intl'].includes(providerCode)) {
-    throw new Error('La cotización no pertenece a un proveedor logístico real habilitado.');
+    throw new Error('La cotizaciÃ³n no pertenece a un proveedor logÃ­stico real habilitado.');
   }
   let shipmentId = String(order.shipment_id || '');
   if (!shipmentId) {
@@ -17495,14 +17555,14 @@ async function prepareMarketplaceOrderShipment(orderId: string, packageData?: an
         shipping_block_reason = NULL, updated_at = NOW() WHERE id = ? AND shipment_id IS NULL`,
       [shipmentId, quote.id, providerCode, quote.service_name || null, Number(measured.weightKg), Number(measured.lengthCm), Number(measured.widthCm), Number(measured.heightCm), Math.round(Number(quote.total_amount || 0) * 100), order.id]
     );
-    await TrackingEventRepo.create({ shipment_id: shipmentId, tracking_code: tracking, status: 'pending_customer_balance', status_label: 'Pendiente de saldo', description: 'El envío Marketplace espera saldo del vendedor para comprar la etiqueta.' }).catch(() => null);
+    await TrackingEventRepo.create({ shipment_id: shipmentId, tracking_code: tracking, status: 'pending_customer_balance', status_label: 'Pendiente de saldo', description: 'El envÃ­o Marketplace espera saldo del vendedor para comprar la etiqueta.' }).catch(() => null);
     await ensureShipmentJob(shipmentId, order.seller_id, 'payment_manifest', 'pending', 'Pendiente de saldo del vendedor.');
   }
   const result = await processShipmentPreparation(shipmentId);
   await syncMarketplaceOrderFromShipment(shipmentId);
   const [freshRows]: any = await pool.query('SELECT * FROM shipments WHERE id = ? LIMIT 1', [shipmentId]);
   const fresh = freshRows?.[0];
-  return { success: Boolean(result?.success), shipmentId, pendingLabel: !fresh?.label_url && !fresh?.label_base64, pendingBalance: fresh?.status === 'pending_customer_balance', trackingCode: fresh?.tracking_code || null, labelUrl: fresh?.label_url || null, message: result?.message || 'Envío en preparación.' };
+  return { success: Boolean(result?.success), shipmentId, pendingLabel: !fresh?.label_url && !fresh?.label_base64, pendingBalance: fresh?.status === 'pending_customer_balance', trackingCode: fresh?.tracking_code || null, labelUrl: fresh?.label_url || null, message: result?.message || 'EnvÃ­o en preparaciÃ³n.' };
 }
 
 async function requestMarketplaceSellerPayout(orderId: string, sellerId: string) {
@@ -17514,10 +17574,10 @@ async function requestMarketplaceSellerPayout(orderId: string, sellerId: string)
   const order = rows?.[0];
   if (!order) throw new Error('Pedido Marketplace no encontrado.');
   if (!order.paypal_connected || !order.paypal_email) throw new Error('Vincula PayPal antes de solicitar el retiro.');
-  if (!['protection_period', 'delivered', 'completed'].includes(String(order.status))) throw new Error('El retiro solo puede solicitarse después de la entrega.');
+  if (!['protection_period', 'delivered', 'completed'].includes(String(order.status))) throw new Error('El retiro solo puede solicitarse despuÃ©s de la entrega.');
   const eligibleAt = order.protection_ends_at ? new Date(order.protection_ends_at) : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
   const amountMinor = Math.max(0, Number(order.product_amount_minor || 0) - Number(order.commission_amount_minor || 0));
-  if (!amountMinor) throw new Error('El importe disponible para retiro no es válido.');
+  if (!amountMinor) throw new Error('El importe disponible para retiro no es vÃ¡lido.');
   const payoutId = generateId('mpp_');
   await pool.query(
     `INSERT INTO marketplace_payout_requests (id, order_id, seller_id, paypal_email, amount_minor, currency, status, eligible_at)
@@ -17526,7 +17586,7 @@ async function requestMarketplaceSellerPayout(orderId: string, sellerId: string)
     [payoutId, order.id, sellerId, String(order.paypal_email).toLowerCase(), amountMinor, order.currency || 'EUR', eligibleAt]
   );
   const [payoutRows]: any = await pool.query('SELECT * FROM marketplace_payout_requests WHERE order_id = ? LIMIT 1', [order.id]);
-  return { success: true, payout: payoutRows?.[0], message: `Solicitud creada. El retiro estará disponible después de la entrega más 14 días (${eligibleAt.toISOString().slice(0, 10)}).` };
+  return { success: true, payout: payoutRows?.[0], message: `Solicitud creada. El retiro estarÃ¡ disponible despuÃ©s de la entrega mÃ¡s 14 dÃ­as (${eligibleAt.toISOString().slice(0, 10)}).` };
 }
 
 async function processMarketplacePayouts(limit = 10) {
@@ -17545,10 +17605,10 @@ async function processMarketplacePayouts(limit = 10) {
       const batchId = `DD-MP-${payout.id}`.slice(0, 50);
       const response = await fetch(`${ship24goPayPalApiBase(keys?.paypalEnvironment)}/v1/payments/payouts`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'PayPal-Request-Id': batchId },
-        body: JSON.stringify({ sender_batch_header: { sender_batch_id: batchId, email_subject: 'Tu retiro DoorDrop está en proceso', email_message: 'Tu saldo Marketplace fue liberado después del periodo de protección.' }, items: [{ recipient_type: 'EMAIL', amount: { value: (Number(payout.amount_minor) / 100).toFixed(2), currency: payout.currency || 'EUR' }, receiver: payout.paypal_email, note: `DoorDrop Marketplace ${payout.order_number}`, sender_item_id: payout.id }] })
+        body: JSON.stringify({ sender_batch_header: { sender_batch_id: batchId, email_subject: 'Tu retiro DoorDrop estÃ¡ en proceso', email_message: 'Tu saldo Marketplace fue liberado despuÃ©s del periodo de protecciÃ³n.' }, items: [{ recipient_type: 'EMAIL', amount: { value: (Number(payout.amount_minor) / 100).toFixed(2), currency: payout.currency || 'EUR' }, receiver: payout.paypal_email, note: `DoorDrop Marketplace ${payout.order_number}`, sender_item_id: payout.id }] })
       });
       const data: any = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.batch_header?.payout_batch_id) throw new Error(data?.message || 'PayPal no aceptó el retiro.');
+      if (!response.ok || !data?.batch_header?.payout_batch_id) throw new Error(data?.message || 'PayPal no aceptÃ³ el retiro.');
       await pool.query(`UPDATE marketplace_payout_requests SET status = 'paid', paypal_batch_id = ?, processed_at = NOW(), updated_at = NOW() WHERE id = ?`, [data.batch_header.payout_batch_id, payout.id]);
       await pool.query(`UPDATE marketplace_orders SET status = 'completed', completed_at = COALESCE(completed_at, NOW()), updated_at = NOW() WHERE id = ? AND status IN ('protection_period','completed')`, [payout.order_id]);
       results.push({ id: payout.id, status: 'paid' });

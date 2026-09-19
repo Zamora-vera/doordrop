@@ -330,7 +330,9 @@ export default function DoorDropTariffa() {
   const { currency, setCurrency, format, availableCurrencies } = useCurrency();
   const [coverage, setCoverage] = useState<Coverage>('internacional');
   const [form, setForm] = useState<TariffForm>({ originCountry: 'ES', originZip: '28001', originCity: '', destCountry: 'DE', destZip: '10115', destCity: '', currency: currency || 'EUR' });
-  const [rows, setRows] = useState<MatrixRow[]>(DEFAULT_INTERNATIONAL_ROWS);
+  // Never show reference prices as if they were purchasable. Rows appear only
+  // after the connected providers answer the current route and package.
+  const [rows, setRows] = useState<MatrixRow[]>([]);
   const [plans, setPlans] = useState<PlanOption[]>(DEFAULT_PLANS);
   const [activePlanId, setActivePlanId] = useState('plan_basic');
   const [selectedWeight, setSelectedWeight] = useState<WeightStop>(1);
@@ -374,11 +376,9 @@ export default function DoorDropTariffa() {
       }
       return next;
     });
-    const nextCountry = coverage === 'nacional' ? value : form.originCountry;
-    const nextSnapshot = coverage === 'nacional' && selectedWeight === 1 ? DEFAULT_NATIONAL_CATALOG[nextCountry] : undefined;
-    setPlans(nextSnapshot ? DEFAULT_PLANS : []);
-    setActivePlanId(nextSnapshot ? 'plan_basic' : '');
-    setRows(nextSnapshot || []);
+    setPlans(DEFAULT_PLANS);
+    setActivePlanId('plan_basic');
+    setRows([]);
     setPage(1);
     setCourierFilter('all');
     setServiceFilter('all');
@@ -388,14 +388,11 @@ export default function DoorDropTariffa() {
 
   const changeCoverage = (nextCoverage: Coverage) => {
     requestSequence.current += 1;
-    const coverageChanged = coverage !== nextCoverage;
     const countryPreset = DEFAULT_COUNTRY_ZIPS[form.originCountry];
-    const nextNationalSnapshot = coverageChanged && selectedWeight === 1 && nextCoverage === 'nacional' ? DEFAULT_NATIONAL_CATALOG[form.originCountry] : undefined;
-    const canUseSpainInternationalSnapshot = coverageChanged && selectedWeight === 1 && nextCoverage === 'internacional' && form.originCountry === 'ES' && (form.originZip === '28001' || !form.originZip);
     setCoverage(nextCoverage);
-    setPlans(nextNationalSnapshot || canUseSpainInternationalSnapshot ? DEFAULT_PLANS : []);
-    setActivePlanId(nextNationalSnapshot || canUseSpainInternationalSnapshot ? 'plan_basic' : '');
-    setRows(nextNationalSnapshot || (canUseSpainInternationalSnapshot ? DEFAULT_INTERNATIONAL_ROWS : []));
+    setPlans(DEFAULT_PLANS);
+    setActivePlanId('plan_basic');
+    setRows([]);
     setPage(1);
     setCourierFilter('all');
     setServiceFilter('all');

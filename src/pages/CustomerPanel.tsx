@@ -1041,6 +1041,7 @@ const Quote = () => {
   const [shippingTermsAccepted, setShippingTermsAccepted] = useState(false);
   const [dropPointModal, setDropPointModal] = useState<{ open: boolean; direction: 'sender' | 'receiver' }>({ open: false, direction: 'sender' });
   const [selectedDrops, setSelectedDrops] = useState<{ sender?: any; receiver?: any }>({});
+  const [pickupSchedule, setPickupSchedule] = useState({ mode: 'provider_default' as 'provider_default' | 'scheduled', date: '', timeFrom: '09:00', timeTo: '18:00', note: '' });
   const [storeOrderContext, setStoreOrderContext] = useState<any>(null);
 
   const addPackage = () => {
@@ -1266,6 +1267,7 @@ const Quote = () => {
       destCity: quote?.destCity || form.destCity,
     });
     setSelectedDrops({});
+    setPickupSchedule({ mode: 'provider_default', date: '', timeFrom: '09:00', timeTo: '18:00', note: '' });
     setSenderDetails(prev => ({
       ...prev,
       country: form.originCountry,
@@ -1388,6 +1390,10 @@ const Quote = () => {
       alert('Selecciona un punto de entrega para continuar.');
       return;
     }
+    if (pickupSchedule.mode === 'scheduled' && !pickupSchedule.date) {
+      alert('Selecciona la fecha de recogida programada para continuar.');
+      return;
+    }
     setPaymentLoading(true);
     try {
       const isInternational = form.originCountry !== form.destCountry;
@@ -1403,6 +1409,12 @@ const Quote = () => {
         termsOfTrade: extraDetails.termsOfTrade
       }] : [];
 
+      const shipmentServices = {
+        ...(selectedDrops.sender || selectedDrops.receiver ? { drops: { ...(selectedDrops.sender ? { sender: selectedDrops.sender } : {}), ...(selectedDrops.receiver ? { receiver: selectedDrops.receiver } : {}) } } : {}),
+        pickup: pickupSchedule.mode === 'scheduled'
+          ? { mode: 'scheduled', date: pickupSchedule.date, timeFrom: pickupSchedule.timeFrom, timeTo: pickupSchedule.timeTo, note: pickupSchedule.note }
+          : { mode: 'provider_default' }
+      };
       const payload = {
         quoteId: selectedQuote.id,
         sender: senderDetails,
@@ -1416,7 +1428,7 @@ const Quote = () => {
         termsOfTrade: extraDetails.termsOfTrade,
         manifest: isBorradorMode ? 0 : extraDetails.manifest,
         paymentMethod: shipmentPaymentMethod,
-        services: quoteNeedsAnyPoint(selectedQuote) ? { drops: { ...(selectedDrops.sender ? { sender: selectedDrops.sender } : {}), ...(selectedDrops.receiver ? { receiver: selectedDrops.receiver } : {}) } } : undefined
+        services: shipmentServices
       };
 
       const res = await api.createShipment(payload);
@@ -1450,6 +1462,7 @@ const Quote = () => {
     const needsSenderPoint = quoteNeedsSenderPoint(selectedQuote);
     const needsReceiverPoint = quoteNeedsReceiverPoint(selectedQuote);
     const pointSelectionReady = (!needsSenderPoint || Boolean(selectedDrops.sender)) && (!needsReceiverPoint || Boolean(selectedDrops.receiver));
+    const scheduleSupported = ['genei', 'paccofacile', 'spedirepro'].includes(String(selectedQuote?.providerCode || '').toLowerCase()) && !needsSenderPoint;
 
     return (
       <div className="py-2 md:py-4 max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
@@ -1525,6 +1538,27 @@ const Quote = () => {
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {scheduleSupported && (
+              <div className="glass-panel p-6 rounded-3xl border border-violet-100 dark:border-violet-900/40 space-y-4">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-wider text-violet-600 dark:text-violet-300">Recogida del remitente</p>
+                  <h3 className="text-lg font-black text-gray-900 dark:text-white mt-1">¿Cuándo debe pasar el transportista?</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 font-semibold mt-1">La fecha y la franja se envían al proveedor. La hora exacta depende de su disponibilidad operativa.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => setPickupSchedule(prev => ({ ...prev, mode: 'provider_default' }))} className={`rounded-xl px-4 py-2 text-xs font-black ${pickupSchedule.mode === 'provider_default' ? 'bg-violet-600 text-white' : 'border border-gray-200 text-gray-600 dark:border-gray-700 dark:text-gray-300'}`}>Primera fecha disponible</button>
+                  <button type="button" onClick={() => setPickupSchedule(prev => ({ ...prev, mode: 'scheduled' }))} className={`rounded-xl px-4 py-2 text-xs font-black ${pickupSchedule.mode === 'scheduled' ? 'bg-violet-600 text-white' : 'border border-gray-200 text-gray-600 dark:border-gray-700 dark:text-gray-300'}`}>Programar recogida</button>
+                </div>
+                {pickupSchedule.mode === 'scheduled' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <label className="text-xs font-black text-gray-500">Fecha<input type="date" min={new Date().toISOString().slice(0, 10)} value={pickupSchedule.date} onChange={e => setPickupSchedule(prev => ({ ...prev, date: e.target.value }))} className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-800 dark:border-gray-700 dark:bg-dark-900 dark:text-white" /></label>
+                    <label className="text-xs font-black text-gray-500">Desde<input type="time" value={pickupSchedule.timeFrom} onChange={e => setPickupSchedule(prev => ({ ...prev, timeFrom: e.target.value }))} className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-800 dark:border-gray-700 dark:bg-dark-900 dark:text-white" /></label>
+                    <label className="text-xs font-black text-gray-500">Hasta<input type="time" value={pickupSchedule.timeTo} onChange={e => setPickupSchedule(prev => ({ ...prev, timeTo: e.target.value }))} className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-800 dark:border-gray-700 dark:bg-dark-900 dark:text-white" /></label>
+                  </div>
+                )}
               </div>
             )}
 
