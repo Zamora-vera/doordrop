@@ -164,8 +164,15 @@ export const api = {
   adminUpdateClientStatus: (id: string, status: string) => fetchAPI(`/admin/clients/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) }),
   adminRemoveClientCard: (id: string) => fetchAPI(`/admin/clients/${id}/remove-card`, { method: 'POST' }),
   adminImpersonateClient: (id: string) => fetchAPI(`/admin/clients/${id}/impersonate`, { method: 'POST' }),
-  getAdminShipments: () => fetchAPI('/admin/shipments'),
+  getAdminShipments: (params: Record<string, any> = {}) => {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && String(value).trim() !== '') query.set(key, String(value));
+    });
+    return fetchAPI(`/admin/shipments${query.toString() ? `?${query.toString()}` : ''}`);
+  },
   updateAdminShipmentStatus: (id: string, status: string) => fetchAPI(`/admin/shipments/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) }),
+  notifyAdminShipment: (id: string, eventCode: string) => fetchAPI(`/admin/shipments/${id}/notify`, { method: 'POST', body: JSON.stringify({ eventCode }) }),
   getAdminProviders: () => fetchAPI('/admin/providers'),
   updateAdminProviders: (providers: any) => fetchAPI('/admin/providers', { method: 'POST', body: JSON.stringify({ providers }) }),
   testAdminProvider: (providerCode: string) => fetchAPI('/admin/providers/test', { method: 'POST', body: JSON.stringify({ providerCode }) }),

@@ -1106,6 +1106,16 @@ async function writeAdminClientLog(actionType: string, requestPayload: any, resp
   } catch {}
 }
 
+async function writeAdminShipmentLog(actionType: string, requestPayload: any, responsePayload: any, httpStatus = 200) {
+  try {
+    await pool.query(
+      `INSERT INTO provider_logs (id, provider_code, action_type, request_payload, response_payload, http_status)
+       VALUES (?, 'admin_shipments', ?, ?, ?, ?)`,
+      [generateId('log_'), actionType, JSON.stringify(requestPayload || {}), JSON.stringify(responsePayload || {}), httpStatus]
+    );
+  } catch {}
+}
+
 
 function appPublicUrl(req: express.Request) {
   const configured = String(process.env.APP_URL || '').replace(/\/$/, '');
@@ -12980,7 +12990,66 @@ app.post('/api/admin/clients/:id/impersonate', authMiddleware, requireSuperAdmin
 // Admin: Envíos
 app.get('/api/admin/shipments', authMiddleware, requireSuperAdmin, async (req: any, res) => {
   try {
-    const shipmentsList = await ShipmentRepo.getAll();
+    const search = String(req.query?.q || '').trim();
+    const page = Math.max(1, Number.parseInt(String(req.query?.page || '1'), 10) || 1);
+    const pageSize = Math.min(100, Math.max(10, Number.parseInt(String(req.query?.pageSize || '25'), 10) || 25));
+    const statusFilter = String(req.query?.status || '').trim().toLowerCase();
+    const labelFilter = String(req.query?.labelStatus || '').trim().toLowerCase();
+    const providerFilter = String(req.query?.provider || '').trim().toLowerCase();
+    const dateFrom = String(req.query?.dateFrom || '').trim();
+    const dateTo = String(req.query?.dateTo || '').trim();
+    const where: string[] = [];
+    const whereParams: any[] = [];
+    const fromSql = `FROM shipments s LEFT JOIN users u ON u.id = s.user_id`;
+
+    if (search) {
+      const term = `%${search}%`;
+      where.push(`(
+        s.tracking_code LIKE ? OR s.provider_tracking_code LIKE ? OR s.provider_shipment_code LIKE ? OR
+        s.reference LIKE ? OR s.order_number LIKE ? OR u.name LIKE ? OR u.email LIKE ? OR u.client_code LIKE ?
+      )`);
+      whereParams.push(term, term, term, term, term, term, term, term);
+    }
+    if (providerFilter) {
+      where.push('LOWER(COALESCE(s.provider_code, \'\')) = ?');
+      whereParams.push(providerFilter);
+    }
+    if (dateFrom && /^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
+      where.push('s.created_at >= ?');
+      whereParams.push(`${dateFrom} 00:00:00`);
+    }
+    if (dateTo && /^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+      where.push('s.created_at <= ?');
+      whereParams.push(`${dateTo} 23:59:59`);
+    }
+    if (labelFilter === 'available') {
+      where.push(`(s.label_status IN ('available', 'stored') OR s.label_base64 IS NOT NULL OR s.label_url IS NOT NULL)`);
+    } else if (labelFilter === 'pending') {
+      where.push(`COALESCE(s.label_status, 'pending') = 'pending' AND s.label_base64 IS NULL AND s.label_url IS NULL`);
+    } else if (labelFilter === 'error') {
+      where.push(`(COALESCE(s.label_status, '') IN ('error', 'failed') OR COALESCE(s.label_error, '') <> '')`);
+    }
+    if (statusFilter === 'created') {
+      where.push(`LOWER(COALESCE(s.status, '')) IN ('created', 'draft')`);
+    } else if (statusFilter === 'pending') {
+      where.push(`(LOWER(COALESCE(s.status, '')) IN ('pending_provider', 'pending_label', 'pending_customer_balance', 'tramitado') OR COALESCE(s.label_status, 'pending') = 'pending')`);
+    } else if (statusFilter === 'transit') {
+      where.push(`(LOWER(COALESCE(s.status, '')) LIKE '%transit%' OR LOWER(COALESCE(s.status_label, '')) LIKE '%tránsito%' OR LOWER(COALESCE(s.status_label, '')) LIKE '%transito%')`);
+    } else if (statusFilter === 'delivered') {
+      where.push(`(LOWER(COALESCE(s.status, '')) LIKE '%entreg%' OR LOWER(COALESCE(s.status_label, '')) LIKE '%entreg%')`);
+    } else if (statusFilter === 'issue') {
+      where.push(`(LOWER(COALESCE(s.status, '')) LIKE '%error%' OR LOWER(COALESCE(s.status, '')) LIKE '%incid%' OR LOWER(COALESCE(s.status_label, '')) LIKE '%error%' OR LOWER(COALESCE(s.status_label, '')) LIKE '%incid%')`);
+    }
+
+    const whereSql = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+    const [countRows]: any = await pool.query(`SELECT COUNT(*) AS total ${fromSql}${whereSql}`, whereParams);
+    const total = Number(countRows?.[0]?.total || 0);
+    const offset = (page - 1) * pageSize;
+    const [shipmentsList]: any = await pool.query(
+      `SELECT s.*, u.name AS user_name, u.email AS user_email, u.language AS user_language, u.client_code AS user_client_code
+       ${fromSql}${whereSql} ORDER BY s.created_at DESC LIMIT ? OFFSET ?`,
+      [...whereParams, pageSize, offset]
+    );
     const packageMap = new Map<string, any[]>();
     if (shipmentsList.length > 0) {
       const ids = shipmentsList.map((s: any) => s.id);
@@ -13007,6 +13076,24 @@ app.get('/api/admin/shipments', authMiddleware, requireSuperAdmin, async (req: a
       }
     }
 
+    const notificationMap = new Map<string, any>();
+    if (shipmentsList.length > 0) {
+      const ids = shipmentsList.map((s: any) => s.id);
+      const placeholders = ids.map(() => '?').join(',');
+      try {
+        const [notificationRows]: any = await pool.query(
+          `SELECT shipment_id, event_code, status, language, created_at, sent_at, error_message
+             FROM email_logs
+            WHERE shipment_id IN (${placeholders})
+            ORDER BY created_at DESC`,
+          ids
+        );
+        for (const row of notificationRows) {
+          if (!notificationMap.has(row.shipment_id)) notificationMap.set(row.shipment_id, row);
+        }
+      } catch {}
+    }
+
     const normalized = shipmentsList.map(s => {
       const provider = providerMap.get(String(s.provider_code || '').toLowerCase());
       const payload = parseJsonSafe(s.provider_payload_json);
@@ -13018,8 +13105,12 @@ app.get('/api/admin/shipments', authMiddleware, requireSuperAdmin, async (req: a
       return ({
       id: s.id,
       userId: s.user_id,
+      customer: { id: s.user_id, name: s.user_name || '', email: s.user_email || '', language: s.user_language || 'es', clientCode: s.user_client_code || '' },
       trackingCode: s.tracking_code,
       providerTracking: s.provider_tracking_code || '',
+      providerShipmentCode: s.provider_shipment_code || '',
+      reference: s.reference || '',
+      orderNumber: s.order_number || '',
       providerCode: s.provider_code || '',
       providerName: providerInternalName,
       providerInternalName,
@@ -13035,14 +13126,21 @@ app.get('/api/admin/shipments', authMiddleware, requireSuperAdmin, async (req: a
       canRetryLabel: ['pending_provider','pending_label'].includes(String(s.status || '').toLowerCase()),
       labelDownloadUrl: (s.label_base64 || s.label_url) ? labelFileUrlForShipment(s) : '',
       providerAttempts: Number(s.provider_attempts || 0),
+      labelError: s.label_error || '',
       createdAt: s.created_at,
+      updatedAt: s.updated_at,
       sender: typeof s.sender_json === 'string' ? JSON.parse(s.sender_json) : s.sender_json,
       recipient: typeof s.recipient_json === 'string' ? JSON.parse(s.recipient_json) : s.recipient_json,
       packages: packageMap.get(s.id) || [],
-      quote: { agency: providerInternalName, carrier: carrierName, serviceName: quoteRow?.service_name || '' }
+      quote: { agency: providerInternalName, carrier: carrierName, serviceName: quoteRow?.service_name || '' },
+      lastNotification: notificationMap.get(s.id) || null
     });
     });
-    res.json({ shipments: normalized });
+    res.json({
+      shipments: normalized,
+      pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) },
+      filters: { search, status: statusFilter, labelStatus: labelFilter, provider: providerFilter, dateFrom, dateTo }
+    });
   } catch (error) {
     res.status(500).json({ error: 'No se pudo completar la operación.' });
   }
@@ -13064,10 +13162,70 @@ app.post('/api/admin/shipments/:id/status', authMiddleware, requireSuperAdmin, a
       status_label: status,
       description: `Estado actualizado a: ${status} por el administrador`
     });
+    await writeAdminShipmentLog('shipment_status_update', { adminId: req.user.id, shipmentId: shipment.id, status }, { success: true });
     
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'No se pudo completar la operación.' });
+  }
+});
+
+// Admin: Notificar al cliente usando una plantilla existente y el idioma de su cuenta.
+app.post('/api/admin/shipments/:id/notify', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+  try {
+    const shipment = await ShipmentRepo.getById(req.params.id);
+    if (!shipment) return res.status(404).json({ error: 'Envío no encontrado.' });
+
+    const eventCode = String(req.body?.eventCode || '').trim();
+    const statusByEvent: Record<string, { statusCode: string; statusLabel: string }> = {
+      shipment_received: { statusCode: 'shipment_created', statusLabel: 'Envío recibido' },
+      shipment_pending_provider: { statusCode: 'pending_provider', statusLabel: 'Etiqueta en preparación' },
+      shipment_pending_label: { statusCode: 'pending_label', statusLabel: 'Etiqueta pendiente' },
+      shipment_label_ready: { statusCode: 'label_ready', statusLabel: 'Etiqueta disponible' },
+      shipment_tramitado: { statusCode: 'tramitado', statusLabel: 'Envío tramitado' },
+      shipment_en_transito: { statusCode: 'en_transito', statusLabel: 'En tránsito' },
+      shipment_en_reparto: { statusCode: 'en_reparto', statusLabel: 'En reparto' },
+      shipment_entregado: { statusCode: 'entregado', statusLabel: 'Entregado' },
+      shipment_incidencia: { statusCode: 'incidencia', statusLabel: 'Incidencia de envío' },
+      shipment_devuelto: { statusCode: 'devuelto', statusLabel: 'Envío devuelto' },
+      shipment_cancelado: { statusCode: 'cancelado', statusLabel: 'Envío cancelado' }
+    };
+    const event = statusByEvent[eventCode];
+    if (!event) return res.status(400).json({ error: 'Tipo de notificación no permitido.' });
+
+    const user = await UserRepo.getById(shipment.user_id);
+    const toEmail = isValidEmailForProvider(user?.email) || '';
+    if (!toEmail) return res.status(400).json({ error: 'El cliente no tiene un correo válido.' });
+
+    const language = detectCustomerEmailLanguage(user);
+    const result = await sendNotificationEvent({
+      eventCode,
+      entityType: 'shipment',
+      entityId: String(shipment.id),
+      shipmentId: shipment.id,
+      userId: shipment.user_id,
+      providerCode: shipment.provider_code,
+      audience: 'customer',
+      toEmail,
+      recipientName: user?.name,
+      language,
+      variables: shipmentNotificationVariables(shipment, user, language, event.statusCode, event.statusLabel, shipment.label_error || event.statusLabel)
+    });
+
+    if (!result.success) {
+      await writeAdminShipmentLog('shipment_notification_failed', { adminId: req.user.id, shipmentId: shipment.id, eventCode }, { success: false, reason: result.reason || 'send_failed' }, result.skipped ? 409 : 502);
+      return res.status(result.skipped ? 409 : 502).json({
+        success: false,
+        skipped: Boolean(result.skipped),
+        message: result.reason || 'No se pudo enviar la notificación.',
+        result
+      });
+    }
+    await writeAdminShipmentLog('shipment_notification_sent', { adminId: req.user.id, shipmentId: shipment.id, eventCode }, { success: true, templateId: result.templateId || null });
+    res.json({ success: true, message: 'Notificación enviada correctamente.', result });
+  } catch (error) {
+    console.error('[Diagnóstico Interno] Error notificando envío:', error);
+    res.status(500).json({ error: 'No se pudo completar la notificación.' });
   }
 });
 

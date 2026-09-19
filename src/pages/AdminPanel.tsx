@@ -7,7 +7,7 @@ import AdminAssistanceCenter from './AdminAssistanceCenter';
 import { getCountryName, WORLD_COUNTRIES } from '../lib/countries';
 import React, { useEffect, useState } from 'react';
 import { Navigate, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Server, Bot, Users, UserPlus, Package, Settings, LogOut, BarChart3, Truck, Crown, Edit, Save, LifeBuoy, Sparkles, Headphones, Menu, X, Eye, Lock, Unlock, LogIn, CreditCard, Wallet, ShieldCheck, XCircle, Moon, Sun, MapPin, Clipboard, PlayCircle, RefreshCw, Mail, Send, Activity, Clock, Plug, Store, Link2, CheckCircle2, AlertTriangle, ExternalLink, BookOpen } from 'lucide-react';
+import { LayoutDashboard, Server, Bot, Users, UserPlus, Package, Settings, LogOut, BarChart3, Truck, Crown, Edit, Save, LifeBuoy, Sparkles, Headphones, Menu, X, Eye, Lock, Unlock, LogIn, CreditCard, Wallet, ShieldCheck, XCircle, Moon, Sun, MapPin, Clipboard, PlayCircle, RefreshCw, Mail, Send, Activity, Clock, Plug, Store, Link2, CheckCircle2, AlertTriangle, ExternalLink, BookOpen, Search, Download, FileText, Bell, Copy, SlidersHorizontal } from 'lucide-react';
 import { api, removeAuthToken, getAuthToken, setAuthToken } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { APP_VERSION } from '../lib/appVersion';
@@ -753,58 +753,199 @@ const AdminClients = () => {
 
 const AdminShipments = () => {
   const { t } = useI18n();
-  const [shipments, setShipments] = useState([]);
+  const [shipments, setShipments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [actionMap, setActionMap] = useState<Record<string, boolean>>({});
+  const [loadError, setLoadError] = useState('');
+  const [actionMap, setActionMap] = useState<Record<string, string>>({});
+  const [filters, setFilters] = useState({ q: '', status: '', labelStatus: '', provider: '', dateFrom: '', dateTo: '', page: 1, pageSize: 25 });
+  const [searchDraft, setSearchDraft] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [selectedShipment, setSelectedShipment] = useState<any>(null);
+  const [notificationShipment, setNotificationShipment] = useState<any>(null);
+  const [notificationEvent, setNotificationEvent] = useState('shipment_label_ready');
+  const [pagination, setPagination] = useState({ page: 1, pageSize: 25, total: 0, totalPages: 1 });
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
-    fetchShipments();
-  }, []);
-
-  const fetchShipments = () => {
+    let active = true;
     setLoading(true);
-    api.getAdminShipments().then(res => {
-      setShipments(res.shipments || []);
-      setLoading(false);
-    }).catch(() => setLoading(false));
+    setLoadError('');
+    api.getAdminShipments(filters)
+      .then(res => {
+        if (!active) return;
+        setShipments(res.shipments || []);
+        setPagination(res.pagination || { page: filters.page, pageSize: filters.pageSize, total: (res.shipments || []).length, totalPages: 1 });
+        setSelectedIds(new Set());
+      })
+      .catch((error: any) => {
+        if (active) setLoadError(error?.message || 'No se pudieron cargar los envíos.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [filters]);
+
+  const refreshShipments = () => setFilters(previous => ({ ...previous }));
+
+  const applySearch = () => setFilters(previous => ({ ...previous, q: searchDraft.trim(), page: 1 }));
+
+  const clearFilters = () => {
+    setSearchDraft('');
+    setFilters({ q: '', status: '', labelStatus: '', provider: '', dateFrom: '', dateTo: '', page: 1, pageSize: 25 });
   };
 
   const handleStatusChange = async (id: string, newStatus: string) => {
+    setActionMap(prev => ({ ...prev, [id]: 'status' }));
     try {
       await api.updateAdminShipmentStatus(id, newStatus);
-      fetchShipments();
-    } catch (error) {
-      alert('Error al actualizar el estado del envío.');
+      setNotice('Estado actualizado.');
+      refreshShipments();
+    } catch (error: any) {
+      setNotice(error?.message || 'Error al actualizar el estado del envío.');
+    } finally {
+      setActionMap(prev => ({ ...prev, [id]: '' }));
     }
   };
 
   const handlePrepareShipment = async (shipment: any) => {
-    setActionMap(prev => ({ ...prev, [shipment.id]: true }));
+    if (!window.confirm(`¿Preparar la etiqueta de ${shipment.trackingCode || shipment.id}? Se respetarán el saldo, el pago y las validaciones del proveedor.`)) return;
+    setActionMap(prev => ({ ...prev, [shipment.id]: 'label' }));
     try {
       const res = await api.retryShipmentLabel(shipment.id);
-      alert(res.message || 'Preparación en curso.');
-      fetchShipments();
+      setNotice(res.message || 'Preparación en curso.');
+      refreshShipments();
     } catch (error: any) {
-      alert(error?.message || 'No se pudo completar la preparación.');
+      setNotice(error?.message || 'No se pudo completar la preparación.');
     } finally {
-      setActionMap(prev => ({ ...prev, [shipment.id]: false }));
+      setActionMap(prev => ({ ...prev, [shipment.id]: '' }));
     }
   };
 
+  const handleNotifyShipment = async () => {
+    if (!notificationShipment) return;
+    const shipment = notificationShipment;
+    setActionMap(prev => ({ ...prev, [shipment.id]: 'notify' }));
+    try {
+      const res = await api.notifyAdminShipment(shipment.id, notificationEvent);
+      setNotice(res.message || 'Notificación enviada correctamente.');
+      setNotificationShipment(null);
+      refreshShipments();
+    } catch (error: any) {
+      setNotice(error?.message || 'No se pudo enviar la notificación.');
+    } finally {
+      setActionMap(prev => ({ ...prev, [shipment.id]: '' }));
+    }
+  };
+
+  const openLabel = (shipment: any, download = false) => {
+    if (!shipment.labelDownloadUrl) return;
+    const separator = shipment.labelDownloadUrl.includes('?') ? '&' : '?';
+    window.open(`${shipment.labelDownloadUrl}${separator}download=${download ? '1' : '0'}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const copyTracking = async (shipment: any) => {
+    const value = shipment.trackingCode || shipment.providerTracking || '';
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setNotice('Tracking copiado.');
+    } catch {
+      setNotice('No se pudo copiar el tracking.');
+    }
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds(previous => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const labelText = (shipment: any) => {
+    if (shipment.labelReady) return 'Disponible';
+    if (shipment.labelError) return 'Error';
+    if (shipment.labelStatus === 'pending') return 'Pendiente';
+    return shipment.labelStatus || 'No disponible';
+  };
+
+  const labelClass = (shipment: any) => {
+    if (shipment.labelReady) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    if (shipment.labelError) return 'bg-red-50 text-red-700 border-red-200';
+    return 'bg-amber-50 text-amber-700 border-amber-200';
+  };
+
+  const notificationText = (shipment: any) => {
+    if (!shipment.lastNotification) return 'Sin enviar';
+    if (shipment.lastNotification.status === 'sent') return `Enviada · ${shipment.lastNotification.language || 'es'}`;
+    if (shipment.lastNotification.status === 'failed') return 'Fallida';
+    return 'Pendiente';
+  };
+
+  const statusOptions = [
+    ['created', 'Creados'], ['pending', 'Pendientes'], ['transit', 'En tránsito'], ['delivered', 'Entregados'], ['issue', 'Incidencias']
+  ];
+  const notificationOptions = [
+    ['shipment_label_ready', 'Etiqueta disponible'],
+    ['shipment_pending_label', 'Etiqueta pendiente'],
+    ['shipment_en_transito', 'En tránsito'],
+    ['shipment_entregado', 'Entregado'],
+    ['shipment_incidencia', 'Incidencia']
+  ];
+
   return (
     <div className="p-4 sm:p-6 md:p-8">
-      <h1 className="text-3xl font-black text-gray-900 mb-8">{t('totalShipments') || 'Registro Global de Envíos'}</h1>
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-600">Operación logística</p>
+          <h1 className="mt-1 text-3xl font-black text-gray-900">{t('totalShipments') || 'Registro Global de Envíos'}</h1>
+          <p className="mt-2 text-sm font-medium text-gray-500">Busca, revisa etiquetas y atiende incidencias desde una sola vista.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={refreshShipments} className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-black text-gray-700 hover:border-blue-300"><RefreshCw className="h-4 w-4" /> Actualizar</button>
+          <button type="button" onClick={() => setAdvancedOpen(previous => !previous)} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-black ${advancedOpen ? 'bg-blue-600 text-white' : 'border border-gray-200 bg-white text-gray-700 hover:border-blue-300'}`}><SlidersHorizontal className="h-4 w-4" /> Filtros avanzados</button>
+        </div>
+      </div>
+
+      <div className="mb-5 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-3 h-5 w-5 text-gray-400" />
+            <input value={searchDraft} onChange={event => setSearchDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') applySearch(); }} placeholder="Buscar tracking, cliente, correo o referencia..." className="h-11 w-full rounded-xl border border-gray-200 bg-gray-50 pl-10 pr-4 text-sm font-semibold outline-none focus:border-blue-500" />
+          </div>
+          <select value={filters.status} onChange={event => setFilters(previous => ({ ...previous, status: event.target.value, page: 1 }))} className="h-11 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 outline-none focus:border-blue-500">
+            <option value="">Todos los estados</option>
+            {statusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <button type="button" onClick={applySearch} className="h-11 rounded-xl bg-blue-600 px-5 text-sm font-black text-white hover:bg-blue-700">Buscar</button>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-4">
+          <span className="mr-1 text-xs font-black uppercase tracking-wider text-gray-400">Atajos:</span>
+          <button type="button" onClick={() => setFilters(previous => ({ ...previous, status: 'pending', labelStatus: '', page: 1 }))} className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-black text-amber-700">Pendientes</button>
+          <button type="button" onClick={() => setFilters(previous => ({ ...previous, status: '', labelStatus: 'pending', page: 1 }))} className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-black text-orange-700">Sin etiqueta</button>
+          <button type="button" onClick={() => setFilters(previous => ({ ...previous, status: 'issue', labelStatus: '', page: 1 }))} className="rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-black text-red-700">Incidencias</button>
+          <button type="button" onClick={() => setFilters(previous => ({ ...previous, status: 'delivered', labelStatus: '', page: 1 }))} className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700">Entregados</button>
+          <button type="button" onClick={clearFilters} className="ml-auto inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-black text-gray-500 hover:bg-gray-100"><X className="h-3.5 w-3.5" /> Limpiar</button>
+        </div>
+        {advancedOpen && (
+          <div className="mt-4 grid grid-cols-1 gap-3 border-t border-gray-100 pt-4 md:grid-cols-2 xl:grid-cols-4">
+            <label className="text-xs font-black uppercase tracking-wider text-gray-500">Etiqueta<select value={filters.labelStatus} onChange={event => setFilters(previous => ({ ...previous, labelStatus: event.target.value, page: 1 }))} className="mt-2 h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold normal-case tracking-normal text-gray-700"><option value="">Todas</option><option value="available">Disponible</option><option value="pending">Pendiente</option><option value="error">Con error</option></select></label>
+            <label className="text-xs font-black uppercase tracking-wider text-gray-500">Proveedor<input value={filters.provider} onChange={event => setFilters(previous => ({ ...previous, provider: event.target.value, page: 1 }))} placeholder="ej. spedirepro" className="mt-2 h-10 w-full rounded-xl border border-gray-200 px-3 text-sm font-semibold normal-case tracking-normal text-gray-700 outline-none focus:border-blue-500" /></label>
+            <label className="text-xs font-black uppercase tracking-wider text-gray-500">Desde<input type="date" value={filters.dateFrom} onChange={event => setFilters(previous => ({ ...previous, dateFrom: event.target.value, page: 1 }))} className="mt-2 h-10 w-full rounded-xl border border-gray-200 px-3 text-sm font-semibold normal-case tracking-normal text-gray-700 outline-none focus:border-blue-500" /></label>
+            <label className="text-xs font-black uppercase tracking-wider text-gray-500">Hasta<input type="date" value={filters.dateTo} onChange={event => setFilters(previous => ({ ...previous, dateTo: event.target.value, page: 1 }))} className="mt-2 h-10 w-full rounded-xl border border-gray-200 px-3 text-sm font-semibold normal-case tracking-normal text-gray-700 outline-none focus:border-blue-500" /></label>
+          </div>
+        )}
+      </div>
+
+      {notice && <div className="mb-4 flex items-center justify-between rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Cerrar aviso"><X className="h-4 w-4" /></button></div>}
+      {loadError && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{loadError}</div>}
+
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-           <div className="relative w-64">
-             <input type="text" placeholder="Buscar tracking o usuario..." className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm font-medium focus:outline-none focus:border-blue-500 transition-colors" />
-             <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</div>
-           </div>
-           <select className="border border-gray-200 rounded-lg px-4 py-2 text-sm font-medium text-gray-700 focus:outline-none focus:border-blue-500">
-             <option>Todos los estados</option>
-             <option>En Tránsito</option>
-             <option>Entregados</option>
-           </select>
+           <div className="flex flex-wrap items-center gap-2 text-sm font-bold text-gray-500"><span>{pagination.total} resultado(s)</span>{selectedIds.size > 0 && <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-700">{selectedIds.size} seleccionado(s)</span>}</div>
+           <select value={filters.pageSize} onChange={event => setFilters(previous => ({ ...previous, pageSize: Number(event.target.value), page: 1 }))} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700 focus:border-blue-500"><option value={25}>25 por página</option><option value={50}>50 por página</option><option value={100}>100 por página</option></select>
         </div>
         {loading ? (
           <div className="p-12 text-center text-gray-500">Cargando envíos...</div>
@@ -815,10 +956,13 @@ const AdminShipments = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider">
+                  <th className="p-4"><input aria-label="Seleccionar todos los envíos visibles" type="checkbox" checked={shipments.length > 0 && shipments.every(s => selectedIds.has(s.id))} onChange={() => setSelectedIds(previous => previous.size === shipments.length ? new Set() : new Set(shipments.map(s => s.id)))} /></th>
                   <th className="p-6">Código Tracking</th>
                   <th className="p-6">Cliente</th>
                   <th className="p-6">Proveedor</th>
                   <th className="p-6">Estado</th>
+                  <th className="p-6">Etiqueta</th>
+                  <th className="p-6">Notificación</th>
                   <th className="p-6">Fecha Creación</th>
                   <th className="p-6">Acciones</th>
                 </tr>
@@ -826,13 +970,15 @@ const AdminShipments = () => {
               <tbody>
                 {shipments.map((s: any) => (
                   <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                    <td className="p-4"><input aria-label={`Seleccionar ${s.trackingCode || s.id}`} type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelected(s.id)} /></td>
                     <td className="p-6 font-mono font-bold text-blue-600">{s.trackingCode}</td>
-                    <td className="p-6 text-gray-900 font-bold">{s.userId || 'Anónimo'}</td>
+                    <td className="p-6"><button type="button" onClick={() => setSelectedShipment(s)} className="text-left"><div className="font-bold text-gray-900 hover:text-blue-600">{s.customer?.name || 'Cliente sin nombre'}</div><div className="mt-1 text-xs font-medium text-gray-500">{s.customer?.email || s.userId || 'Sin correo'}</div></button></td>
                     <td className="p-6 text-gray-700 font-bold"><div>{displayAdminCarrierName(s.carrierName)}</div></td>
                     <td className="p-6">
                       <select 
                         value={s.status} 
                         onChange={(e) => handleStatusChange(s.id, e.target.value)}
+                        disabled={Boolean(actionMap[s.id])}
                         className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold focus:outline-none appearance-none cursor-pointer border ${
                           s.status === 'Entregado' ? 'bg-green-100 text-green-700 border-green-200' : 
                           s.status === 'Cancelado' ? 'bg-red-100 text-red-700 border-red-200' : 
@@ -850,20 +996,11 @@ const AdminShipments = () => {
                         <option value="Incidencia">Incidencia</option>
                       </select>
                     </td>
+                    <td className="p-6"><div className={`inline-flex rounded-full border px-3 py-1 text-xs font-black ${labelClass(s)}`}>{labelText(s)}</div><div className="mt-2 flex flex-wrap gap-1.5">{s.labelReady ? <><button type="button" onClick={() => openLabel(s)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-black text-emerald-700 hover:bg-emerald-100"><Eye className="h-3 w-3" /> Ver</button><button type="button" onClick={() => openLabel(s, true)} className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700 hover:bg-blue-100"><Download className="h-3 w-3" /> PDF</button></> : s.canRetryLabel ? <button type="button" onClick={() => handlePrepareShipment(s)} disabled={Boolean(actionMap[s.id])} className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-1 text-[11px] font-black text-amber-700 hover:bg-amber-100 disabled:opacity-50"><PlayCircle className="h-3 w-3" /> {actionMap[s.id] === 'label' ? 'Preparando' : 'Preparar'}</button> : null}</div>{s.labelError && <p className="mt-1 max-w-[180px] text-[11px] font-semibold text-red-600">{s.labelError}</p>}</td>
+                    <td className="p-6"><div className={`text-xs font-black ${s.lastNotification?.status === 'failed' ? 'text-red-600' : s.lastNotification?.status === 'sent' ? 'text-emerald-700' : 'text-gray-500'}`}>{notificationText(s)}</div>{s.lastNotification?.created_at && <div className="mt-1 text-[11px] text-gray-400">{new Date(s.lastNotification.created_at).toLocaleDateString()}</div>}</td>
                     <td className="p-6 text-gray-500 font-medium">{new Date(s.createdAt).toLocaleDateString()}</td>
                     <td className="p-6">
-                      {s.canRetryLabel && !s.labelReady ? (
-                        <button
-                          onClick={() => handlePrepareShipment(s)}
-                          disabled={Boolean(actionMap[s.id])}
-                          className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:bg-gray-100 disabled:text-gray-400 text-xs font-black transition-colors"
-                        >
-                          <PlayCircle className="w-4 h-4" />
-                          {actionMap[s.id] ? 'Preparando...' : 'Preparar'}
-                        </button>
-                      ) : (
-                        <span className="text-xs font-bold text-gray-400">—</span>
-                      )}
+                      <div className="flex flex-wrap gap-1.5"><button type="button" onClick={() => setSelectedShipment(s)} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-2 text-xs font-black text-slate-700 hover:bg-slate-200"><Eye className="h-3.5 w-3.5" /> Detalle</button><button type="button" onClick={() => { setNotificationShipment(s); setNotificationEvent(s.labelReady ? 'shipment_label_ready' : 'shipment_pending_label'); }} disabled={!s.customer?.email || Boolean(actionMap[s.id])} className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-2 text-xs font-black text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40"><Bell className="h-3.5 w-3.5" /> Notificar</button><button type="button" onClick={() => copyTracking(s)} className="rounded-lg bg-gray-50 p-2 text-gray-500 hover:bg-gray-100" aria-label="Copiar tracking"><Copy className="h-3.5 w-3.5" /></button></div>
                     </td>
                   </tr>
                 ))}
@@ -871,7 +1008,12 @@ const AdminShipments = () => {
             </table>
           </div>
         )}
+        <div className="flex flex-col gap-3 border-t border-gray-100 bg-gray-50/50 px-6 py-4 text-sm font-bold text-gray-600 sm:flex-row sm:items-center sm:justify-between"><span>Página {pagination.page} de {pagination.totalPages}</span><div className="flex gap-2"><button type="button" disabled={pagination.page <= 1 || loading} onClick={() => setFilters(previous => ({ ...previous, page: previous.page - 1 }))} className="rounded-lg border border-gray-200 bg-white px-3 py-2 disabled:cursor-not-allowed disabled:opacity-40">Anterior</button><button type="button" disabled={pagination.page >= pagination.totalPages || loading} onClick={() => setFilters(previous => ({ ...previous, page: previous.page + 1 }))} className="rounded-lg border border-gray-200 bg-white px-3 py-2 disabled:cursor-not-allowed disabled:opacity-40">Siguiente</button></div></div>
       </div>
+
+      {selectedShipment && <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/50 p-4 backdrop-blur-sm" onClick={() => setSelectedShipment(null)}><aside className="h-full w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl" onClick={event => event.stopPropagation()}><div className="flex items-start justify-between gap-4 border-b border-gray-100 pb-5"><div><p className="text-xs font-black uppercase tracking-[0.2em] text-blue-600">Detalle operativo</p><h2 className="mt-1 text-2xl font-black text-gray-900">{selectedShipment.trackingCode || selectedShipment.id}</h2><p className="mt-1 text-sm font-semibold text-gray-500">{selectedShipment.customer?.name || selectedShipment.userId}</p></div><button type="button" onClick={() => setSelectedShipment(null)} className="rounded-xl p-2 text-gray-500 hover:bg-gray-100" aria-label="Cerrar detalle"><X className="h-5 w-5" /></button></div><div className="mt-5 grid grid-cols-2 gap-3"><div className="rounded-2xl bg-gray-50 p-4"><p className="text-[11px] font-black uppercase tracking-wider text-gray-400">Estado</p><p className="mt-1 font-black text-gray-900">{selectedShipment.status}</p></div><div className="rounded-2xl bg-gray-50 p-4"><p className="text-[11px] font-black uppercase tracking-wider text-gray-400">Etiqueta</p><p className="mt-1 font-black text-gray-900">{labelText(selectedShipment)}</p></div></div><div className="mt-5 space-y-4"><div className="rounded-2xl border border-gray-100 p-4"><h3 className="font-black text-gray-900">Cliente</h3><p className="mt-2 text-sm font-semibold text-gray-700">{selectedShipment.customer?.name || 'Sin nombre'}</p><p className="text-sm text-gray-500">{selectedShipment.customer?.email || 'Sin correo'}</p><p className="mt-1 text-xs text-gray-400">Idioma: {selectedShipment.customer?.language || 'es'} · Código: {selectedShipment.customer?.clientCode || selectedShipment.userId}</p></div><div className="rounded-2xl border border-gray-100 p-4"><h3 className="font-black text-gray-900">Servicio y proveedor</h3><p className="mt-2 text-sm text-gray-700">{selectedShipment.quote?.serviceName || 'Servicio no informado'}</p><p className="text-sm text-gray-500">{displayAdminCarrierName(selectedShipment.carrierName)} · {selectedShipment.providerName || selectedShipment.providerCode || 'DoorDrop'}</p><p className="mt-1 text-xs text-gray-400">Intentos de etiqueta: {selectedShipment.providerAttempts || 0}</p></div><div className="rounded-2xl border border-gray-100 p-4"><h3 className="font-black text-gray-900">Ruta</h3><p className="mt-2 text-sm font-semibold text-gray-700">{selectedShipment.sender?.city || '-'} → {selectedShipment.recipient?.city || '-'}</p><p className="text-sm text-gray-500">{selectedShipment.sender?.country || '-'} → {selectedShipment.recipient?.country || '-'}</p><p className="mt-1 text-xs text-gray-400">{selectedShipment.recipient?.address || 'Dirección protegida en el panel del cliente'}</p></div><div className="rounded-2xl border border-gray-100 p-4"><h3 className="font-black text-gray-900">Paquetes</h3>{(selectedShipment.packages || []).map((pkg: any, index: number) => <div key={`${selectedShipment.id}-pkg-${index}`} className="mt-2 flex items-center justify-between rounded-xl bg-gray-50 px-3 py-2 text-sm"><span className="font-semibold">Bulto {index + 1}</span><span className="text-gray-500">{pkg.length} × {pkg.width} × {pkg.height} cm · {pkg.weight} kg</span></div>)}</div><div className="rounded-2xl border border-gray-100 p-4"><h3 className="font-black text-gray-900">Última notificación</h3>{selectedShipment.lastNotification ? <p className="mt-2 text-sm text-gray-600">{selectedShipment.lastNotification.event_code} · {selectedShipment.lastNotification.status} · {selectedShipment.lastNotification.language || 'es'}</p> : <p className="mt-2 text-sm text-gray-500">Todavía no hay una notificación registrada.</p>}</div></div><div className="mt-6 flex flex-wrap gap-2 border-t border-gray-100 pt-5"><button type="button" onClick={() => openLabel(selectedShipment)} disabled={!selectedShipment.labelReady} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40"><FileText className="h-4 w-4" /> Ver etiqueta</button><button type="button" onClick={() => { setNotificationShipment(selectedShipment); setNotificationEvent(selectedShipment.labelReady ? 'shipment_label_ready' : 'shipment_pending_label'); setSelectedShipment(null); }} disabled={!selectedShipment.customer?.email} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40"><Bell className="h-4 w-4" /> Notificar cliente</button></div></aside></div>}
+
+      {notificationShipment && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"><div role="dialog" aria-modal="true" aria-labelledby="admin-notify-title" className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-black uppercase tracking-[0.2em] text-blue-600">Comunicación al cliente</p><h2 id="admin-notify-title" className="mt-1 text-2xl font-black text-gray-900">Notificar envío</h2></div><button type="button" onClick={() => setNotificationShipment(null)} className="rounded-xl p-2 text-gray-500 hover:bg-gray-100" aria-label="Cerrar notificación"><X className="h-5 w-5" /></button></div><div className="mt-5 space-y-4"><div className="rounded-2xl bg-gray-50 p-4"><p className="text-xs font-black uppercase tracking-wider text-gray-400">Envío</p><p className="mt-1 font-black text-gray-900">{notificationShipment.trackingCode || notificationShipment.id}</p><p className="text-sm text-gray-500">{notificationShipment.customer?.name || notificationShipment.userId}</p></div><label className="block text-xs font-black uppercase tracking-wider text-gray-500">Tipo de aviso<select value={notificationEvent} onChange={event => setNotificationEvent(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold normal-case tracking-normal text-gray-700">{notificationOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900"><p><strong>Destinatario:</strong> {notificationShipment.customer?.email || 'Sin correo válido'}</p><p className="mt-1"><strong>Idioma:</strong> {notificationShipment.customer?.language || 'es'} · Se utilizará la plantilla existente y quedará registrado el resultado.</p></div></div><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={() => setNotificationShipment(null)} className="rounded-xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700">Cancelar</button><button type="button" onClick={handleNotifyShipment} disabled={!notificationShipment.customer?.email || Boolean(actionMap[notificationShipment.id])} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"><Bell className="h-4 w-4" /> {actionMap[notificationShipment.id] === 'notify' ? 'Enviando...' : 'Enviar aviso'}</button></div></div></div>}
     </div>
   );
 };
