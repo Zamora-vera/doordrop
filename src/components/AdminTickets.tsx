@@ -168,6 +168,11 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? 'Sin fecha' : date.toLocaleString();
   };
+  const formatTicketTime = (value: any) => {
+    if (!value) return 'Sin hora';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 'Sin hora' : date.toLocaleTimeString();
+  };
 
   if (loading) {
     return (
@@ -419,7 +424,7 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
                     <p className="text-xs text-blue-600 font-bold mb-1">{getTicketName(activeTicket)} (Cliente)</p>
                     <p className="text-sm text-gray-800 font-medium whitespace-pre-wrap">{activeTicket.description}</p>
                     <span className="text-[10px] text-gray-400 block mt-2 text-right">
-                      {new Date(activeTicket.createdAt).toLocaleTimeString()}
+                      {formatTicketTime(activeTicket.createdAt || activeTicket.created_at)}
                     </span>
                   </div>
                 </div>
@@ -453,7 +458,7 @@ export function AdminTickets({ canReviewSensitive = true }: { canReviewSensitive
                           {reply.message}
                         </p>
                         <span className={`text-[10px] block mt-2 text-right ${isAdmin ? 'text-blue-200' : 'text-gray-400'}`}>
-                          {new Date(reply.createdAt).toLocaleTimeString()}
+                          {formatTicketTime(reply.createdAt || reply.created_at)}
                         </span>
                       </div>
                     </div>
