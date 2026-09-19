@@ -12868,7 +12868,7 @@ function normalizeClientForAdmin(u: any) {
   };
 }
 
-app.get('/api/admin/clients', authMiddleware, requireSuperAdmin, async (_req: any, res) => {
+app.get('/api/admin/clients', authMiddleware, requireAdminPermission('clients.read'), async (_req: any, res) => {
   try {
     const allUsers = await UserRepo.getAll();
     const clients = allUsers
@@ -12881,7 +12881,7 @@ app.get('/api/admin/clients', authMiddleware, requireSuperAdmin, async (_req: an
   }
 });
 
-app.get('/api/admin/clients/:id', authMiddleware, requireSuperAdmin, async (req: any, res) => {
+app.get('/api/admin/clients/:id', authMiddleware, requireAdminPermission('clients.read'), async (req: any, res) => {
   try {
     const user = await UserRepo.getById(req.params.id);
     if (!isDoorDropClient(user)) {
@@ -13215,7 +13215,7 @@ app.get('/api/admin/shipments', authMiddleware, requireAdminPermission('shipment
       s.label_base64, s.provider_payload_json, s.label_status, s.label_error,
       s.provider_attempts, s.created_at, s.updated_at,
       u.name AS user_name, u.email AS user_email, u.language AS user_language,
-      u.client_code AS user_client_code`;
+      u.country AS user_country, u.client_code AS user_client_code`;
     const [[countRows], [shipmentsList]]: any = await Promise.all([
       pool.query(`SELECT COUNT(*) AS total ${fromSql}${whereSql}`, whereParams),
       pool.query(
@@ -13278,7 +13278,7 @@ app.get('/api/admin/shipments', authMiddleware, requireAdminPermission('shipment
       return ({
       id: s.id,
       userId: s.user_id,
-      customer: { id: s.user_id, name: s.user_name || '', email: s.user_email || '', language: s.user_language || 'es', clientCode: s.user_client_code || '' },
+      customer: { id: s.user_id, name: s.user_name || '', email: s.user_email || '', language: s.user_language || 'es', country: s.user_country || '', clientCode: s.user_client_code || '' },
       trackingCode: s.tracking_code,
       providerTracking: canViewInternalShipment ? (s.provider_tracking_code || '') : '',
       providerShipmentCode: s.provider_shipment_code || '',

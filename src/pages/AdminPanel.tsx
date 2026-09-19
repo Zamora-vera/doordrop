@@ -4,7 +4,7 @@ import EmailTemplates from './admin/EmailTemplates';
 import Webmail from './admin/Webmail';
 import { AdminOmnichannel } from './AdminOmnichannel';
 import AdminAssistanceCenter from './AdminAssistanceCenter';
-import { getCountryName, WORLD_COUNTRIES } from '../lib/countries';
+import { getCountryName, FLAG_API, WORLD_COUNTRIES } from '../lib/countries';
 import React, { useEffect, useState } from 'react';
 import { Navigate, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Server, Bot, Users, UserPlus, Package, Settings, LogOut, BarChart3, Truck, Crown, Edit, Save, LifeBuoy, Sparkles, Headphones, Menu, X, Eye, Lock, Unlock, LogIn, CreditCard, Wallet, ShieldCheck, XCircle, Moon, Sun, MapPin, Clipboard, PlayCircle, RefreshCw, Mail, Send, Activity, Clock, Plug, Store, Link2, CheckCircle2, AlertTriangle, ExternalLink, BookOpen, Search, Download, FileText, Bell, Copy, SlidersHorizontal, Upload } from 'lucide-react';
@@ -70,6 +70,21 @@ const countryLabel = (code: string) => {
   return COUNTRY_NAMES[key] || key;
 };
 
+const adminCountry = (code: any) => {
+  const key = String(code || '').trim().toUpperCase();
+  return WORLD_COUNTRIES.find((country) => country.code === key) || null;
+};
+
+const formatAdminDateTime = (value: any) => {
+  if (!value) return { date: '—', time: '' };
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return { date: String(value), time: '' };
+  return {
+    date: date.toLocaleDateString(),
+    time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  };
+};
+
 const AdminSidebar = ({ isMobileMenuOpen, toggleMobileMenu, currentUser, isDark, toggleTheme }: any) => {
   const { t, language } = useI18n();
   const navigate = useNavigate();
@@ -126,7 +141,7 @@ const AdminSidebar = ({ isMobileMenuOpen, toggleMobileMenu, currentUser, isDark,
         )}
 
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
-          {menu.filter(item => currentUser?.role === 'super_admin' || ['/admin/shipments', '/admin/tickets'].includes(item.path)).map(item => {
+          {menu.filter(item => currentUser?.role === 'super_admin' || ['/admin/shipments', '/admin/tickets', '/admin/clients'].includes(item.path)).map(item => {
             const active = location.pathname === item.path || (location.pathname.startsWith(item.path) && item.path !== '/admin');
             const handleClick = () => {
               if (window.innerWidth < 768) {
@@ -400,7 +415,7 @@ const convertAdminPreview = (amount: number, from: string, to: string, rates: Re
   return Math.round(((value / sourceRate) * targetRate + Number.EPSILON) * 100) / 100;
 };
 
-const AdminClients = () => {
+const AdminClients = ({ readOnly = false }: { readOnly?: boolean }) => {
   const { t } = useI18n();
   const navigate = useNavigate();
   const { rates, availableCurrencies } = useCurrency();
@@ -531,7 +546,7 @@ const AdminClients = () => {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-black text-gray-900">{t('clients') || 'Gestión de Clientes'}</h1>
-          <p className="text-sm text-gray-500 mt-1">Administra saldos, accesos, tarjetas vinculadas y estado de cada cuenta.</p>
+          <p className="text-sm text-gray-500 mt-1">{readOnly ? 'Consulta clientes, origen y actividad reciente. Las acciones de cuenta están protegidas.' : 'Administra saldos, accesos, tarjetas vinculadas y estado de cada cuenta.'}</p>
         </div>
         <button onClick={loadClients} className="px-4 py-2 rounded-xl bg-white border border-gray-200 text-sm font-bold text-gray-700 hover:border-blue-200 hover:text-blue-600 transition-colors">
           Actualizar
@@ -550,10 +565,12 @@ const AdminClients = () => {
                 <tr className="bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider">
                   <th className="p-6">Cliente</th>
                   <th className="p-6">Correo electrónico</th>
+                  <th className="p-6">Origen</th>
                   <th className="p-6">Moneda</th>
                   <th className="p-6">Saldo</th>
                   <th className="p-6">Tarjeta</th>
                   <th className="p-6">Estado</th>
+                  <th className="p-6">Alta</th>
                   <th className="p-6 text-right">Acciones</th>
                 </tr>
               </thead>
@@ -572,6 +589,12 @@ const AdminClients = () => {
                       </div>
                     </td>
                     <td className="p-6 text-gray-500 font-medium">{c.email}</td>
+                    <td className="p-6">
+                      {(() => {
+                        const origin = adminCountry(c.country);
+                        return origin ? <span className="inline-flex items-center gap-2 text-sm font-black text-gray-700" title={origin.nameEs}><img src={origin.flagSm || FLAG_API.url(origin.code, 'flat', 32)} alt={origin.code} className="h-4 w-6 rounded object-cover" />{origin.code}</span> : <span className="text-sm font-bold text-gray-400">{c.country || '—'}</span>;
+                      })()}
+                    </td>
                     <td className="p-6 text-gray-700 font-black">{c.currency || 'EUR'}</td>
                     <td className="p-6">
                       <div className={`font-black ${Number(c.balance || 0) < 0 ? 'text-red-600' : 'text-gray-900'}`}>{formatClientMoney(c.balance, c.currency)}</div>
@@ -585,17 +608,18 @@ const AdminClients = () => {
                     <td className="p-6">
                       <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${getStatusBadge(c)}`}>{getStatusLabel(c.status)}</span>
                     </td>
+                    <td className="p-6 text-gray-500 font-medium"><div>{formatAdminDateTime(c.createdAt).date}</div><div className="text-xs text-gray-400">{formatAdminDateTime(c.createdAt).time}</div></td>
                     <td className="p-6">
                       <div className="flex justify-end gap-2">
                         <button onClick={() => openClient(c)} className="px-3 py-2 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold hover:bg-blue-100 flex items-center gap-1">
                           <Eye className="w-4 h-4" /> Ver datos
                         </button>
-                        <button onClick={() => handleImpersonate(c)} className="px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 flex items-center gap-1">
+                        {!readOnly && <><button onClick={() => handleImpersonate(c)} className="px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 flex items-center gap-1">
                           <LogIn className="w-4 h-4" /> Entrar
                         </button>
                         <button onClick={() => handleStatusToggle(c)} className="px-3 py-2 rounded-lg bg-white border border-gray-200 text-gray-700 text-xs font-bold hover:border-blue-200 flex items-center gap-1">
                           {c.status === 'active' ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />} {c.status === 'active' ? 'Bloquear' : 'Activar'}
-                        </button>
+                        </button></>}
                       </div>
                     </td>
                   </tr>
@@ -659,9 +683,9 @@ const AdminClients = () => {
                               <p className="font-black text-gray-900">{selectedClient.cardDetails?.cardNumber || 'Tarjeta vinculada'}</p>
                               <p className="text-xs text-gray-500 mt-1">Titular: {selectedClient.cardDetails?.cardholderName || 'Cliente'}</p>
                               <p className="text-xs text-gray-500">Vence: {selectedClient.cardDetails?.expiryDate || 'No disponible'}</p>
-                              <button onClick={() => runClientAction('remove-card', () => api.adminRemoveClientCard(selectedClient.id))} className="mt-3 px-3 py-2 rounded-lg bg-gray-100 text-gray-700 text-xs font-bold hover:bg-gray-200">
+                              {!readOnly && <button onClick={() => runClientAction('remove-card', () => api.adminRemoveClientCard(selectedClient.id))} className="mt-3 px-3 py-2 rounded-lg bg-gray-100 text-gray-700 text-xs font-bold hover:bg-gray-200">
                                 Desvincular tarjeta
-                              </button>
+                              </button>}
                             </div>
                           ) : (
                             <p className="text-sm text-gray-500 font-semibold">No hay tarjeta asociada.</p>
@@ -694,6 +718,7 @@ const AdminClients = () => {
                   </div>
 
                   <div className="space-y-6">
+                    {!readOnly && <>
                     <div className="rounded-2xl border border-gray-100 p-5 bg-white">
                       <h3 className="font-black text-gray-900 mb-4 flex items-center gap-2"><Wallet className="w-5 h-5 text-blue-500" /> Recargar saldo</h3>
                       <label className="block text-xs font-black uppercase tracking-wider text-gray-400 mb-2">Monto</label>
@@ -724,6 +749,7 @@ const AdminClients = () => {
                         <ShieldCheck className="w-4 h-4" /> Quitar deuda pendiente
                       </button>
                     </div>
+                    </>}
 
                     <div className="rounded-2xl border border-gray-100 p-5 bg-white">
                       <h3 className="font-black text-gray-900 mb-4">Últimos envíos</h3>
@@ -1036,11 +1062,14 @@ const AdminShipments = () => {
                 </tr>
               </thead>
               <tbody>
-                {shipments.map((s: any) => (
+                {shipments.map((s: any) => {
+                  const origin = adminCountry(s.customer?.country);
+                  const created = formatAdminDateTime(s.createdAt);
+                  return (
                   <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                     <td className="p-4"><input aria-label={`Seleccionar ${s.trackingCode || s.id}`} type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelected(s.id)} /></td>
                     <td className="p-6 font-mono font-bold text-blue-600">{s.trackingCode}</td>
-                    <td className="p-6"><button type="button" onClick={() => setSelectedShipment(s)} className="text-left"><div className="font-bold text-gray-900 hover:text-blue-600">{s.customer?.name || 'Cliente sin nombre'}</div><div className="mt-1 text-xs font-medium text-gray-500">{s.customer?.email || s.userId || 'Sin correo'}</div></button></td>
+                    <td className="p-6"><button type="button" onClick={() => setSelectedShipment(s)} className="text-left"><div className="font-bold text-gray-900 hover:text-blue-600">{s.customer?.name || 'Cliente sin nombre'}</div><div className="mt-1 text-xs font-medium text-gray-500">{s.customer?.email || s.userId || 'Sin correo'}</div>{origin ? <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-black text-gray-600" title={origin.nameEs}><img src={origin.flagSm || FLAG_API.url(origin.code, 'flat', 32)} alt={origin.code} className="h-3.5 w-5 rounded object-cover" />{origin.code} · {origin.nameEs}</div> : <div className="mt-2 text-[11px] font-bold text-gray-400">Origen no informado</div>}</button></td>
                     <td className="p-6 text-gray-700 font-bold"><div>{displayAdminCarrierName(s.carrierName)}</div></td>
                     <td className="p-6">
                       <select 
@@ -1066,12 +1095,13 @@ const AdminShipments = () => {
                     </td>
                     <td className="p-6"><div className={`inline-flex rounded-full border px-3 py-1 text-xs font-black ${labelClass(s)}`}>{labelText(s)}</div><div className="mt-2 flex flex-wrap gap-1.5">{s.labelReady ? <><button type="button" onClick={() => openLabel(s)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-black text-emerald-700 hover:bg-emerald-100"><Eye className="h-3 w-3" /> Ver</button><button type="button" onClick={() => openLabel(s, true)} className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700 hover:bg-blue-100"><Download className="h-3 w-3" /> PDF</button></> : s.canRetryLabel ? <button type="button" onClick={() => handlePrepareShipment(s)} disabled={Boolean(actionMap[s.id])} className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-1 text-[11px] font-black text-amber-700 hover:bg-amber-100 disabled:opacity-50"><PlayCircle className="h-3 w-3" /> {actionMap[s.id] === 'label' ? 'Preparando' : 'Preparar'}</button> : null}<button type="button" onClick={() => setUploadShipment(s)} className="inline-flex items-center gap-1 rounded-lg bg-violet-50 px-2 py-1 text-[11px] font-black text-violet-700 hover:bg-violet-100"><Upload className="h-3 w-3" /> Subir</button></div>{s.labelError && <p className="mt-1 max-w-[180px] text-[11px] font-semibold text-red-600">{s.labelError}</p>}</td>
                     <td className="p-6"><div className={`text-xs font-black ${s.lastNotification?.status === 'failed' ? 'text-red-600' : s.lastNotification?.status === 'sent' ? 'text-emerald-700' : 'text-gray-500'}`}>{notificationText(s)}</div>{s.lastNotification?.created_at && <div className="mt-1 text-[11px] text-gray-400">{new Date(s.lastNotification.created_at).toLocaleDateString()}</div>}</td>
-                    <td className="p-6 text-gray-500 font-medium">{new Date(s.createdAt).toLocaleDateString()}</td>
+                    <td className="p-6 text-gray-500 font-medium"><div>{created.date}</div><div className="text-xs text-gray-400">{created.time}</div><div className="mt-1 text-[10px] font-black uppercase tracking-wider text-blue-500">Compra</div></td>
                     <td className="p-6">
                       <div className="flex flex-wrap gap-1.5"><button type="button" onClick={() => setSelectedShipment(s)} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-2 text-xs font-black text-slate-700 hover:bg-slate-200"><Eye className="h-3.5 w-3.5" /> Detalle</button><button type="button" onClick={() => { setNotificationShipment(s); setNotificationEvent(s.labelReady ? 'shipment_label_ready' : 'shipment_pending_label'); }} disabled={!s.customer?.email || Boolean(actionMap[s.id])} className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-2 text-xs font-black text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40"><Bell className="h-3.5 w-3.5" /> Notificar</button><button type="button" onClick={() => copyTracking(s)} className="rounded-lg bg-gray-50 p-2 text-gray-500 hover:bg-gray-100" aria-label="Copiar tracking"><Copy className="h-3.5 w-3.5" /></button></div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -3646,7 +3676,7 @@ export default function AdminPanel() {
     );
   }
 
-  if (currentUser?.role === 'support' && !['/admin/shipments', '/admin/tickets'].includes(location.pathname)) {
+  if (currentUser?.role === 'support' && !['/admin/shipments', '/admin/tickets', '/admin/clients'].includes(location.pathname)) {
     return <Navigate to="/admin/shipments" replace />;
   }
 
@@ -3679,7 +3709,7 @@ export default function AdminPanel() {
         <main className="flex-1 overflow-y-auto h-[calc(100vh-4rem)] md:h-screen bg-slate-50 dark:bg-dark-900 transition-colors">
           <Routes>
             <Route path="/" element={currentUser?.role === 'support' ? <Navigate to="/admin/shipments" replace /> : <AdminDashboard />} />
-            <Route path="/clients" element={<AdminClients />} />
+            <Route path="/clients" element={<AdminClients readOnly={currentUser?.role === 'support'} />} />
             <Route path="/staff" element={<Staff />} />
             <Route path="/shipments" element={<AdminShipments />} />
             <Route path="/marketplace/zubuy-print" element={<AdminPodSettings />} />
