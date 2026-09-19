@@ -1462,7 +1462,15 @@ const Quote = () => {
     const needsSenderPoint = quoteNeedsSenderPoint(selectedQuote);
     const needsReceiverPoint = quoteNeedsReceiverPoint(selectedQuote);
     const pointSelectionReady = (!needsSenderPoint || Boolean(selectedDrops.sender)) && (!needsReceiverPoint || Boolean(selectedDrops.receiver));
-    const scheduleSupported = ['genei', 'paccofacile', 'spedirepro'].includes(String(selectedQuote?.providerCode || '').toLowerCase()) && !needsSenderPoint;
+    const selectedProviderCode = String(selectedQuote?.providerCode || '').toLowerCase();
+    const pickupCourier = normalizeText(
+      selectedQuote?.providerPayload?.courierService?.courier
+      || selectedQuote?.providerPayload?.courier
+      || selectedQuote?.carrierName
+      || ''
+    );
+    const providerSupportsPickup = selectedProviderCode !== 'spediamopro' || !pickupCourier.includes('inpost');
+    const scheduleSupported = ['genei', 'paccofacile', 'spedirepro', 'spediamopro'].includes(selectedProviderCode) && !needsSenderPoint && providerSupportsPickup;
 
     return (
       <div className="py-2 md:py-4 max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">

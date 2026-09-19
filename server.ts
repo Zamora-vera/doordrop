@@ -4255,6 +4255,32 @@ async function callProviderCreate(args: {
       externalId: compactText(shipmentId, 64),
       externalReference: compactText(reference || shipmentId, 64)
     };
+    // SpediamoPro v2 accepts pickup details together with quotation acceptance.
+    // Use the provider's firstAvailablePickupDate for the default option and the
+    // user-selected date only when a scheduled pickup was requested. InPost
+    // does not offer home pickup, so it must never receive this property.
+    const pickupCourier = courierCode.replace(/[^a-z]/g, '');
+    const pickupDate = pickupService?.mode === 'scheduled'
+      ? pickupService.date
+      : String(selectedOffer?.firstAvailablePickupDate || '').trim();
+    if (pointTypes.departure === 'home' && pickupDate && ['brt', 'sda', 'ups'].includes(pickupCourier)) {
+      requestPayload.pickup = {
+        contactInfo: {
+          name: requestPayload.sender.name,
+          at: requestPayload.sender.at,
+          address: requestPayload.sender.address,
+          postalCode: requestPayload.sender.postalCode,
+          city: requestPayload.sender.city,
+          country: requestPayload.sender.country,
+          province: requestPayload.sender.province,
+          phone: requestPayload.sender.phone,
+          email: requestPayload.sender.email
+        },
+        date: pickupDate,
+        from: pickupService?.timeFrom || '09:00',
+        to: pickupService?.timeTo || '18:00'
+      };
+    }
     if (!requestPayload.quotation.service) {
       result.errorMessage = 'La cotización del proveedor no contiene un servicio válido. Solicita una cotización nueva.';
       result.providerPayload = { apiMode: 'spediamopro_v2', selectedOffer };
@@ -4296,7 +4322,7 @@ async function callProviderCreate(args: {
     result.status = label.base64 ? 'tramitado' : mapped.status;
     result.statusLabel = label.base64 ? 'Etiqueta lista' : mapped.label;
     result.providerPackages = packages.map((pkg: any) => ({ ...pkg, customs: Array.isArray(customs) ? customs : [] }));
-    result.providerPayload = { accept: shipmentData, tracking: trackingData, label: { hasBase64: Boolean(label.base64), filename: label.filename, contentType: label.contentType }, apiMode: 'spediamopro_v2', courier: courierCode, services: { drops: { ...(senderDrop ? { sender: senderDrop } : {}), ...(receiverDrop ? { receiver: receiverDrop } : {}) } } };
+    result.providerPayload = { accept: shipmentData, tracking: trackingData, label: { hasBase64: Boolean(label.base64), filename: label.filename, contentType: label.contentType }, apiMode: 'spediamopro_v2', courier: courierCode, services: { ...(requestPayload.pickup ? { pickup: requestPayload.pickup } : {}), drops: { ...(senderDrop ? { sender: senderDrop } : {}), ...(receiverDrop ? { receiver: receiverDrop } : {}) } } };
     return result;
   }
 
