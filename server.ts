@@ -817,6 +817,16 @@ async function ensureAdminShipmentOpsSchema() {
       CONSTRAINT fk_admin_notification_admin FOREIGN KEY (admin_user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     try { await pool.query(`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS label_format VARCHAR(20) NULL`); } catch {}
+    // The admin list is ordered by creation time on every request. Keep the
+    // common admin filters covered without changing the existing schema or
+    // requiring a manual production migration.
+    for (const statement of [
+      'ALTER TABLE shipments ADD INDEX idx_shipments_created_at (created_at)',
+      'ALTER TABLE shipments ADD INDEX idx_shipments_status_created (status, created_at)',
+      'ALTER TABLE shipments ADD INDEX idx_shipments_provider_created (provider_code, created_at)'
+    ]) {
+      try { await pool.query(statement); } catch {}
+    }
     adminShipmentOpsSchemaReady = true;
   })().finally(() => {
     adminShipmentOpsSchemaPromise = null;
@@ -13168,56 +13178,63 @@ app.get('/api/admin/shipments', authMiddleware, requireSuperAdmin, async (req: a
     }
 
     const whereSql = where.length ? ` WHERE ${where.join(' AND ')}` : '';
-    const [countRows]: any = await pool.query(`SELECT COUNT(*) AS total ${fromSql}${whereSql}`, whereParams);
-    const total = Number(countRows?.[0]?.total || 0);
     const offset = (page - 1) * pageSize;
-    const [shipmentsList]: any = await pool.query(
-      `SELECT s.*, u.name AS user_name, u.email AS user_email, u.language AS user_language, u.client_code AS user_client_code
-       ${fromSql}${whereSql} ORDER BY s.created_at DESC LIMIT ? OFFSET ?`,
-      [...whereParams, pageSize, offset]
-    );
+    const shipmentColumns = `
+      s.id, s.user_id, s.quote_id, s.provider_code, s.provider_shipment_code,
+      s.provider_tracking_code, s.tracking_code, s.order_number, s.reference,
+      s.status, s.status_label, s.sender_json, s.recipient_json, s.label_url,
+      s.label_base64, s.provider_payload_json, s.label_status, s.label_error,
+      s.provider_attempts, s.created_at, s.updated_at,
+      u.name AS user_name, u.email AS user_email, u.language AS user_language,
+      u.client_code AS user_client_code`;
+    const [[countRows], [shipmentsList]]: any = await Promise.all([
+      pool.query(`SELECT COUNT(*) AS total ${fromSql}${whereSql}`, whereParams),
+      pool.query(
+        `SELECT ${shipmentColumns}
+         ${fromSql}${whereSql} ORDER BY s.created_at DESC LIMIT ? OFFSET ?`,
+        [...whereParams, pageSize, offset]
+      )
+    ]);
+    const total = Number(countRows?.[0]?.total || 0);
     const packageMap = new Map<string, any[]>();
-    if (shipmentsList.length > 0) {
-      const ids = shipmentsList.map((s: any) => s.id);
-      const placeholders = ids.map(() => '?').join(',');
-      const [pkgRows]: any = await pool.query(`SELECT * FROM shipment_packages WHERE shipment_id IN (${placeholders})`, ids);
-      for (const pkg of pkgRows) {
-        const list = packageMap.get(pkg.shipment_id) || [];
-        list.push({ width: Number(pkg.width_cm || 10), height: Number(pkg.height_cm || 10), length: Number(pkg.length_cm || 10), weight: Number(pkg.weight_kg || 1), qty: Number(pkg.quantity || 1) });
-        packageMap.set(pkg.shipment_id, list);
-      }
-    }
-
-    const providersDb = await ProviderRepo.getAll().catch(() => []);
-    const providerMap = new Map<string, any>(providersDb.map((p: any) => [String(p.code || '').toLowerCase(), p]));
+    const providerMap = new Map<string, any>();
     const quoteMap = new Map<string, any>();
-    if (shipmentsList.length > 0) {
-      const quoteIds = [...new Set(shipmentsList.map((s: any) => s.quote_id).filter(Boolean))];
-      if (quoteIds.length) {
-        const placeholders = quoteIds.map(() => '?').join(',');
-        try {
-          const [quoteRows]: any = await pool.query(`SELECT id, service_name, provider_payload_json FROM quotes WHERE id IN (${placeholders})`, quoteIds);
-          for (const row of quoteRows) quoteMap.set(row.id, row);
-        } catch {}
-      }
-    }
-
     const notificationMap = new Map<string, any>();
     if (shipmentsList.length > 0) {
       const ids = shipmentsList.map((s: any) => s.id);
       const placeholders = ids.map(() => '?').join(',');
-      try {
-        const [notificationRows]: any = await pool.query(
+      const quoteIds = [...new Set(shipmentsList.map((s: any) => s.quote_id).filter(Boolean))];
+      const quotePlaceholders = quoteIds.map(() => '?').join(',');
+      const [pkgResult, providerResult, quoteResult, notificationResult]: any[] = await Promise.all([
+        pool.query(
+          `SELECT shipment_id, width_cm, height_cm, length_cm, weight_kg, quantity
+             FROM shipment_packages
+            WHERE shipment_id IN (${placeholders})`,
+          ids
+        ),
+        ProviderRepo.getAll().catch(() => []),
+        quoteIds.length
+          ? pool.query(`SELECT id, service_name, provider_payload_json FROM quotes WHERE id IN (${quotePlaceholders})`, quoteIds)
+          : Promise.resolve([[]]),
+        pool.query(
           `SELECT shipment_id, event_code, status, language, created_at, sent_at, error_message
              FROM email_logs
             WHERE shipment_id IN (${placeholders})
             ORDER BY created_at DESC`,
           ids
-        );
-        for (const row of notificationRows) {
-          if (!notificationMap.has(row.shipment_id)) notificationMap.set(row.shipment_id, row);
-        }
-      } catch {}
+        ).catch(() => [[]])
+      ]);
+      for (const pkg of (pkgResult?.[0] || [])) {
+        const list = packageMap.get(pkg.shipment_id) || [];
+        list.push({ width: Number(pkg.width_cm || 10), height: Number(pkg.height_cm || 10), length: Number(pkg.length_cm || 10), weight: Number(pkg.weight_kg || 1), qty: Number(pkg.quantity || 1) });
+        packageMap.set(pkg.shipment_id, list);
+      }
+      for (const row of (quoteResult?.[0] || [])) quoteMap.set(row.id, row);
+      for (const row of (notificationResult?.[0] || [])) {
+        if (!notificationMap.has(row.shipment_id)) notificationMap.set(row.shipment_id, row);
+      }
+      const providersDb = Array.isArray(providerResult) ? providerResult : [];
+      for (const provider of providersDb) providerMap.set(String(provider.code || '').toLowerCase(), provider);
     }
 
     const normalized = shipmentsList.map(s => {
